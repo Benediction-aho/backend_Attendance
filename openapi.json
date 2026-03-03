@@ -1,0 +1,486 @@
+{
+  "openapi": "3.0.0",
+  "info": {
+    "title": "Assistance Ghana Attendance API",
+    "version": "1.0.0",
+    "description": "Enterprise-grade attendance and productivity management API",
+    "contact": {
+      "name": "GIMA Services"
+    }
+  },
+  "servers": [
+    {
+      "url": "http://localhost:5000/api",
+      "description": "Development"
+    }
+  ],
+  "components": {
+    "securitySchemes": {
+      "bearerAuth": {
+        "type": "http",
+        "scheme": "bearer",
+        "bearerFormat": "JWT"
+      }
+    },
+    "schemas": {
+      "User": {
+        "type": "object",
+        "properties": {
+          "_id": {
+            "type": "string"
+          },
+          "firstName": {
+            "type": "string"
+          },
+          "lastName": {
+            "type": "string"
+          },
+          "email": {
+            "type": "string"
+          },
+          "role": {
+            "type": "string",
+            "enum": [
+              "admin",
+              "employee"
+            ]
+          },
+          "employeeType": {
+            "type": "string",
+            "enum": [
+              "stagiaire",
+              "employe"
+            ]
+          },
+          "position": {
+            "type": "string"
+          },
+          "isBlocked": {
+            "type": "boolean"
+          },
+          "createdAt": {
+            "type": "string",
+            "format": "date-time"
+          }
+        }
+      },
+      "Task": {
+        "type": "object",
+        "properties": {
+          "_id": {
+            "type": "string"
+          },
+          "userId": {
+            "type": "string"
+          },
+          "description": {
+            "type": "string"
+          },
+          "difficulties": {
+            "type": "string"
+          },
+          "status": {
+            "type": "string",
+            "enum": [
+              "completed",
+              "pending"
+            ]
+          },
+          "date": {
+            "type": "string",
+            "format": "date"
+          },
+          "createdAt": {
+            "type": "string",
+            "format": "date-time"
+          }
+        }
+      },
+      "Attendance": {
+        "type": "object",
+        "properties": {
+          "_id": {
+            "type": "string"
+          },
+          "userId": {
+            "type": "string"
+          },
+          "date": {
+            "type": "string",
+            "format": "date"
+          },
+          "checkInTime": {
+            "type": "string"
+          },
+          "checkOutTime": {
+            "type": "string"
+          },
+          "hoursWorked": {
+            "type": "number"
+          },
+          "isLate": {
+            "type": "boolean"
+          },
+          "earlyLeave": {
+            "type": "boolean"
+          }
+        }
+      },
+      "Error": {
+        "type": "object",
+        "properties": {
+          "success": {
+            "type": "boolean",
+            "example": false
+          },
+          "message": {
+            "type": "string"
+          }
+        }
+      }
+    }
+  },
+  "security": [
+    {
+      "bearerAuth": []
+    }
+  ],
+  "paths": {
+    "/admin/users": {
+      "post": {
+        "tags": [
+          "Admin"
+        ],
+        "summary": "Create employee or admin"
+      },
+      "get": {
+        "tags": [
+          "Admin"
+        ],
+        "summary": "Get all employees"
+      }
+    },
+    "/admin/users/{id}/block": {
+      "patch": {
+        "tags": [
+          "Admin"
+        ],
+        "summary": "Block/unblock employee"
+      }
+    },
+    "/admin/users/{id}": {
+      "delete": {
+        "tags": [
+          "Admin"
+        ],
+        "summary": "Delete employee"
+      }
+    },
+    "/admin/analytics": {
+      "get": {
+        "tags": [
+          "Admin"
+        ],
+        "summary": "Get analytics dashboard data"
+      }
+    },
+    "/admin/users/{id}/stats": {
+      "get": {
+        "tags": [
+          "Admin"
+        ],
+        "summary": "Get individual employee stats"
+      }
+    },
+    "/attendance/checkin": {
+      "post": {
+        "tags": [
+          "Attendance"
+        ],
+        "summary": "Check in (requires geolocation)",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": [
+                  "latitude",
+                  "longitude"
+                ],
+                "properties": {
+                  "latitude": {
+                    "type": "number"
+                  },
+                  "longitude": {
+                    "type": "number"
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "Check-in successful"
+          },
+          "403": {
+            "description": "Out of perimeter"
+          }
+        }
+      }
+    },
+    "/attendance/checkout": {
+      "post": {
+        "tags": [
+          "Attendance"
+        ],
+        "summary": "Check out",
+        "responses": {
+          "200": {
+            "description": "Check-out successful"
+          }
+        }
+      }
+    },
+    "/attendance/today": {
+      "get": {
+        "tags": [
+          "Attendance"
+        ],
+        "summary": "Get today's attendance status",
+        "responses": {
+          "200": {
+            "description": "Today's attendance data"
+          }
+        }
+      }
+    },
+    "/attendance/my": {
+      "get": {
+        "tags": [
+          "Attendance"
+        ],
+        "summary": "Get my attendance history",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "startDate",
+            "schema": {
+              "type": "string",
+              "format": "date"
+            }
+          },
+          {
+            "in": "query",
+            "name": "endDate",
+            "schema": {
+              "type": "string",
+              "format": "date"
+            }
+          }
+        ]
+      }
+    },
+    "/attendance/all": {
+      "get": {
+        "tags": [
+          "Attendance"
+        ],
+        "summary": "Get all attendances (admin only)"
+      }
+    },
+    "/attendance/attempts": {
+      "get": {
+        "tags": [
+          "Attendance"
+        ],
+        "summary": "Get failed check-in attempts (admin only)"
+      }
+    },
+    "/auth/register": {
+      "post": {
+        "tags": [
+          "Auth"
+        ],
+        "summary": "Register a new employee",
+        "security": [],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": [
+                  "firstName",
+                  "lastName",
+                  "email",
+                  "password"
+                ],
+                "properties": {
+                  "firstName": {
+                    "type": "string"
+                  },
+                  "lastName": {
+                    "type": "string"
+                  },
+                  "email": {
+                    "type": "string",
+                    "format": "email"
+                  },
+                  "password": {
+                    "type": "string",
+                    "minLength": 6
+                  },
+                  "employeeType": {
+                    "type": "string",
+                    "enum": [
+                      "stagiaire",
+                      "employe"
+                    ]
+                  },
+                  "position": {
+                    "type": "string"
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "User registered successfully"
+          },
+          "400": {
+            "description": "Validation error"
+          }
+        }
+      }
+    },
+    "/auth/login": {
+      "post": {
+        "tags": [
+          "Auth"
+        ],
+        "summary": "Login",
+        "security": [],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": [
+                  "email",
+                  "password"
+                ],
+                "properties": {
+                  "email": {
+                    "type": "string"
+                  },
+                  "password": {
+                    "type": "string"
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Login successful"
+          },
+          "401": {
+            "description": "Invalid credentials"
+          }
+        }
+      }
+    },
+    "/auth/me": {
+      "get": {
+        "tags": [
+          "Auth"
+        ],
+        "summary": "Get current user",
+        "responses": {
+          "200": {
+            "description": "Current user data"
+          }
+        }
+      }
+    },
+    "/stats/me": {
+      "get": {
+        "tags": [
+          "Stats"
+        ],
+        "summary": "Get my personal stats"
+      }
+    },
+    "/tasks": {
+      "post": {
+        "tags": [
+          "Tasks"
+        ],
+        "summary": "Create a task (requires check-in)",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": [
+                  "description"
+                ],
+                "properties": {
+                  "description": {
+                    "type": "string"
+                  },
+                  "difficulties": {
+                    "type": "string"
+                  },
+                  "status": {
+                    "type": "string",
+                    "enum": [
+                      "completed",
+                      "pending"
+                    ]
+                  }
+                }
+              }
+            }
+          }
+        }
+      },
+      "get": {
+        "tags": [
+          "Tasks"
+        ],
+        "summary": "Get my tasks"
+      }
+    },
+    "/tasks/all": {
+      "get": {
+        "tags": [
+          "Tasks"
+        ],
+        "summary": "Get all tasks (admin only)"
+      }
+    },
+    "/tasks/{id}": {
+      "put": {
+        "tags": [
+          "Tasks"
+        ],
+        "summary": "Update a task"
+      },
+      "delete": {
+        "tags": [
+          "Tasks"
+        ],
+        "summary": "Delete a task"
+      }
+    }
+  },
+  "tags": []
+}
