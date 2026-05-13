@@ -20,7 +20,7 @@ connectDB();
 
 // Middlewares
 app.use(cors({
-  origin: process.env.CORS_ORIGIN || '*',
+  origin: process.env.CLIENT_URL,
   credentials: true,
 }));
 app.use(express.json());

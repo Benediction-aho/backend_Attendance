@@ -14,7 +14,7 @@ const register = async (req, res, next) => {
 
     const { firstName, lastName, email, password, employeeType, position } = req.body;
 
-    const existingUser = await User.findOne({ email });
+    const existingUser = await User.findOne({ email: email.toLowerCase() });
     if (existingUser) {
       return res.status(400).json({ success: false, message: 'Email already registered' });
     }
@@ -22,7 +22,7 @@ const register = async (req, res, next) => {
     const user = await User.create({
       firstName,
       lastName,
-      email,
+      email: email.toLowerCase(),
       password,
       employeeType,
       position,
@@ -61,7 +61,7 @@ const login = async (req, res, next) => {
 
     const { email, password } = req.body;
 
-    const user = await User.findOne({ email }).select('+password');
+    const user = await User.findOne({ email: email.toLowerCase() }).select('+password');
     if (!user) {
       return res.status(401).json({ success: false, message: 'Invalid credentials' });
     }
