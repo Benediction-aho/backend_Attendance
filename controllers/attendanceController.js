@@ -15,7 +15,6 @@ const checkIn = async (req, res, next) => {
   try {
     const { latitude, longitude } = req.body;
 
-    // Validate coordinates are present
     if (latitude == null || longitude == null) {
       return res.status(400).json({
         success: false,
@@ -32,8 +31,7 @@ const checkIn = async (req, res, next) => {
     if (distance > COMPANY_RADIUS) {
       await CheckInAttempt.create({
         userId, date, attemptTime: time,
-        latitude,
-        longitude,
+        latitude, longitude,
         distance: Math.round(distance),
         reason: 'Out of perimeter',
       });
@@ -44,31 +42,34 @@ const checkIn = async (req, res, next) => {
       });
     }
 
-    const existing = await Attendance.findOne({ userId, date });
-    if (existing) {
-      // Return the record gracefully - don't error, just sync the UI
-      return res.status(200).json({ success: true, attendance: existing });
-    }
-
     const [h, m] = time.split(':').map(Number);
     const isLate = h > 8 || (h === 8 && m > 30);
 
-    let attendance;
-    try {
-      attendance = await Attendance.create({
-        userId, date, checkInTime: time,
-        checkInLat: latitude, checkInLng: longitude, isLate,
-      });
-    } catch (createErr) {
-      // Race condition: another request just created it - fetch and return it
-      if (createErr.code === 11000) {
-        const created = await Attendance.findOne({ userId, date });
-        return res.status(200).json({ success: true, attendance: created });
+    // Atomic upsert — eliminates race condition completely
+    // $setOnInsert only runs on INSERT, not on find (idempotent)
+    const result = await Attendance.findOneAndUpdate(
+      { userId, date },
+      {
+        $setOnInsert: {
+          userId,
+          date,
+          checkInTime: time,
+          checkInLat: latitude,
+          checkInLng: longitude,
+          isLate,
+          hoursWorked: 0,
+          earlyLeave: false,
+        },
+      },
+      {
+        upsert: true,
+        new: true,
+        setDefaultsOnInsert: true,
       }
-      throw createErr;
-    }
+    );
 
-    res.status(201).json({ success: true, attendance });
+    // result is ALWAYS a valid document — never null
+    res.status(201).json({ success: true, attendance: result });
   } catch (error) {
     next(error);
   }
