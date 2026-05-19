@@ -1,2 +1,4 @@
 node_modules/
 .env
+scripts/seedAdmin.js
+scripts/fixAdminPassword.js

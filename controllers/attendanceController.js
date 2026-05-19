@@ -14,6 +14,15 @@ const getCurrentTime = () => new Date().toTimeString().split(' ')[0];
 const checkIn = async (req, res, next) => {
   try {
     const { latitude, longitude } = req.body;
+
+    // Validate coordinates are present
+    if (latitude == null || longitude == null) {
+      return res.status(400).json({
+        success: false,
+        message: 'Latitude and longitude are required',
+      });
+    }
+
     const userId = req.user._id;
     const date = getTodayDate();
     const time = getCurrentTime();
@@ -21,11 +30,8 @@ const checkIn = async (req, res, next) => {
     const distance = haversineDistance(latitude, longitude, COMPANY_LAT, COMPANY_LNG);
 
     if (distance > COMPANY_RADIUS) {
-      // Log failed attempt
       await CheckInAttempt.create({
-        userId,
-        date,
-        attemptTime: time,
+        userId, date, attemptTime: time,
         latitude,
         longitude,
         distance: Math.round(distance),
@@ -38,24 +44,29 @@ const checkIn = async (req, res, next) => {
       });
     }
 
-    // Check if already checked in today
     const existing = await Attendance.findOne({ userId, date });
     if (existing) {
-      return res.status(400).json({ success: false, message: 'Already checked in today' });
+      // Return the record gracefully - don't error, just sync the UI
+      return res.status(200).json({ success: true, attendance: existing });
     }
 
-    // Check if late (after 08:30)
     const [h, m] = time.split(':').map(Number);
     const isLate = h > 8 || (h === 8 && m > 30);
 
-    const attendance = await Attendance.create({
-      userId,
-      date,
-      checkInTime: time,
-      checkInLat: latitude,
-      checkInLng: longitude,
-      isLate,
-    });
+    let attendance;
+    try {
+      attendance = await Attendance.create({
+        userId, date, checkInTime: time,
+        checkInLat: latitude, checkInLng: longitude, isLate,
+      });
+    } catch (createErr) {
+      // Race condition: another request just created it - fetch and return it
+      if (createErr.code === 11000) {
+        const created = await Attendance.findOne({ userId, date });
+        return res.status(200).json({ success: true, attendance: created });
+      }
+      throw createErr;
+    }
 
     res.status(201).json({ success: true, attendance });
   } catch (error) {
