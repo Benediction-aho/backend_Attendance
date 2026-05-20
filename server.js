@@ -1,13 +1,12 @@
 require('dotenv').config();
-const mongoose = require('mongoose');
 const express = require('express');
 const cors = require('cors');
+const mongoose = require('mongoose'); // ← AJOUTER
 const swaggerUi = require('swagger-ui-express');
 const connectDB = require('./config/db');
 const swaggerSpec = require('./config/swagger');
 const errorHandler = require('./middleware/errorHandler');
 
-// Routes
 const authRoutes = require('./routes/authRoutes');
 const attendanceRoutes = require('./routes/attendanceRoutes');
 const taskRoutes = require('./routes/taskRoutes');
@@ -16,39 +15,63 @@ const statsRoutes = require('./routes/statsRoutes');
 
 const app = express();
 
-// Connect to MongoDB
+app.set('etag', false); // ← AJOUTER : évite les réponses 304 stale
+
 connectDB();
 
-// Middlewares
+// ← AJOUTER : nettoie les index stales au démarrage
+mongoose.connection.once('open', async () => {
+  try {
+    const Attendance = require('./models/Attendance');
+    const indexes = await Attendance.collection.indexes();
+
+    const stalesToDrop = indexes.filter(idx => {
+      const keys = Object.keys(idx.key);
+      // Supprimer tout index qui contient "employee" (ancien champ)
+      return keys.includes('employee');
+    });
+
+    for (const idx of stalesToDrop) {
+      await Attendance.collection.dropIndex(idx.name);
+      console.log(`🗑️  Index stale supprimé : ${idx.name}`);
+    }
+
+    // Recréer les bons index depuis le schéma
+    await Attendance.syncIndexes();
+
+    const finalIndexes = await Attendance.collection.indexes();
+    console.log('✅ Index Attendance OK :',
+      finalIndexes.map(i => `${i.name}${i.unique ? ' (unique)' : ''}`)
+    );
+  } catch (err) {
+    console.error('⚠️ Index sync error:', err.message);
+  }
+});
+
 app.use(cors({
-  origin: process.env.CLIENT_URL,
+  origin: process.env.CLIENT_URL || '*',
   credentials: true,
 }));
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
 
-// Swagger docs
 app.use('/api/docs', swaggerUi.serve, swaggerUi.setup(swaggerSpec));
 app.get('/api/openapi.json', (req, res) => res.json(swaggerSpec));
 
-// API Routes
 app.use('/api/auth', authRoutes);
 app.use('/api/attendance', attendanceRoutes);
 app.use('/api/tasks', taskRoutes);
 app.use('/api/admin', adminRoutes);
 app.use('/api/stats', statsRoutes);
 
-// Health check
 app.get('/api/health', (req, res) => {
   res.json({ success: true, message: 'Assistance Ghana API is running', timestamp: new Date() });
 });
 
-// 404 handler
 app.use((req, res) => {
   res.status(404).json({ success: false, message: 'Route not found' });
 });
 
-// Global error handler
 app.use(errorHandler);
 
 const PORT = process.env.PORT || 5000;
