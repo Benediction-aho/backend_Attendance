@@ -43,7 +43,7 @@ const checkIn = async (req, res, next) => {
     }
 
     const [h, m] = time.split(':').map(Number);
-    const isLate = h > 8 || (h === 8 && m > 30);
+    const isLate = h > 8 || (h === 8 && m > 5);
 
     // Atomic upsert — eliminates race condition completely
     // $setOnInsert only runs on INSERT, not on find (idempotent)
