@@ -29,11 +29,12 @@ La sécurité est décrite dans un document séparé : `security.md`.
 | Langue | **Anglais uniquement** (le français est retiré) | ✅ validé |
 | Thème | **Un seul thème clair** (le thème sombre est retiré) | ✅ validé |
 | Logo | **Logo Assistance Ghana conservé** | ✅ validé |
-| Application mobile | **React + Capacitor** : le même code React est transformé en application Android / iOS installable. Installation **obligatoire** pour les employés. | ✅ validé |
-| Accès web | Interface web disponible pour tous (employés, admins, super admins), en plus de l'application installée | ✅ validé |
+| Application mobile | **PWA (Progressive Web App)** : l'application web s'installe sur l'écran d'accueil (iPhone via Safari « Ajouter à l'écran d'accueil », Android via Chrome). Pas d'application native, pas d'App Store. La plupart des employés ont un iPhone. | ✅ validé |
+| Accès web | Interface web disponible pour tous (employés, admins, super admins), dans le navigateur ou installée en PWA | ✅ validé |
 | Stockage des fichiers (photos de profil, rapports PDF) | Supabase Storage (ou équivalent compatible S3) | ⏳ proposé |
 | Tâches planifiées (17h, 18h, vendredi) | Planificateur et files d'attente Laravel (scheduler + queues) | ⏳ proposé |
-| Notifications push sur téléphone | Firebase Cloud Messaging (Android) / Apple Push (iOS), via Capacitor | ⏳ proposé |
+| Notifications push sur téléphone | **Web Push** (standard du web) : fonctionne sur Android et sur iPhone (iOS 16.4+) quand la PWA est installée sur l'écran d'accueil | ✅ validé |
+| Détection du Wi-Fi du bureau | Côté serveur, par **l'adresse IP publique** du bureau (un navigateur ne peut pas lire le nom du Wi-Fi) | ✅ validé |
 | Schéma de données | Reprendre le schéma actuel (User, Attendance, CheckInAttempt, Task), converti en tables SQL, puis étendu | ✅ validé |
 
 ## 2. Rôles et autorisations
@@ -77,15 +78,16 @@ Une ou deux pages regroupant **tous les paramètres du système**, modifiables a
 |---|---|
 | Coordonnées GPS du bureau | 5.595223, -0.216703 |
 | Rayon du périmètre de validation du check-in | **50 m** |
-| Rayon de la zone de check-in automatique | **30 m** |
+| Adresses IP publiques du Wi-Fi du bureau (IPv4 / IPv6) | à renseigner (liste modifiable) |
+| Mode de validation du check-in manuel | **GPS, ou Wi-Fi du bureau si le GPS échoue** |
 | Plage horaire du check-in automatique | **06:30 → 12:00** |
 | Nombre maximum de jours off par semaine | **2** |
 | Taille maximale d'un rapport PDF | **10 Mo** |
 | Taille maximale des pièces jointes d'un email | **30 Mo** (au-delà : liens sécurisés) |
 | Durée de conservation des journaux | **12 mois** |
 | Jours fériés | liste à remplir |
-| Délai dans la zone avant notification de rappel | **5 min** |
-| Délai dans la zone avant check-in automatique | **10 min** |
+| Délai après détection sur le Wi-Fi avant notification de rappel | **5 min** |
+| Délai après détection sur le Wi-Fi avant check-in automatique | **10 min** |
 | Activer / désactiver le check-in automatique | activé |
 | Heure de début du retard | **08:10** |
 | Heure de fin de journée (départ anticipé avant) | **17:00** |
@@ -149,21 +151,24 @@ Les changements sensibles passent **par email** (Resend) :
 
 ## 6. Pointage
 
-### Check-in
-- Périmètre de validation : **50 m** autour du bureau.
+### Check-in manuel
+- Le check-in manuel utilise **le GPS** : l'employé doit être dans le périmètre de **50 m** autour du bureau (précision prise en compte).
+- **Mode « GPS ou Wi-Fi »** : si le GPS échoue ou reste trop imprécis (fréquent à l'intérieur) **et** que l'employé est connecté au Wi-Fi du bureau, le check-in est accepté. La méthode utilisée (GPS / Wi-Fi) est enregistrée.
 - Retard à partir de **08:10**.
-- Check-in manuel possible à tout moment dans le périmètre.
+- Sans connexion internet, le check-in est impossible (l'heure vient du serveur) : l'application affiche un message demandant de se connecter.
 
-### Check-in automatique (pour éviter les oublis)
-1. L'employé entre dans le périmètre de 50 m.
-2. Il reste dans la zone des **30 m** pendant **5 min** → notification de rappel : « Vous n'avez pas encore fait votre check-in ».
-3. Il reste encore 5 min (soit **10 min** au total) → le check-in se fait **automatiquement**.
-4. Le check-in automatique est marqué comme tel dans l'historique (visible par les admins).
-5. **Heure enregistrée = heure d'arrivée dans la zone** (pas l'heure à laquelle le check-in automatique se déclenche). Exemple : arrivée dans la zone à 08:05, check-in automatique à 08:15 → heure enregistrée 08:05, pas de retard.
-   - Pour ne pas dépendre de l'horloge du téléphone, l'application signale au serveur l'**entrée dans la zone** ; c'est le serveur qui note l'heure d'arrivée.
-6. Le check-in automatique ne fonctionne que **les jours ouvrés** de l'employé et **dans une plage horaire** (par défaut **06:30 → 12:00**, configurable). Jamais les jours off, jours fériés ou jours de congé.
-7. **Hors connexion** : si l'employé n'a pas internet (données ou Wi-Fi coupés), l'application lui envoie une **notification sur le téléphone** lui demandant de se connecter. Le check-in n'est enregistré **qu'au moment où il atteint le serveur**, et l'heure retenue est **celle de cet enregistrement**. Exemple : arrivé à 08:05 sans connexion, connecté à 08:10 → enregistré à 08:10 (et donc en retard). Le retard dû à l'absence de connexion est de la responsabilité de l'employé.
-8. Après un check-out, pas de nouveau check-in automatique le même jour (un seul pointage par jour).
+### Check-in automatique par le Wi-Fi du bureau (pour éviter les oublis)
+Le suivi GPS en arrière-plan est impossible avec une PWA : **l'automatisme repose sur le Wi-Fi du bureau, pas sur le GPS.**
+
+1. Le serveur reconnaît le Wi-Fi du bureau grâce à **l'adresse IP publique** du bureau (configurable).
+2. Dès que l'application de l'employé est ouverte et contacte le serveur **depuis le Wi-Fi du bureau**, le serveur note la **première détection** du jour. Tant que l'application est ouverte, elle signale discrètement sa présence (environ chaque minute, sans GPS).
+3. **5 min** après la première détection, toujours sans check-in → **notification** (push + dans l'application) : « You haven't checked in yet ».
+4. **10 min** après la première détection, toujours sans check-in → **check-in automatique**.
+5. **Heure enregistrée = heure de la première détection** sur le Wi-Fi (pas l'heure du déclenchement). Exemple : détecté à 08:05, check-in automatique à 08:15 → heure enregistrée 08:05, pas de retard.
+6. Marqué « automatique (Wi-Fi) » dans l'historique.
+7. Uniquement **les jours ouvrés** de l'employé, **de 06:30 à 12:00** (configurable) ; jamais les jours off, de télétravail, de congé ou fériés ; jamais après un check-out (un seul pointage par jour).
+
+**Limite** : une PWA ne tourne pas en arrière-plan. La détection n'a lieu que si l'employé **ouvre l'application** en étant sur le Wi-Fi du bureau. Comme l'application est bloquée tant que le check-in n'est pas fait, un employé qui l'ouvre pour noter une tâche déclenche la détection.
 
 ### Check-out
 - Check-out manuel, comme aujourd'hui, **sans obligation d'être au bureau** : l'employé peut oublier et faire son check-out de chez lui.
@@ -272,8 +277,8 @@ Les changements sensibles passent **par email** (Resend) :
 | Nouvelle inscription | Super admin + admins autorisés | Application + email |
 | Compte confirmé + mot de passe unique | Employé | Email |
 | Changement d'email / de mot de passe | Employé | Email |
-| Rappel de check-in (5 min dans la zone) | Employé | Notification push sur le téléphone |
-| Check-in / check-out automatique effectué | Employé | Notification push |
+| Rappel de check-in (5 min après détection sur le Wi-Fi du bureau) | Employé | Notification push + application |
+| Check-in automatique (Wi-Fi) effectué | Employé | Notification push + application |
 | Check-out anticipé avec motif | Admins autorisés | Application |
 | Rappel : rapport hebdomadaire pas encore envoyé (vendredi 16:30) | Employés concernés | Notification push + application |
 | Fin de la fenêtre d'envoi du vendredi (17:00) | Super admin + admins autorisés à voir les rapports | Application + email (avec les rapports reçus) |
@@ -282,14 +287,15 @@ Les changements sensibles passent **par email** (Resend) :
 
 ## 9. Accès
 
-- Les employés ont accès **par le navigateur ET par l'application installée**.
-- Le **check-in automatique** (zone des 30 m) et les notifications push ne fonctionnent qu'avec **l'application installée**. Dans le navigateur, le check-in reste manuel.
+- Les employés ont accès **par le navigateur** et par **la PWA installée** sur l'écran d'accueil.
+- Les **notifications push sur iPhone** exigent que la PWA soit **installée sur l'écran d'accueil** (iOS 16.4 ou plus récent). L'application guide l'employé pour l'installer et autoriser les notifications au premier lancement.
+- Sans installation ou sans autorisation, les notifications restent visibles dans le centre de notifications de l'application.
 
 ## 9 bis. Journaux d'activité (logs) – super admin
 
 - Le super admin a accès à **tous les journaux** de l'application, pour savoir ce qui se passe sur chaque compte **sans se connecter au compte** de la personne.
 - Contenu :
-  - **actions** de chaque utilisateur : connexions, check-in / check-out (manuel, automatique, mission, hors connexion), tâches, clients, envois de rapports, modifications de profil ;
+  - **actions** de chaque utilisateur : connexions, check-in / check-out (manuel GPS, manuel Wi-Fi, automatique Wi-Fi, mission, télétravail), tâches, clients, envois de rapports, modifications de profil ;
   - **événements automatiques** : rappels, check-in automatiques, check-out de 00:00, rapports de 17:00 / vendredi / le 26, emails envoyés ou en échec ;
   - **erreurs** : erreurs du serveur **et** erreurs survenues dans l'application de l'employé (téléphone, navigateur, version de l'application, message d'erreur), rattachées à son compte ;
   - **sécurité** : échecs de connexion, blocages, verrouillages, changements d'autorisations (voir `security.md`).
@@ -330,7 +336,8 @@ Les changements sensibles passent **par email** (Resend) :
 
 ## Questions ouvertes
 
-Aucune pour l'instant.
+1. **Check-in automatique sur une seule détection** : si l'employé ouvre l'application sur le Wi-Fi du bureau puis la ferme, le serveur ne peut plus vérifier qu'il est « toujours connecté » à 10 min. Choix par défaut : la première détection suffit pour faire le check-in automatique à 10 min. À confirmer.
+2. **Rappel horaire** pour ceux qui n'ouvrent pas l'application : envoyer une notification push à une heure fixe (ex. 08:05) à tout employé attendu qui n'a pas fait son check-in ? Désactivé par défaut, activable dans la configuration.
 
 ## Reste à spécifier
 

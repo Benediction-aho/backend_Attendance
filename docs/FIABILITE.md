@@ -173,6 +173,9 @@ Ce sont les points des spécifications qui, sans décision claire, produiront de
 | C4.14 Taille des emails | PDF max **10 Mo** ; pièces jointes jusqu'à **~30 Mo** par email, au-delà **liens sécurisés** |
 | Nouveau | **Journaux d'activité** complets consultables par le super admin (voir `SPECS_REFONTE.md` 9 bis) |
 | Jour de télétravail | **Check-in télétravail en un clic**, sans contrôle de position, même calcul de retard |
+| Application | **PWA** au lieu d'une application native (majorité d'iPhone). Les points C1.4 (applis tuées en arrière-plan) et C6.20 (version minimale de l'application) deviennent sans objet ; la PWA propose elle-même la mise à jour |
+| Check-in automatique | Repose sur le **Wi-Fi du bureau** (adresse IP) au lieu du GPS en arrière-plan : rappel 5 min et check-in 10 min après la première détection, heure = première détection |
+| Check-in manuel | **GPS (50 m)**, avec repli sur le Wi-Fi du bureau si le GPS échoue |
 
 ### Choix par défaut retenus (modifiables)
 
@@ -180,7 +183,7 @@ Pour les points non tranchés, voici ce qui sera appliqué sauf avis contraire :
 
 | Point | Choix par défaut |
 |---|---|
-| C1.4 Applis tuées en arrière-plan | Guide affiché au premier lancement pour désactiver l'économie de batterie pour l'application |
+| C1.4 Applis tuées en arrière-plan | Sans objet (PWA) |
 | C1.6 Même compte sur plusieurs appareils | **Autorisé**, chaque appareil visible dans les journaux ; l'admin peut déconnecter un appareil |
 | C2.8 Départ avant 17:00 sans check-out | Journée marquée « check-out oublié » à 00:00, pas de motif demandé |
 | C4.12 Vendredi férié / employé absent | Pas attendu ce vendredi ; il peut envoyer son rapport le jour ouvré suivant, sans être compté en retard |

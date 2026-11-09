@@ -8,7 +8,7 @@ Statut : **proposition à valider** avant le début du développement.
 ## 1. Architecture générale
 
 ```
- Téléphone (application Capacitor)      Navigateur (web)
+ Téléphone (PWA installée)             Navigateur (web)
             \                               /
              \                             /
               React + Tailwind (même code, un seul dépôt)
@@ -22,7 +22,7 @@ Statut : **proposition à valider** avant le début du développement.
           └─────────────┴──────────────┴─────────────────┘
                  |                |               |
           PostgreSQL        Stockage fichiers    Resend (emails)
-          (Supabase)        (Supabase Storage)   Firebase (push)
+          (Supabase)        (Supabase Storage)   Web Push
 ```
 
 Principes :
@@ -45,7 +45,8 @@ Principes :
 | Emails | Resend (pilote natif Laravel) |
 | Génération des PDF | DomPDF (rapport mensuel selon le modèle) |
 | Stockage des fichiers | Supabase Storage via le protocole S3 (photos, PDF), accès par liens temporaires |
-| Notifications push | Firebase Cloud Messaging (Android et iOS) |
+| Notifications push | Web Push (clés VAPID), Android et iPhone (PWA installée, iOS 16.4+) |
+| Wi-Fi du bureau | Reconnaissance de l'adresse IP publique du bureau ; configuration des intermédiaires de confiance pour lire la vraie adresse |
 | Tests | Pest (tests unitaires et tests d'API) |
 | Test de charge | k6 |
 | Suivi des erreurs | Sentry (offre gratuite au début) |
@@ -62,7 +63,7 @@ Principes :
 | Données serveur | TanStack Query (cache, nouvelles tentatives automatiques, rafraîchissement) |
 | Formulaires | React Hook Form + Zod (validation) |
 | Graphiques | Recharts |
-| Application mobile | Capacitor (Android + iOS) : géolocalisation en arrière-plan, notifications locales et push, détection des fausses positions |
+| Application mobile | **PWA** : manifeste, service worker (mise à jour contrôlée, pas de cache des réponses de l'API), installation guidée sur iPhone et Android, Web Push |
 | Tests | Vitest (composants), Playwright (parcours complets) |
 | Hébergement test | Vercel |
 
@@ -90,7 +91,6 @@ frontend_Attendance/
     features/          ← un dossier par module (auth, attendance, tasks…)
     ui/                ← composants du design (boutons, cartes, tableaux, animations)
     lib/               ← client API, géolocalisation, appareils
-  android/  ios/       ← projets natifs générés par Capacitor
   e2e/                 ← tests Playwright
 ```
 
@@ -106,7 +106,7 @@ Toutes les dates et heures sont stockées **avec fuseau horaire** ; le « jour d
 | `work_schedules` | jours off et de télétravail par employé (selon contrat), verrouillés après sélection |
 | `holidays`, `leaves` | jours fériés ; congés par employé |
 | `attendances` | un pointage par employé et par jour (**contrainte unique**) : type de check-in (manuel / automatique / mission / télétravail), heure d'arrivée, position et précision, retard, **règle de retard utilisée**, validation de mission, check-out (manuel / automatique 00:00), distance au bureau, départ anticipé et motif |
-| `zone_presences` | suivi de la présence dans la zone pour le check-in automatique (entrée, dernière position, rappel envoyé) |
+| `office_wifi_presences` | détections de l'employé sur le Wi-Fi du bureau par jour (première détection, dernière détection, rappel envoyé, check-in automatique fait) |
 | `checkin_attempts` | tentatives refusées (hors périmètre, position imprécise, fausse position) |
 | `tasks` | tâches (prévue / effectuée, heure de réalisation) |
 | `clients` | client, service saisi + version normalisée pour les regroupements, quantité |
@@ -114,7 +114,7 @@ Toutes les dates et heures sont stockées **avec fuseau horaire** ; le « jour d
 | `weekly_reports`, `weekly_report_files` | synthèse de la semaine, PDF envoyés (avec versions), heure d'envoi, en retard ou non |
 | `monthly_reports` | période, fichier PDF, destinataires, date d'envoi |
 | `notifications` | centre de notifications dans l'application |
-| `devices` | appareils de chaque utilisateur : plateforme, version de l'application, jeton push, dernière activité |
+| `devices`, `push_subscriptions` | appareils de chaque utilisateur (navigateur, PWA installée ou non, dernière activité) et abonnements Web Push |
 | `login_attempts`, `login_codes` | échecs par appareil et par compte, blocages ; codes à usage unique et liens de récupération (hachés) |
 | `activity_logs` | journaux d'activité, d'erreurs et de sécurité (ajout seulement, jamais modifiés) |
 | `scheduled_runs` | trace de chaque tâche planifiée exécutée, pour **ne jamais l'exécuter deux fois** et rattraper celles manquées |
@@ -152,7 +152,7 @@ Chaque phase se termine par une démonstration et des critères de validation. O
 - **Validation** : parcours complet inscription → validation → email → première connexion → changement de code, testé automatiquement de bout en bout.
 
 ### Phase 3 – Pointage (sans l'automatique)
-- Check-in manuel avec **précision GPS**, nouveaux essais automatiques et messages clairs pour chaque cas.
+- Check-in manuel avec **précision GPS**, nouveaux essais automatiques et messages clairs pour chaque cas ; **repli sur le Wi-Fi du bureau** si le GPS échoue.
 - Check-out avec **distance au bureau** ; **motif obligatoire** avant 17:00.
 - Check-in **mission** (validation admin) et **télétravail** (un clic).
 - Jours off / télétravail selon contrat, congés, jours fériés.
@@ -163,15 +163,13 @@ Chaque phase se termine par une démonstration et des critères de validation. O
   - **test de charge : 200 check-ins simultanés, zéro erreur, zéro doublon** ;
   - tests du calcul de retard, de la frontière de minuit, des jours off / congés / fériés.
 
-### Phase 4 – Application installable et check-in automatique
-- Projets Android et iOS avec Capacitor.
-- Géolocalisation en arrière-plan : entrée dans la zone (50 m), suivi dans la zone des 30 m, **rappel à 5 min**, **check-in automatique à 10 min** avec l'heure d'arrivée notée par le serveur.
-- Uniquement jours ouvrés, 06:30 → 12:00 ; pas après un check-out.
-- Hors connexion : **notification** demandant de se connecter.
-- Notifications push (Firebase) + centre de notifications.
-- Guide de désactivation de l'économie de batterie, détection des fausses positions, version minimale obligatoire.
-- Détection des navigateurs intégrés (WhatsApp, Facebook).
-- **Validation** : essais réels au bureau sur plusieurs téléphones (voir section 7), dont des Android d'entrée de gamme.
+### Phase 4 – PWA, notifications et check-in automatique par Wi-Fi
+- PWA : installation guidée sur iPhone (Safari) et Android (Chrome), service worker avec mise à jour contrôlée (l'application propose la nouvelle version), aucune réponse de l'API mise en cache.
+- **Web Push** + centre de notifications ; guide d'autorisation des notifications au premier lancement.
+- **Check-in automatique par le Wi-Fi du bureau** : première détection par adresse IP, signal de présence pendant que l'application est ouverte, **rappel à 5 min**, **check-in automatique à 10 min**, heure = première détection.
+- Uniquement jours ouvrés, 06:30 → 12:00 ; pas après un check-out ; jamais les jours off / télétravail / congés / fériés.
+- Détection des navigateurs intégrés (WhatsApp, Facebook) avec message pour ouvrir Safari / Chrome.
+- **Validation** : essais réels **au bureau, sur le vrai Wi-Fi**, avec plusieurs iPhone et Android (voir section 7).
 
 ### Phase 5 – Tâches, clients et rapports
 - Tâches (prévues le matin / effectuées), clients (service libre avec suggestions), modification à tout moment.
@@ -205,7 +203,7 @@ Chaque phase se termine par une démonstration et des critères de validation. O
 
 | Niveau | Ce qui est testé | Quand |
 |---|---|---|
-| Tests unitaires | Règles métier : retard, distance et précision, zone des 30 m, minuit, périodes semaine / mois du 26 au 26, jours off / congés / fériés, blocages, autorisations | À chaque envoi de code |
+| Tests unitaires | Règles métier : retard, distance et précision, reconnaissance du Wi-Fi par IP, délais 5 / 10 min, minuit, périodes semaine / mois du 26 au 26, jours off / congés / fériés, blocages, autorisations | À chaque envoi de code |
 | Tests d'API | Chaque route, chaque rôle, chaque cas d'erreur | À chaque envoi de code |
 | Tests de concurrence | Double clic, automatique + manuel en même temps, 200 employés simultanés | Phases 3, 7 |
 | Tests de bout en bout | Inscription, connexion, check-in, tâches, clients, rapports, administration | Phases 2 à 7 |
@@ -219,7 +217,7 @@ Les heures (17:00, 16:30, 00:00, le 26…) sont testées avec une **horloge simu
 À réunir pour les phases 4 et 7 (prêtés par des employés si besoin) :
 - 2 à 3 Android d'entrée de gamme courants au Ghana (Tecno, Infinix, itel) ;
 - 1 Samsung (série A) ;
-- 1 iPhone récent et 1 iPhone plus ancien (si iOS est retenu) ;
+- **plusieurs iPhone** (la majorité des employés), dont un ancien modèle avec iOS 16.4 ou plus ;
 - navigateurs : Chrome, Safari, et un lien ouvert depuis WhatsApp.
 
 ## 8. Ce dont j'ai besoin de votre part
@@ -230,9 +228,7 @@ Les heures (17:00, 16:30, 00:00, le 26…) sont testées avec une **horloge simu
 | Compte **Resend** + **nom de domaine** d'envoi des emails (ex. `@assistanceghana.com`), avec accès aux réglages DNS pour le vérifier | Phase 0–1 |
 | Compte **Vercel** relié au dépôt frontend | Phase 0 |
 | Hébergeur de test pour le backend (Render, Railway ou Koyeb) | Phase 0 |
-| Projet **Firebase** (notifications push) | Phase 4 |
-| Compte **Google Play** (25 $ une fois) si publication sur le Play Store | Phase 8 |
-| Compte **Apple Developer** (99 $ / an) si iOS est nécessaire | Phase 4 |
+| **Adresse IP publique** du Wi-Fi du bureau (idéalement fixe, à demander au fournisseur d'accès) | Phase 4 |
 | **Logo** en haute qualité (SVG ou PNG) | Phase 2 |
 | **Coordonnées GPS exactes** du bureau (relevées sur place) | Phase 3 |
 | Liste des **jours fériés** | Phase 3 |
@@ -242,10 +238,7 @@ Les clés secrètes ne doivent **jamais** être envoyées dans la conversation :
 
 ## 9. Décisions à prendre avant de commencer
 
-1. **iOS** : y a-t-il des employés avec un iPhone ? Si non, on commence par Android seulement (plus simple, pas de compte Apple) et on ajoute iOS plus tard.
-2. **Module de géolocalisation en arrière-plan** :
-   - **(a)** module gratuit (communauté Capacitor) : suffisant pour commencer, mais moins fiable sur certains Android qui ferment les applications en arrière-plan ;
-   - **(b)** module professionnel payant (Transistorsoft) : le plus fiable pour le géorepérage en arrière-plan, licence payante pour Android.
-   - Recommandation : commencer par **(a)** et mesurer pendant la phase pilote ; passer à **(b)** si le check-in automatique n'est pas assez fiable.
+1. ~~iOS / application native~~ → **décidé : PWA** (majorité d'iPhone), pas de Capacitor.
+2. ~~Module de géolocalisation en arrière-plan~~ → **sans objet** : le check-in automatique repose sur le Wi-Fi du bureau.
 3. **Ordre de livraison** : le plan livre d'abord les comptes et le pointage (phases 1–4), puis les rapports (phase 5). Si les rapports sont plus urgents pour vous, on peut inverser les phases 4 et 5.
 4. **Mise en ligne par étapes** : mettre en service les phases 1–3 (pointage manuel) dès qu'elles sont validées, pour remplacer rapidement l'ancienne version boguée, puis ajouter le reste ? Ou tout livrer en une seule fois après la phase pilote ?

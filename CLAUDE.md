@@ -7,7 +7,7 @@ Status of the work: `docs/PROGRESS.md`.
 ## Agents and workflow (both repositories)
 
 Assistance Ghana Attendance v2 is built in two repositories that are always checked out side by side:
-`backend_Attendance` (Laravel API) and `frontend_Attendance` (React + Capacitor).
+`backend_Attendance` (Laravel API) and `frontend_Attendance` (React PWA).
 
 | Agent | Repository | Role |
 |---|---|---|

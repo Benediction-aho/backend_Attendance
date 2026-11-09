@@ -1,6 +1,6 @@
 # Sécurité – Assistance Ghana Attendance
 
-Document de référence pour la sécurité de la refonte (Laravel + PostgreSQL + React + Capacitor).
+Document de référence pour la sécurité de la refonte (Laravel + PostgreSQL + React PWA).
 Il complète `SPECS_REFONTE.md`.
 Statut : **en cours de rédaction**.
 
@@ -104,7 +104,13 @@ Le frontend ne sert qu'à **afficher** et à **envoyer des demandes**. Toutes le
 - Date de naissance, adresse, téléphone, WhatsApp : visibles uniquement par l'employé lui-même et les admins autorisés.
 
 ### Géolocalisation
-- Détection des **fausses positions GPS** sur Android (applications de simulation de position) via l'application installée ; tentative refusée et signalée aux admins.
+- Une PWA ne peut pas détecter les applications de fausse position GPS. Garde-fous : contrôle de la précision et de la cohérence des positions côté serveur, méthode de check-in (GPS / Wi-Fi) enregistrée et visible par les admins.
+
+### Wi-Fi du bureau (détection par adresse IP)
+- Le serveur lit l'adresse réelle du client uniquement à travers des **intermédiaires de confiance** déclarés (répartiteur, proxy) ; l'en-tête `X-Forwarded-For` d'une source non déclarée est ignoré, pour qu'un employé ne puisse pas se faire passer pour le bureau.
+- Le frontend appelle l'API **directement** (pas à travers un proxy qui masquerait l'adresse du téléphone).
+- Liste des adresses du bureau modifiable uniquement par le super admin, chaque modification inscrite au journal d'audit.
+- Recommandé : bloquer le **Relais privé iCloud** et les VPN sur le Wi-Fi du bureau (sinon l'adresse du téléphone est masquée).
 
 ## 6. Journal d'audit
 
@@ -122,7 +128,7 @@ Consultable par le super admin. Non modifiable.
 ## 7. Exploitation
 
 - **Sauvegardes** automatiques de la base de données, avec test de restauration.
-- Mises à jour de sécurité régulières des dépendances (Laravel, React, Capacitor).
+- Mises à jour de sécurité régulières des dépendances (Laravel, React).
 - Variables d'environnement séparées pour test (Supabase) et production.
 
 ---
