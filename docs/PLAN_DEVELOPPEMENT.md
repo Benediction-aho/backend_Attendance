@@ -238,5 +238,5 @@ Les clés secrètes ne doivent **jamais** être envoyées dans la conversation :
 
 1. ~~iOS / application native~~ → **décidé : PWA** (majorité d'iPhone), pas de Capacitor.
 2. ~~Module de géolocalisation en arrière-plan~~ → **sans objet** : check-in manuel uniquement (GPS + Face ID).
-3. **Ordre de livraison** : le plan livre d'abord les comptes et le pointage (phases 1–4), puis les rapports (phase 5). Si les rapports sont plus urgents pour vous, on peut inverser les phases 4 et 5.
-4. **Mise en ligne par étapes** : mettre en service les phases 1–3 (pointage manuel) dès qu'elles sont validées, pour remplacer rapidement l'ancienne version boguée, puis ajouter le reste ? Ou tout livrer en une seule fois après la phase pilote ?
+3. ~~Ordre de livraison~~ → **décidé : phase 4 avant la phase 5.**
+4. ~~Mise en ligne~~ → **décidé : par étapes** (pointage manuel en service dès la fin de la phase 3, puis ajouts).

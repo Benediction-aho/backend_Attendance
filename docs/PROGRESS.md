@@ -21,7 +21,6 @@ Phase 0 – Preparation: **not started** (waiting for the owner's accounts and d
 
 ## Blocked / questions for the owner
 - Accounts to provide (see `PLAN_DEVELOPPEMENT.md` section 8): Supabase, Resend + sending domain, Vercel, backend test host.
-- Decisions pending (`PLAN_DEVELOPPEMENT.md` section 9): order of phases 4/5; staged go-live or single release.
 
 ## Owner approval for production
 _Not given yet._
