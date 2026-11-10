@@ -104,13 +104,14 @@ Le frontend ne sert qu'à **afficher** et à **envoyer des demandes**. Toutes le
 - Date de naissance, adresse, téléphone, WhatsApp : visibles uniquement par l'employé lui-même et les admins autorisés.
 
 ### Géolocalisation
-- Une PWA ne peut pas détecter les applications de fausse position GPS. Garde-fous : contrôle de la précision et de la cohérence des positions côté serveur, méthode de check-in (GPS / Wi-Fi) enregistrée et visible par les admins.
+- Une PWA ne peut pas détecter les applications de fausse position GPS. Garde-fous : contrôle de la précision et de la cohérence des positions côté serveur, vérification Face ID obligatoire au check-in.
 
-### Wi-Fi du bureau (détection par adresse IP)
-- Le serveur lit l'adresse réelle du client uniquement à travers des **intermédiaires de confiance** déclarés (répartiteur, proxy) ; l'en-tête `X-Forwarded-For` d'une source non déclarée est ignoré, pour qu'un employé ne puisse pas se faire passer pour le bureau.
-- Le frontend appelle l'API **directement** (pas à travers un proxy qui masquerait l'adresse du téléphone).
-- Liste des adresses du bureau modifiable uniquement par le super admin, chaque modification inscrite au journal d'audit.
-- Recommandé : bloquer le **Relais privé iCloud** et les VPN sur le Wi-Fi du bureau (sinon l'adresse du téléphone est masquée).
+### Face ID (passkeys WebAuthn)
+- Seule la **clé publique** est stockée sur le serveur ; aucune donnée biométrique n'est transmise ni stockée.
+- Chaque vérification utilise un **défi unique** généré par le serveur, à usage unique et de courte durée (pas de rejeu possible).
+- Exiger la **vérification de l'utilisateur** (`userVerification: required`) ; le domaine de l'application (RP ID) est fixé côté serveur.
+- Un nouvel appareil n'est accepté qu'après **validation par un admin autorisé** ; chaque enregistrement, validation et révocation est inscrit au journal d'audit.
+- Le check-in sans Face ID n'est possible que par un **admin autorisé**, avec motif.
 
 ## 6. Journal d'audit
 

@@ -174,8 +174,8 @@ Ce sont les points des spécifications qui, sans décision claire, produiront de
 | Nouveau | **Journaux d'activité** complets consultables par le super admin (voir `SPECS_REFONTE.md` 9 bis) |
 | Jour de télétravail | **Check-in télétravail en un clic**, sans contrôle de position, même calcul de retard |
 | Application | **PWA** au lieu d'une application native (majorité d'iPhone). Les points C1.4 (applis tuées en arrière-plan) et C6.20 (version minimale de l'application) deviennent sans objet ; la PWA propose elle-même la mise à jour |
-| Check-in automatique | Repose sur le **Wi-Fi du bureau** (adresse IP) au lieu du GPS en arrière-plan : rappel 5 min et check-in 10 min après la première détection, heure = première détection |
-| Check-in manuel | **GPS (50 m)**, avec repli sur le Wi-Fi du bureau si le GPS échoue |
+| Check-in automatique | **Retiré** (ainsi que la détection Wi-Fi). Remplacé par un rappel par notification à heure fixe (08:05) |
+| Check-in manuel | **GPS (50 m) puis vérification Face ID** (passkey) ; secours par un admin autorisé |
 
 ### Choix par défaut retenus (modifiables)
 

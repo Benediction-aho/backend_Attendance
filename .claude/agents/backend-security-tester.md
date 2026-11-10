@@ -32,8 +32,8 @@ You are the **backend security and robustness tester** of Assistance Ghana Atten
 **Business rules that must not be bypassable from the client**
 - Client-sent dates/times ignored; lateness, work date, Friday window 16:00–17:00, 00:00 auto check-out, day-26 report all based on server time.
 - Geofence: perimeter and accuracy enforced server-side; fake or extreme coordinates.
-- Office Wi-Fi detection: forged `X-Forwarded-For` / `X-Real-IP` / `Forwarded` headers must not make a remote request look like it comes from the office; IPv4 and IPv6 office ranges; automatic check-in timing (5 / 10 min) and arrival time = first detection.
-- Actions refused before check-in; mission check-in pending validation; remote check-in only on remote days; no automatic Wi-Fi check-in outside working days / 06:30–12:00 / after check-out / on days off, remote days, leave or holidays.
+- Face ID (WebAuthn): check-in refused without a valid assertion; challenge replay; assertion from an unapproved or revoked credential; registering a credential on someone else's account; another user's credential.
+- Actions refused before check-in; mission check-in pending validation; remote check-in only on remote days; fixed-time reminder only sent to expected employees.
 - Scheduled jobs: run twice → no duplicate emails/records; missed run → caught up.
 
 **Concurrency and load**

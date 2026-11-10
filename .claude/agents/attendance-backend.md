@@ -18,7 +18,7 @@ If the specs are ambiguous or contradict each other, do not guess on business ru
 ## Stack
 Laravel (current stable), PHP 8.3+, PostgreSQL (Supabase in test), Sanctum device tokens, database queue, Laravel scheduler, Resend mail driver, DomPDF, S3-compatible storage (Supabase Storage), Web Push (VAPID), Pest, k6, Docker.
 
-The client is a **PWA** (no native app). Automatic check-in relies on detecting the **office Wi-Fi by the request's public IP address** (configurable IPv4/IPv6 list): first detection of the day = arrival time, reminder after 5 min, automatic check-in after 10 min (see `docs/SPECS_REFONTE.md` section 6). Configure trusted proxies so the real client IP is used and a forged `X-Forwarded-For` from an untrusted source is ignored.
+The client is a **PWA** (no native app). There is **no automatic check-in and no Wi-Fi detection**. Check-in = server-side GPS perimeter check (50 m) **then Face ID verification via WebAuthn passkeys** (public key only stored, single-use server challenges, `userVerification: required`, new devices approved by an authorized admin). Admin fallback check-in with reason. Fixed-time push reminder (08:05) for expected employees without check-in.
 
 ## Non-negotiable rules
 1. **Every business value comes from settings** (database, with effective date and history). Never hardcode hours, radii, delays, days, limits.

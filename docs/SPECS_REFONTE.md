@@ -34,7 +34,6 @@ La sécurité est décrite dans un document séparé : `security.md`.
 | Stockage des fichiers (photos de profil, rapports PDF) | Supabase Storage (ou équivalent compatible S3) | ⏳ proposé |
 | Tâches planifiées (17h, 18h, vendredi) | Planificateur et files d'attente Laravel (scheduler + queues) | ⏳ proposé |
 | Notifications push sur téléphone | **Web Push** (standard du web) : fonctionne sur Android et sur iPhone (iOS 16.4+) quand la PWA est installée sur l'écran d'accueil | ✅ validé |
-| Détection du Wi-Fi du bureau | Côté serveur, par **l'adresse IP publique** du bureau (un navigateur ne peut pas lire le nom du Wi-Fi) | ✅ validé |
 | Schéma de données | Reprendre le schéma actuel (User, Attendance, CheckInAttempt, Task), converti en tables SQL, puis étendu | ✅ validé |
 
 ## 2. Rôles et autorisations
@@ -56,6 +55,8 @@ Chaque autorisation est un **palier** activable séparément dans la configurati
 - Voir les clients apportés par chaque employé
 - Voir les tâches effectuées
 - Valider les check-in mission
+- Valider les nouveaux appareils Face ID
+- Faire un check-in à la place d'un employé (secours)
 - Gérer les congés des employés
 - Modifier / retirer les jours off et de télétravail des employés
 - Ajouter un utilisateur directement
@@ -78,18 +79,14 @@ Une ou deux pages regroupant **tous les paramètres du système**, modifiables a
 |---|---|
 | Coordonnées GPS du bureau | 5.595223, -0.216703 |
 | Rayon du périmètre de validation du check-in | **50 m** |
-| Adresses IP publiques du Wi-Fi du bureau (IPv4 / IPv6) | à renseigner (liste modifiable) |
-| Mode de validation du check-in manuel | **GPS, ou Wi-Fi du bureau si le GPS échoue** |
-| Plage horaire du check-in automatique | **06:30 → 12:00** |
 | Nombre maximum de jours off par semaine | **2** |
 | Taille maximale d'un rapport PDF | **10 Mo** |
 | Taille maximale des pièces jointes d'un email | **30 Mo** (au-delà : liens sécurisés) |
 | Durée de conservation des journaux | **12 mois** |
 | Jours fériés | liste à remplir |
-| Délai après détection sur le Wi-Fi avant notification de rappel | **5 min** |
-| Délai après détection sur le Wi-Fi avant check-in automatique | **10 min** |
-| Activer / désactiver le check-in automatique | activé |
 | Heure de début du retard | **08:10** |
+| Heure du rappel de check-in | **08:05** |
+| Vérification Face ID au check-in | **activée** |
 | Heure de fin de journée (départ anticipé avant) | **17:00** |
 | Heure de check-out automatique (réinitialisation de la journée) | **00:00** |
 | Comptabiliser les heures de travail | **désactivé** |
@@ -152,23 +149,26 @@ Les changements sensibles passent **par email** (Resend) :
 ## 6. Pointage
 
 ### Check-in manuel
-- Le check-in manuel utilise **le GPS** : l'employé doit être dans le périmètre de **50 m** autour du bureau (précision prise en compte).
-- **Mode « GPS ou Wi-Fi »** : si le GPS échoue ou reste trop imprécis (fréquent à l'intérieur) **et** que l'employé est connecté au Wi-Fi du bureau, le check-in est accepté. La méthode utilisée (GPS / Wi-Fi) est enregistrée.
+1. **Périmètre GPS** : l'employé doit être dans le périmètre de **50 m** autour du bureau (précision prise en compte). Le serveur décide.
+2. **Vérification Face ID** : une fois le périmètre validé, l'application demande **Face ID** (ou l'empreinte / la reconnaissance faciale sur Android). Le check-in n'est enregistré qu'après cette vérification. Objectif : empêcher qu'une autre personne pointe à la place de l'employé.
 - Retard à partir de **08:10**.
-- Sans connexion internet, le check-in est impossible (l'heure vient du serveur) : l'application affiche un message demandant de se connecter.
+- Sans connexion internet, le check-in est impossible (l'heure vient du serveur) : message demandant de se connecter.
+- Le check-in **mission** et le check-in **télétravail** demandent aussi Face ID (sans contrôle de périmètre).
 
-### Check-in automatique par le Wi-Fi du bureau (pour éviter les oublis)
-Le suivi GPS en arrière-plan est impossible avec une PWA : **l'automatisme repose sur le Wi-Fi du bureau, pas sur le GPS.**
+### Face ID : fonctionnement
+- Technique : **passkey (WebAuthn)**, standard du web, fonctionne dans la PWA sur iPhone (Safari) et Android (Chrome), sans application native.
+- **Enregistrement** : à la **première connexion** (après réception du code par email), l'employé enregistre Face ID sur son téléphone. Sans cet enregistrement, il ne peut pas pointer. (L'enregistrement ne peut pas se faire au moment de l'inscription : le compte n'est pas encore validé.)
+- **Ce que le serveur reçoit** : seulement une preuve cryptographique que le propriétaire du téléphone a été reconnu. **Aucune photo ni donnée du visage** ne quitte le téléphone ni n'est stockée.
+- **Nouveau téléphone / Face ID réinitialisé** : l'employé demande un nouvel enregistrement, qui doit être **validé par un admin autorisé** (nouvelle autorisation « Valider les nouveaux appareils Face ID »). L'ancien enregistrement est révoqué.
+- **Limites à connaître** :
+  - Face ID reconnaît **le visage enregistré dans le téléphone**, pas l'identité de l'employé : si l'employé donne son téléphone et son code à quelqu'un, le système ne peut pas le savoir.
+  - Si Face ID échoue plusieurs fois, iPhone propose le **code du téléphone** à la place ; le web ne peut pas l'interdire.
+  - Garde-fou : un enregistrement Face ID est lié à **un seul appareil validé** ; une passkey synchronisée sur un autre appareil n'est acceptée qu'après validation admin.
+- **Secours** : si Face ID est impossible (téléphone cassé, oublié), un admin autorisé peut faire le check-in à la place de l'employé, avec motif, inscrit au journal.
 
-1. Le serveur reconnaît le Wi-Fi du bureau grâce à **l'adresse IP publique** du bureau (configurable).
-2. Dès que l'application de l'employé est ouverte et contacte le serveur **depuis le Wi-Fi du bureau**, le serveur note la **première détection** du jour. Tant que l'application est ouverte, elle signale discrètement sa présence (environ chaque minute, sans GPS).
-3. **5 min** après la première détection, toujours sans check-in → **notification** (push + dans l'application) : « You haven't checked in yet ».
-4. **10 min** après la première détection, toujours sans check-in → **check-in automatique**.
-5. **Heure enregistrée = heure de la première détection** sur le Wi-Fi (pas l'heure du déclenchement). Exemple : détecté à 08:05, check-in automatique à 08:15 → heure enregistrée 08:05, pas de retard.
-6. Marqué « automatique (Wi-Fi) » dans l'historique.
-7. Uniquement **les jours ouvrés** de l'employé, **de 06:30 à 12:00** (configurable) ; jamais les jours off, de télétravail, de congé ou fériés ; jamais après un check-out (un seul pointage par jour).
-
-**Limite** : une PWA ne tourne pas en arrière-plan. La détection n'a lieu que si l'employé **ouvre l'application** en étant sur le Wi-Fi du bureau. Comme l'application est bloquée tant que le check-in n'est pas fait, un employé qui l'ouvre pour noter une tâche déclenche la détection.
+### Pas de check-in automatique
+- Le check-in automatique et la détection du Wi-Fi du bureau sont **retirés**. Le check-in est toujours **manuel** (GPS + Face ID).
+- Contre les oublis : **rappel par notification à heure fixe** (par défaut **08:05**, configurable) aux employés attendus qui n'ont pas encore pointé.
 
 ### Check-out
 - Check-out manuel, comme aujourd'hui, **sans obligation d'être au bureau** : l'employé peut oublier et faire son check-out de chez lui.
@@ -277,8 +277,8 @@ Le suivi GPS en arrière-plan est impossible avec une PWA : **l'automatisme repo
 | Nouvelle inscription | Super admin + admins autorisés | Application + email |
 | Compte confirmé + mot de passe unique | Employé | Email |
 | Changement d'email / de mot de passe | Employé | Email |
-| Rappel de check-in (5 min après détection sur le Wi-Fi du bureau) | Employé | Notification push + application |
-| Check-in automatique (Wi-Fi) effectué | Employé | Notification push + application |
+| Rappel de check-in (heure fixe, 08:05 par défaut) | Employé attendu sans check-in | Notification push + application |
+| Demande de nouvel appareil Face ID | Admins autorisés | Application |
 | Check-out anticipé avec motif | Admins autorisés | Application |
 | Rappel : rapport hebdomadaire pas encore envoyé (vendredi 16:30) | Employés concernés | Notification push + application |
 | Fin de la fenêtre d'envoi du vendredi (17:00) | Super admin + admins autorisés à voir les rapports | Application + email (avec les rapports reçus) |
@@ -295,7 +295,7 @@ Le suivi GPS en arrière-plan est impossible avec une PWA : **l'automatisme repo
 
 - Le super admin a accès à **tous les journaux** de l'application, pour savoir ce qui se passe sur chaque compte **sans se connecter au compte** de la personne.
 - Contenu :
-  - **actions** de chaque utilisateur : connexions, check-in / check-out (manuel GPS, manuel Wi-Fi, automatique Wi-Fi, mission, télétravail), tâches, clients, envois de rapports, modifications de profil ;
+  - **actions** de chaque utilisateur : connexions, check-in / check-out (GPS + Face ID, mission, télétravail, par un admin), enregistrements et révocations Face ID, tâches, clients, envois de rapports, modifications de profil ;
   - **événements automatiques** : rappels, check-in automatiques, check-out de 00:00, rapports de 17:00 / vendredi / le 26, emails envoyés ou en échec ;
   - **erreurs** : erreurs du serveur **et** erreurs survenues dans l'application de l'employé (téléphone, navigateur, version de l'application, message d'erreur), rattachées à son compte ;
   - **sécurité** : échecs de connexion, blocages, verrouillages, changements d'autorisations (voir `security.md`).
@@ -336,8 +336,7 @@ Le suivi GPS en arrière-plan est impossible avec une PWA : **l'automatisme repo
 
 ## Questions ouvertes
 
-1. **Check-in automatique sur une seule détection** : si l'employé ouvre l'application sur le Wi-Fi du bureau puis la ferme, le serveur ne peut plus vérifier qu'il est « toujours connecté » à 10 min. Choix par défaut : la première détection suffit pour faire le check-in automatique à 10 min. À confirmer.
-2. **Rappel horaire** pour ceux qui n'ouvrent pas l'application : envoyer une notification push à une heure fixe (ex. 08:05) à tout employé attendu qui n'a pas fait son check-in ? Désactivé par défaut, activable dans la configuration.
+Aucune pour l'instant.
 
 ## Reste à spécifier
 
