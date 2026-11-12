@@ -4,7 +4,8 @@ Updated by the agents at the end of every work session.
 
 ## Current phase
 Phase 1 – Backend foundations: security review done (`docs/reports/phase-1-security.md`: 0 Critical/High, 3 Medium, 6 Low, 5 Info).
-**All Medium and Low findings fixed (P1-01 … P1-09) plus Info P1-10, P1-11, P1-13, each with a regression test – ready for re-test by backend-security-tester** (see "Fixes applied" in the report).
+**Phase 1 backend: all findings closed pending final check.** Re-test findings P1-15 … P1-18 fixed with regression tests and P1-19 accepted (owner recovers by signing in again or by admin unlock) – **ready for final check by backend-security-tester** (see "Fixes applied after the re-test" in the report).
+API note (non-breaking): `POST /auth/super-admin/code` accepts an optional `device_id`; the PWA should send the same id as for sign-in. `log_retention_months` minimum is now 12. Deployment: the scheduler container needs the owner DB credentials for the log purge (DEPLOYMENT.md §2.1).
 Phase 0: re-test done by backend-security-tester (P0-02, P0-03, P0-04 confirmed fixed); P0-01 waits for the owner.
 
 ### Phase 1 backend – what exists
@@ -94,6 +95,7 @@ Phase 1 business questions (safe default implemented, configurable where possibl
 _Not given yet._
 
 ## Log
+- 2026-11-12 – P1-15 (purge floor 12 months + no EXECUTE for runtime role, purge on owner connection), P1-16 (known device evicts oldest unknown code, critical log), P1-17 (other codes cancelled on sign-in), P1-18 (atomic upsert limiter table), P1-19 accepted. 188 tests green, PHPStan clean.
 - 2026-11-12 – Phase 1 security fixes: P1-01 … P1-09, P1-10, P1-11, P1-13 fixed with regression tests (182 tests green); SPECS §4 aligned (super admin one-time code); ready for re-test.
 - 2026-11-12 – Phase 1 backend complete (schema, settings, roles/tiers, sign-up/approval/codes, super admin OTP + recovery, device lockout, sessions, profile, admin user management, activity logs, install command); phase 0 findings P0-02/03/04 fixed; CI on Postgres 17.
 - 2026-11-12 – Phase 0 backend: legacy v1 removed, Laravel 13 skeleton, security baseline, Docker, CI.

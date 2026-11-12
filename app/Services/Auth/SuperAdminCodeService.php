@@ -5,6 +5,7 @@ namespace App\Services\Auth;
 use App\Enums\LogLevel;
 use App\Enums\UserStatus;
 use App\Mail\SuperAdminLoginCodeMail;
+use App\Models\Device;
 use App\Models\LoginCode;
 use App\Models\User;
 use App\Services\ActivityLogger;
@@ -57,9 +58,12 @@ class SuperAdminCodeService
      * Sends a new one-time code (P1-05):
      * - limited per (account, IP) and per IP, so a stranger cannot use up the owner's quota;
      * - a new request only cancels earlier codes requested from the same IP, never a code in transit to the owner;
-     * - at most `otp_max_active_codes` codes are valid at once (this also bounds the emails sent).
+     * - at most `otp_max_active_codes` codes are valid at once (this also bounds the emails sent);
+     * - P1-16: when the cap is reached, a request from a device the super admin has already signed in on evicts
+     *   the oldest code requested from an unknown device, so a stranger cannot keep the owner from getting a code.
+     *   The contention is logged as critical.
      */
-    public function request(string $email, string $ip): void
+    public function request(string $email, string $ip, ?string $deviceId = null): void
     {
         $perHour = $this->settings->int('otp_requests_per_hour');
         $accountKey = 'otp:'.LockoutService::accountKey($email).':'.hash('sha256', $ip);
@@ -85,7 +89,11 @@ class SuperAdminCodeService
         $minutes = $this->settings->int('otp_ttl_minutes');
         $maxActive = $this->settings->int('otp_max_active_codes');
 
-        $created = DB::transaction(function () use ($user, $code, $minutes, $ip, $maxActive) {
+        $knownDevice = $deviceId !== null && $deviceId !== '' && $user->devices()
+            ->where('identifier_hash', Device::hashIdentifier($deviceId))->whereNotNull('first_login_at')->exists();
+        $evicted = false;
+
+        $created = DB::transaction(function () use ($user, $code, $minutes, $ip, $maxActive, $knownDevice, &$evicted) {
             // Serialise code requests of this account.
             User::query()->whereKey($user->id)->lockForUpdate()->first();
             $now = Carbon::now();
@@ -95,7 +103,15 @@ class SuperAdminCodeService
             // A new request replaces the earlier codes asked from the same IP only.
             (clone $active)->where('requested_ip', $ip)->update(['used_at' => $now, 'lookup_hash' => null]);
             if ((clone $active)->count() >= $maxActive) {
-                return false;
+                $oldestUnknown = $knownDevice
+                    ? (clone $active)->orderBy('created_at')->orderBy('id')->get()
+                        ->first(fn (LoginCode $c) => ! ($c->meta['known_device'] ?? false))
+                    : null;
+                if ($oldestUnknown === null) {
+                    return false;
+                }
+                LoginCode::query()->whereKey($oldestUnknown->id)->update(['used_at' => $now, 'lookup_hash' => null]);
+                $evicted = true;
             }
 
             LoginCode::query()->create([
@@ -105,6 +121,7 @@ class SuperAdminCodeService
                 'lookup_hash' => self::lookupHash($user, $code),
                 'expires_at' => $now->copy()->addMinutes($minutes),
                 'requested_ip' => $ip,
+                'meta' => ['known_device' => $knownDevice],
             ]);
 
             return true;
@@ -114,6 +131,10 @@ class SuperAdminCodeService
             $this->logger->security('auth.login_code_throttled', 'One-time code request refused: too many valid codes', LogLevel::Warning, $user);
 
             return;
+        }
+
+        if ($evicted) {
+            $this->logger->security('auth.login_code_contention', 'Too many sign-in codes requested from unknown devices: the oldest was cancelled for a known device', LogLevel::Critical, $user);
         }
 
         Mail::to($user->email)->queue(new SuperAdminLoginCodeMail($user->first_name, $code, $minutes));

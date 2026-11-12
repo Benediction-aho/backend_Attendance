@@ -50,8 +50,13 @@ it('keeps activity logs append-only at database level', function () {
 it('purges logs only through the SECURITY DEFINER purge function (P1-07)', function () {
     ActivityLog::query()->create(['type' => LogType::Action, 'level' => LogLevel::Info, 'event' => 't', 'description' => 'T']);
 
+    $old = ActivityLog::query()->create(['type' => LogType::Action, 'level' => LogLevel::Info, 'event' => 'old', 'description' => 'O']);
+    DB::statement('ALTER TABLE activity_logs DISABLE TRIGGER USER');
+    DB::table('activity_logs')->where('id', $old->id)->update(['created_at' => DB::raw("now() - interval '13 months'")]);
+    DB::statement('ALTER TABLE activity_logs ENABLE TRIGGER USER');
+
     expect((int) DB::scalar('SELECT purge_activity_logs(?)', [now()->addMinute()->toIso8601String()]))->toBe(1)
-        ->and(ActivityLog::query()->count())->toBe(0);
+        ->and(ActivityLog::query()->pluck('event')->all())->toBe(['t']);
 });
 
 it('refuses TRUNCATE on the activity log (P1-07)', function () {
@@ -74,13 +79,24 @@ it('does not let a role that does not own the log delete entries, even with the 
     DB::statement('RESET ROLE');
     expect(ActivityLog::query()->whereKey($log->id)->exists())->toBeTrue();
 
-    // The purge function (owned by the migration role) still works for it.
+    // P1-15: even with EXECUTE granted, the purge never deletes entries younger than the 12-month floor.
     $deleted = DB::transaction(function () {
         DB::statement('SET LOCAL ROLE attendance_app_test');
-        $n = (int) DB::scalar('SELECT purge_activity_logs(?)', [now()->addMinute()->toIso8601String()]);
+        $n = (int) DB::scalar("SELECT purge_activity_logs('infinity')");
         DB::statement('RESET ROLE');
 
         return $n;
     });
-    expect($deleted)->toBe(1);
+    expect($deleted)->toBe(0)->and(ActivityLog::query()->whereKey($log->id)->exists())->toBeTrue();
+});
+
+it('does not grant EXECUTE on the purge function to the runtime role (P1-15)', function () {
+    if (! DB::scalar("SELECT pg_has_role(current_user, 'attendance_app_test', 'MEMBER')")) {
+        $this->markTestSkipped('Local role attendance_app_test not set up.');
+    }
+    config(['database.app_role' => 'attendance_app_test']);
+    DB::statement('GRANT EXECUTE ON FUNCTION purge_activity_logs(timestamptz) TO attendance_app_test');
+    (require database_path('migrations/2026_11_14_100000_purge_logs_floor.php'))->up();
+
+    expect(DB::scalar("SELECT has_function_privilege('attendance_app_test', 'purge_activity_logs(timestamptz)', 'EXECUTE')"))->toBeFalse();
 });

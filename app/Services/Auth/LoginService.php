@@ -96,6 +96,9 @@ class LoginService
             if ($claimed !== 1) {
                 throw new ApiError(401, self::INVALID, 'invalid_credentials');
             }
+            // P1-17: once signed in, every other outstanding sign-in code of the account is cancelled.
+            LoginCode::query()->where('user_id', $user->id)->where('purpose', LoginCode::SUPER_ADMIN_LOGIN)
+                ->whereNull('used_at')->update(['used_at' => Carbon::now(), 'lookup_hash' => null]);
         }
 
         $token = DB::transaction(function () use ($user, $deviceHash, $input, $ip, $userAgent) {

@@ -2,6 +2,7 @@
 
 namespace App\Console\Commands;
 
+use App\Services\AtomicLimiter;
 use App\Services\ScheduledRunner;
 use App\Settings\SettingsService;
 use Illuminate\Console\Command;
@@ -24,10 +25,13 @@ class PurgeActivityLogs extends Command
 
         $ran = $runner->once('purge_logs', 'purge_logs:'.$today->toDateString(), $today, function () use ($settings, &$deleted) {
             $cutoff = Carbon::now()->subMonthsNoOverflow($settings->int('log_retention_months'));
-            // SECURITY DEFINER function owned by the migration role: the runtime role cannot delete logs itself.
-            $deleted = (int) DB::scalar('SELECT purge_activity_logs(?)', [$cutoff->toIso8601String()]);
+            // SECURITY DEFINER function owned by the migration role, executable only by the owner (P1-15).
+            // The function itself never deletes entries younger than 12 months.
+            $connection = config('database.log_purge_connection');
+            $deleted = (int) DB::connection(is_string($connection) ? $connection : null)->scalar('SELECT purge_activity_logs(?)', [$cutoff->toIso8601String()]);
         });
 
+        AtomicLimiter::prune();
         $this->info($ran ? "Deleted {$deleted} log entries." : 'Already done today.');
 
         return self::SUCCESS;

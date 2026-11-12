@@ -129,8 +129,8 @@ paths:
         '429': { $ref: '#/components/responses/TooManyRequests' }
   /auth/super-admin/code:
     post:
-      summary: Ask for a one-time sign-in code (super admins). Always 202; a code is emailed only to an active super admin. Rate limited per (account, IP) and per IP; a request only cancels earlier codes asked from the same IP; at most settings.otp_max_active_codes codes are valid at once (any of them signs in).
-      requestBody: { required: true, content: { application/json: { schema: { type: object, required: [email], properties: { email: { type: string } } } } } }
+      summary: Ask for a one-time sign-in code (super admins). Always 202; a code is emailed only to an active super admin. Rate limited per (account, IP) and per IP; a request only cancels earlier codes asked from the same IP; at most settings.otp_max_active_codes codes are valid at once (any of them signs in). When the cap is reached, a request sent with the `device_id` of a device the super admin already signed in on still gets a code (the oldest code asked from an unknown device is cancelled; P1-16). A successful sign-in cancels every other outstanding code (P1-17). Non-breaking: `device_id` is optional; the PWA should send the same id as for /auth/login.
+      requestBody: { required: true, content: { application/json: { schema: { type: object, required: [email], properties: { email: { type: string }, device_id: { type: string, maxLength: 200, nullable: true } } } } } }
       responses:
         '202': { description: '{ message }' }
   /auth/recovery:

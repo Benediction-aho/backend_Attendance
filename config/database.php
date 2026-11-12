@@ -22,6 +22,9 @@ return [
     // privileges only: no UPDATE/DELETE/TRUNCATE on activity_logs. See docs/DEPLOYMENT.md.
     'app_role' => env('DB_APP_ROLE'),
 
+    // Connection the log purge runs on (P1-15): the owner connection when a separate owner is configured.
+    'log_purge_connection' => env('DB_OWNER_USERNAME') || env('DB_OWNER_URL') ? 'pgsql_owner' : null,
+
     /*
     |--------------------------------------------------------------------------
     | Database Connections

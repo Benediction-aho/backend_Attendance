@@ -181,3 +181,59 @@ it('does not send a recovery link to an account that is not locked or not a supe
 it('rejects forged recovery tokens', function () {
     $this->postJson('/api/auth/recovery/confirm', ['token' => str_repeat('a', 64)])->assertStatus(422);
 });
+
+it('invalidates every other outstanding code once the super admin has signed in (P1-17)', function () {
+    foreach (['198.51.100.1', '198.51.100.2', '198.51.100.3'] as $ip) {
+        $this->withServerVariables(['REMOTE_ADDR' => $ip])->postJson('/api/auth/super-admin/code', ['email' => 'boss@example.com'])->assertStatus(202);
+    }
+    $codes = [];
+    Mail::assertQueued(SuperAdminLoginCodeMail::class, function ($m) use (&$codes) {
+        $codes[] = $m->code;
+
+        return true;
+    });
+    expect($codes)->toHaveCount(3);
+
+    $this->postJson('/api/auth/login', loginPayload('boss@example.com', $codes[0]))->assertOk();
+    $this->guest()->postJson('/api/auth/login', loginPayload('boss@example.com', $codes[1]))->assertStatus(401);
+    $this->guest()->postJson('/api/auth/login', loginPayload('boss@example.com', $codes[2]))->assertStatus(401);
+    expect(LoginCode::query()->whereNull('used_at')->count())->toBe(0);
+});
+
+it('still issues a code to a known device of the super admin when strangers filled the cap (P1-16)', function () {
+    // The owner signs in once on their phone: the device becomes known.
+    $first = requestCode($this, 'boss@example.com');
+    $this->postJson('/api/auth/login', loginPayload('boss@example.com', $first, 'owner-phone-000000001'))->assertOk();
+    Mail::fake();
+
+    // Strangers on three IPs (unknown device) fill the active-code cap.
+    foreach (['203.0.113.1', '203.0.113.2', '203.0.113.3'] as $ip) {
+        $this->guest()->withServerVariables(['REMOTE_ADDR' => $ip])
+            ->postJson('/api/auth/super-admin/code', ['email' => 'boss@example.com', 'device_id' => 'stranger-'.$ip])->assertStatus(202);
+    }
+    expect(LoginCode::query()->whereNull('used_at')->count())->toBe(3);
+    $oldest = LoginCode::query()->whereNull('used_at')->orderBy('id')->first();
+
+    // A stranger with an unknown device is still refused...
+    $this->withServerVariables(['REMOTE_ADDR' => '203.0.113.4'])
+        ->postJson('/api/auth/super-admin/code', ['email' => 'boss@example.com', 'device_id' => 'stranger-x'])->assertStatus(202);
+    Mail::assertQueued(SuperAdminLoginCodeMail::class, 3);
+
+    // ...but the owner's known phone gets a code, evicting the oldest stranger code, and the event is alerted.
+    Mail::fake();
+    $this->withServerVariables(['REMOTE_ADDR' => '192.0.2.50'])
+        ->postJson('/api/auth/super-admin/code', ['email' => 'boss@example.com', 'device_id' => 'owner-phone-000000001'])->assertStatus(202);
+    $code = null;
+    Mail::assertQueued(SuperAdminLoginCodeMail::class, function ($m) use (&$code) {
+        $code = $m->code;
+
+        return true;
+    });
+    expect($code)->not->toBeNull()
+        ->and($oldest->fresh()->used_at)->not->toBeNull()
+        ->and(LoginCode::query()->whereNull('used_at')->count())->toBe(3)
+        ->and(ActivityLog::query()->where('event', 'auth.login_code_contention')->value('level')?->value ?? ActivityLog::query()->where('event', 'auth.login_code_contention')->value('level'))->toBe('critical');
+
+    $this->withServerVariables(['REMOTE_ADDR' => '192.0.2.50'])
+        ->postJson('/api/auth/login', loginPayload('boss@example.com', $code, 'owner-phone-000000001'))->assertOk();
+});

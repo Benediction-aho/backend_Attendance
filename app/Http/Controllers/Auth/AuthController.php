@@ -73,8 +73,11 @@ class AuthController
 
     public function requestSuperAdminCode(Request $request, SuperAdminCodeService $codes): JsonResponse
     {
-        $data = $request->validate(['email' => ['required', 'string', 'max:254']]);
-        $codes->request($data['email'], (string) $request->ip());
+        $data = $request->validate([
+            'email' => ['required', 'string', 'max:254'],
+            'device_id' => ['nullable', 'string', 'max:200'],
+        ]);
+        $codes->request($data['email'], (string) $request->ip(), $data['device_id'] ?? null);
 
         return response()->json(['message' => 'If this email belongs to a super admin account, a sign-in code has been sent.'], 202);
     }

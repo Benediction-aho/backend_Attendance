@@ -41,12 +41,17 @@ activity log (TRUNCATE, drop the trigger, delete with the purge flag).
    Runtime credentials: `DB_USERNAME` / `DB_PASSWORD` = `attendance_app`. Set `DB_APP_ROLE=attendance_app`.
 3. `docker/entrypoint.sh` runs `migrate --database=pgsql_owner`. When `DB_APP_ROLE` is set, the migration
    `2026_11_13_100000_harden_activity_logs` grants the runtime role SELECT/INSERT/UPDATE/DELETE on the tables
-   (plus default privileges for future tables) but only SELECT/INSERT on `activity_logs`, and EXECUTE on
-   `purge_activity_logs()`. The purge runs through that `SECURITY DEFINER` function owned by the owner role; the
-   delete trigger accepts deletions only from the table owner, so the runtime role cannot purge by setting the flag.
+   (plus default privileges for future tables) but only SELECT/INSERT on `activity_logs`. Since P1-15 the runtime
+   role has **no EXECUTE** on `purge_activity_logs()` (migration `2026_11_14_100000_purge_logs_floor` revokes it).
+   The scheduled `attendance:purge-logs` command runs the purge on the `pgsql_owner` connection whenever
+   `DB_OWNER_USERNAME` (or `DB_OWNER_URL`) is set, so the scheduler/worker container needs the owner credentials;
+   the web container does not use them. The function itself also refuses to delete entries younger than a hard
+   12-month floor (constant in the function, not a setting), and `log_retention_months` cannot be set below 12.
+   The delete trigger accepts deletions only from the table owner, so the runtime role cannot purge by setting the flag.
    TRUNCATE is refused by a statement trigger for everyone.
 4. If the migration ran before `DB_APP_ROLE` was set, re-run its grants by hand (statements are in the migration).
-Check: as `attendance_app`, `DELETE FROM activity_logs` → permission denied; `TRUNCATE activity_logs` → refused.
+Check: as `attendance_app`, `DELETE FROM activity_logs` → permission denied; `TRUNCATE activity_logs` → refused;
+`SELECT purge_activity_logs(now())` → permission denied.
 Local development uses one role for both (tests cover the non-owner case with the local role `attendance_app_test`:
 `CREATE ROLE attendance_app_test NOLOGIN; GRANT attendance_app_test TO attendance;` as the postgres superuser).
 

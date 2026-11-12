@@ -264,3 +264,15 @@ Authorization matrix (`authz_matrix.sh`): **68/68 passed** again. Multiple super
 - OTP brute force through `/auth/login` (40 parallel) → 4 × 401 + block. Multiple codes: lookup by HMAC, single use, no timing difference.
 - Production mode: no stack traces, `/.env` → 404, no `X-Powered-By`.
 - Photo re-encoding and the dimension limit hold against decompression bombs.
+
+## Fixes applied after the re-test (attendance-backend, 2026-11-12) – P1-15 … P1-19
+
+| ID | Fix | Regression test |
+|---|---|---|
+| P1-15 | Migration `2026_11_14_100000_purge_logs_floor`: `purge_activity_logs()` clamps `cutoff := LEAST(cutoff, now() - interval '12 months')` (hard constant, never read from `settings`), and EXECUTE is revoked from `DB_APP_ROLE`. `attendance:purge-logs` runs on the `pgsql_owner` connection when owner credentials are configured (`database.log_purge_connection`). `log_retention_months` minimum raised to 12. `DEPLOYMENT.md` §2.1 updated. | `SchemaTest`: as `attendance_app_test` with EXECUTE granted, `purge_activity_logs('infinity')` deletes 0 recent rows; the migration leaves the runtime role without EXECUTE; owner purge deletes only rows older than 12 months |
+| P1-16 | `POST /auth/super-admin/code` accepts an optional `device_id`. When `otp_max_active_codes` is reached and the request comes from a device the super admin has already signed in on, the oldest active code requested from an unknown device is cancelled and a new code is issued; `auth.login_code_contention` is logged at **critical** level. Unknown devices are still refused at the cap. | `SuperAdminLoginTest`: 3 stranger codes fill the cap → a 4th stranger is refused, the owner's known phone from a new IP gets a code, signs in, the oldest stranger code is cancelled, critical log present |
+| P1-17 | A successful super admin sign-in sets `used_at` on every other outstanding `super_admin_login` code of the account. | `SuperAdminLoginTest`: 3 codes, sign in with code 1 → codes 2 and 3 → 401, no active code left |
+| P1-18 | `AtomicLimiter` no longer uses the cache store: each hit is one `INSERT … ON CONFLICT (key) DO UPDATE … RETURNING hits` on the new `rate_limit_counters` table (window reset inside the same statement, server clock). A first hit can no longer be lost. Expired counters are pruned by the daily purge. | `AtomicLimiterTest`: first hit counted, 6th/7th refused, exactly one upsert statement per hit, window reset, release |
+| P1-19 | Behaviour kept (not weakened): during a re-auth block every current-password attempt is refused and that session is signed out. The owner recovers by signing in again (sign-in uses a separate bucket and is not affected) and changing the password after the 10-minute block, or immediately after an admin unlock (`unlock` clears the re-auth bucket). The alert email tells the user to change the password and contact an administrator. Accepted as Info. | Existing `CurrentPasswordGuard` tests unchanged |
+
+Result: `php artisan test` 188/188 green, PHPStan 0 errors, Pint clean. All phase 1 findings closed pending the security tester's final check.
