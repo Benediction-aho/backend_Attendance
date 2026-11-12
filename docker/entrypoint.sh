@@ -11,7 +11,8 @@ php artisan route:cache
 php artisan event:cache
 
 if [ "${RUN_MIGRATIONS:-false}" = "true" ]; then
-  php artisan migrate --force
+  # Migrations run as the owner role (DB_OWNER_USERNAME/PASSWORD, falls back to DB_USERNAME); see docs/DEPLOYMENT.md.
+  php artisan migrate --force --database=pgsql_owner
 fi
 
 case "${CONTAINER_ROLE:-app}" in

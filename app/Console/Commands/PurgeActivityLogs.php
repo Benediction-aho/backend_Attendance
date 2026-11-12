@@ -24,10 +24,8 @@ class PurgeActivityLogs extends Command
 
         $ran = $runner->once('purge_logs', 'purge_logs:'.$today->toDateString(), $today, function () use ($settings, &$deleted) {
             $cutoff = Carbon::now()->subMonthsNoOverflow($settings->int('log_retention_months'));
-            DB::transaction(function () use ($cutoff, &$deleted) {
-                DB::statement("SET LOCAL attendance.allow_log_purge = 'on'");
-                $deleted = DB::table('activity_logs')->where('created_at', '<', $cutoff)->delete();
-            });
+            // SECURITY DEFINER function owned by the migration role: the runtime role cannot delete logs itself.
+            $deleted = (int) DB::scalar('SELECT purge_activity_logs(?)', [$cutoff->toIso8601String()]);
         });
 
         $this->info($ran ? "Deleted {$deleted} log entries." : 'Already done today.');

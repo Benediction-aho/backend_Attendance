@@ -22,13 +22,38 @@ Values live in the host's secret settings, never in Git.
 
 - App: `APP_NAME`, `APP_ENV`, `APP_KEY`, `APP_DEBUG` (=false), `APP_URL`, `FRONTEND_URL`, `CORS_ALLOWED_ORIGINS`, `TRUSTED_PROXIES`, `LOG_CHANNEL` (=stderr), `LOG_LEVEL`
 - Role: `CONTAINER_ROLE` (`app` | `worker` | `scheduler`), `RUN_MIGRATIONS` (true on `app` only), `PORT` (Render sets it; image default 8080)
-- Database: `DB_CONNECTION` (=pgsql), `DB_HOST`, `DB_PORT`, `DB_DATABASE`, `DB_USERNAME`, `DB_PASSWORD`, `DB_SSLMODE` (=require)
+- Database: `DB_CONNECTION` (=pgsql), `DB_HOST`, `DB_PORT`, `DB_DATABASE`, `DB_USERNAME`, `DB_PASSWORD`, `DB_SSLMODE` (=require),
+  `DB_APP_ROLE`, `DB_OWNER_USERNAME`, `DB_OWNER_PASSWORD` (separate database roles, see 2.1)
 - Session/cache/queue: `SESSION_DRIVER`, `SESSION_SECURE_COOKIE` (=true), `SESSION_ENCRYPT`, `QUEUE_CONNECTION` (=database), `CACHE_STORE` (=database)
 - Mail: `MAIL_MAILER` (=resend), `MAIL_FROM_ADDRESS`, `MAIL_FROM_NAME`, `RESEND_API_KEY`
 - Storage: `PRIVATE_FILES_DISK` (=s3 online: profile photos and reports, served only through short-lived pre-signed URLs), `FILESYSTEM_DISK`, `AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY`, `AWS_DEFAULT_REGION`, `AWS_BUCKET`, `AWS_ENDPOINT`, `AWS_USE_PATH_STYLE_ENDPOINT` (=true)
 - Monitoring: `SENTRY_DSN`
 - Web Push: `VAPID_SUBJECT`, `VAPID_PUBLIC_KEY`, `VAPID_PRIVATE_KEY`
 - Frontend (Vercel): `VITE_API_URL` (later also `VITE_SENTRY_DSN`, `VITE_VAPID_PUBLIC_KEY`)
+
+### 2.1 Database roles (security report P1-07) — owner-run setup, once per environment
+The application must not run as the role that owns the tables, otherwise it could erase the append-only
+activity log (TRUNCATE, drop the trigger, delete with the purge flag).
+1. In the Supabase SQL editor (as `postgres`), create the runtime role:
+   `CREATE ROLE attendance_app LOGIN PASSWORD '<generated>' NOINHERIT;` (store the password in the host secrets only).
+   With the Supavisor pooler its user name becomes `attendance_app.<project-ref>`.
+2. Migration (owner) credentials: `DB_OWNER_USERNAME` / `DB_OWNER_PASSWORD` = the `postgres` user of the project.
+   Runtime credentials: `DB_USERNAME` / `DB_PASSWORD` = `attendance_app`. Set `DB_APP_ROLE=attendance_app`.
+3. `docker/entrypoint.sh` runs `migrate --database=pgsql_owner`. When `DB_APP_ROLE` is set, the migration
+   `2026_11_13_100000_harden_activity_logs` grants the runtime role SELECT/INSERT/UPDATE/DELETE on the tables
+   (plus default privileges for future tables) but only SELECT/INSERT on `activity_logs`, and EXECUTE on
+   `purge_activity_logs()`. The purge runs through that `SECURITY DEFINER` function owned by the owner role; the
+   delete trigger accepts deletions only from the table owner, so the runtime role cannot purge by setting the flag.
+   TRUNCATE is refused by a statement trigger for everyone.
+4. If the migration ran before `DB_APP_ROLE` was set, re-run its grants by hand (statements are in the migration).
+Check: as `attendance_app`, `DELETE FROM activity_logs` → permission denied; `TRUNCATE activity_logs` → refused.
+Local development uses one role for both (tests cover the non-owner case with the local role `attendance_app_test`:
+`CREATE ROLE attendance_app_test NOLOGIN; GRANT attendance_app_test TO attendance;` as the postgres superuser).
+
+### 2.2 Shared office IP (P1-10)
+Everyone in the office signs in from one public IP. The per-IP limit (`ip_login_failures_limit`, default 60 per
+`ip_login_window_minutes` = 15) only counts sign-in attempts from unknown devices and unknown emails; known devices
+(a phone that already signed in) are never refused by it. Raise it in Settings if many new phones are enrolled at once.
 
 ### First super admin (once, after the first deployment)
 There is no public setup page. From a shell in the `app` container: `php artisan attendance:create-super-admin --email=… --first-name=… --last-name=…`

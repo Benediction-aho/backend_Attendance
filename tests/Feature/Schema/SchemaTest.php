@@ -47,13 +47,40 @@ it('keeps activity logs append-only at database level', function () {
     expect(fn () => $log->update(['event' => 'x']))->toThrow(LogicException::class);
 });
 
-it('allows the retention purge to delete logs only with the purge flag', function () {
+it('purges logs only through the SECURITY DEFINER purge function (P1-07)', function () {
     ActivityLog::query()->create(['type' => LogType::Action, 'level' => LogLevel::Info, 'event' => 't', 'description' => 'T']);
 
-    DB::transaction(function () {
+    expect((int) DB::scalar('SELECT purge_activity_logs(?)', [now()->addMinute()->toIso8601String()]))->toBe(1)
+        ->and(ActivityLog::query()->count())->toBe(0);
+});
+
+it('refuses TRUNCATE on the activity log (P1-07)', function () {
+    expect(fn () => DB::transaction(fn () => DB::statement('TRUNCATE activity_logs')))->toThrow(QueryException::class);
+});
+
+it('does not let a role that does not own the log delete entries, even with the purge flag (P1-07)', function () {
+    if (! DB::scalar("SELECT pg_has_role(current_user, 'attendance_app_test', 'MEMBER')")) {
+        $this->markTestSkipped('Local role attendance_app_test not set up (see docs/DEPLOYMENT.md, database roles).');
+    }
+    $log = ActivityLog::query()->create(['type' => LogType::Action, 'level' => LogLevel::Info, 'event' => 't', 'description' => 'T']);
+    DB::statement('GRANT SELECT, DELETE ON activity_logs TO attendance_app_test');
+    DB::statement('GRANT EXECUTE ON FUNCTION purge_activity_logs(timestamptz) TO attendance_app_test');
+
+    expect(fn () => DB::transaction(function () {
+        DB::statement('SET LOCAL ROLE attendance_app_test');
         DB::statement("SET LOCAL attendance.allow_log_purge = 'on'");
         DB::table('activity_logs')->delete();
-    });
+    }))->toThrow(QueryException::class);
+    DB::statement('RESET ROLE');
+    expect(ActivityLog::query()->whereKey($log->id)->exists())->toBeTrue();
 
-    expect(ActivityLog::query()->count())->toBe(0);
+    // The purge function (owned by the migration role) still works for it.
+    $deleted = DB::transaction(function () {
+        DB::statement('SET LOCAL ROLE attendance_app_test');
+        $n = (int) DB::scalar('SELECT purge_activity_logs(?)', [now()->addMinute()->toIso8601String()]);
+        DB::statement('RESET ROLE');
+
+        return $n;
+    });
+    expect($deleted)->toBe(1);
 });

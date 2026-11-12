@@ -18,6 +18,10 @@ return [
 
     'default' => env('DB_CONNECTION', 'pgsql'),
 
+    // Runtime database role (P1-07). When set, migrations (run as the owner role) grant it the runtime
+    // privileges only: no UPDATE/DELETE/TRUNCATE on activity_logs. See docs/DEPLOYMENT.md.
+    'app_role' => env('DB_APP_ROLE'),
+
     /*
     |--------------------------------------------------------------------------
     | Database Connections
@@ -91,6 +95,23 @@ return [
             'database' => env('DB_DATABASE', 'attendance'),
             'username' => env('DB_USERNAME', 'root'),
             'password' => env('DB_PASSWORD', ''),
+            'charset' => env('DB_CHARSET', 'utf8'),
+            'prefix' => '',
+            'prefix_indexes' => true,
+            'search_path' => 'public',
+            'sslmode' => env('DB_SSLMODE', 'prefer'),
+        ],
+
+        // Owner role used only to run migrations (P1-07). Falls back to the runtime credentials when no separate
+        // owner is configured (local development, or a host where one role must do both).
+        'pgsql_owner' => [
+            'driver' => 'pgsql',
+            'url' => env('DB_OWNER_URL', env('DB_URL')),
+            'host' => env('DB_HOST', '127.0.0.1'),
+            'port' => env('DB_PORT', '5432'),
+            'database' => env('DB_DATABASE', 'attendance'),
+            'username' => env('DB_OWNER_USERNAME', env('DB_USERNAME', 'root')),
+            'password' => env('DB_OWNER_PASSWORD', env('DB_PASSWORD', '')),
             'charset' => env('DB_CHARSET', 'utf8'),
             'prefix' => '',
             'prefix_indexes' => true,
