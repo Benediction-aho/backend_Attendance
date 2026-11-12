@@ -2,44 +2,72 @@
 
 namespace Database\Factories;
 
+use App\Enums\EmployeeType;
+use App\Enums\Permission;
+use App\Enums\Role;
+use App\Enums\UserStatus;
+use App\Models\PermissionRecord;
 use App\Models\User;
 use Illuminate\Database\Eloquent\Factories\Factory;
 use Illuminate\Support\Facades\Hash;
-use Illuminate\Support\Str;
 
 /**
  * @extends Factory<User>
  */
 class UserFactory extends Factory
 {
-    /**
-     * The current password being used by the factory.
-     */
     protected static ?string $password;
 
-    /**
-     * Define the model's default state.
-     *
-     * @return array<string, mixed>
-     */
+    /** @return array<string, mixed> */
     public function definition(): array
     {
         return [
-            'name' => fake()->name(),
+            'first_name' => fake()->firstName(),
+            'last_name' => fake()->lastName(),
             'email' => fake()->unique()->safeEmail(),
-            'email_verified_at' => now(),
-            'password' => static::$password ??= Hash::make('password'),
-            'remember_token' => Str::random(10),
+            'role' => Role::Employee,
+            'employee_type' => EmployeeType::Employee,
+            'job_title' => 'Sales Officer',
+            'status' => UserStatus::Active,
         ];
     }
 
-    /**
-     * Indicate that the model's email address should be unverified.
-     */
-    public function unverified(): static
+    public function configure(): static
     {
-        return $this->state(fn (array $attributes) => [
-            'email_verified_at' => null,
-        ]);
+        return $this->afterMaking(function (User $user) {
+            if ($user->role !== Role::SuperAdmin && $user->password === null) {
+                $user->password = static::$password ??= Hash::make('Password-123');
+            }
+        });
+    }
+
+    public function withPassword(string $password): static
+    {
+        return $this->afterMaking(fn (User $user) => $user->password = Hash::make($password));
+    }
+
+    public function superAdmin(): static
+    {
+        return $this->state(['role' => Role::SuperAdmin]);
+    }
+
+    public function admin(Permission ...$permissions): static
+    {
+        return $this->state(['role' => Role::Admin])->afterCreating(function (User $user) use ($permissions) {
+            if ($permissions !== []) {
+                $ids = PermissionRecord::query()->whereIn('key', array_map(fn ($p) => $p->value, $permissions))->pluck('id');
+                $user->permissionRecords()->attach($ids);
+            }
+        });
+    }
+
+    public function pending(): static
+    {
+        return $this->state(['status' => UserStatus::Pending])->afterMaking(fn (User $u) => $u->password = null);
+    }
+
+    public function status(UserStatus $status): static
+    {
+        return $this->state(['status' => $status]);
     }
 }
