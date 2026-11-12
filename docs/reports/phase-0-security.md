@@ -60,3 +60,13 @@ Environment: local only, `php artisan serve` with (a) `APP_ENV=production APP_DE
 - The session cookie has a neutral name (`sid`), is httponly and samesite=lax.
 - Dockerfile: multi-stage build, no dev dependencies, runs as a non-root user (uid 10001), `.env*`/tests/docs are removed from the image, `APP_DEBUG=false`, `display_errors=Off`, the Caddy admin endpoint is off, dotfiles and composer files are blocked, and only `index.php` runs.
 - `.env.example` has placeholders only. No `.env` or key file is tracked. The git history contains no APP_KEY, API key or private key; the only finding is P0-01 (the other matches were v1 placeholder values).
+
+## Fixes applied (attendance-backend, 2026-11-12) – to be re-verified by backend-security-tester
+
+| ID | Status | Fix |
+|---|---|---|
+| P0-01 | Owner action | Listed under "Blocked / questions for the owner" in `PROGRESS.md` (change the legacy password everywhere; no history rewrite). |
+| P0-02 | Fixed | Decision: Bearer device tokens only. `config/sanctum.php` `routes => false` (no `/sanctum/csrf-cookie`), `statefulApi` stays off, no session middleware on the API. Test `tests/Feature/NoCookieAndProxyTest.php`. Recorded in `docs/api/openapi.yaml` and `PROGRESS.md`. |
+| P0-03 | Fixed | Moot: the API sets no cookie at all. Test asserts no `Set-Cookie` on API responses (success, 404, 405, 401, 422). |
+| P0-04 | Fixed (documentation + tests) | `TRUSTED_PROXIES` documented in `docs/DEPLOYMENT.md`. Tests: a forged `X-Forwarded-For` is ignored when `TRUSTED_PROXIES` is empty and honoured only when the request comes from a configured proxy range. |
+| – | Done | CI PostgreSQL aligned to 17 (Supabase), docker-compose too. |

@@ -3,6 +3,12 @@ openapi: 3.1.0
 info:
   title: Assistance Ghana Attendance API
   version: 0.0.1
+  description: |
+    Authentication: **Bearer device tokens only** (Sanctum personal access tokens, one per device).
+    The API sets no cookie and has no CSRF/session endpoint. After login the client receives
+    `token` once and sends it as `Authorization: Bearer <token>` on every request. The PWA stores
+    the token on the device (IndexedDB/localStorage) and deletes it on logout or on a 401.
+    Network or 5xx errors must never log the user out; only a 401 does.
 servers:
   - url: http://localhost:8000/api
 paths:
@@ -20,6 +26,10 @@ paths:
                 properties:
                   status: { type: string, enum: [ok] }
 components:
+  securitySchemes:
+    deviceToken:
+      type: http
+      scheme: bearer
   schemas:
     Error:
       description: Every error response (no stack trace, generic English message).

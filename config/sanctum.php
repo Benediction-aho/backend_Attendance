@@ -7,6 +7,10 @@ use Laravel\Sanctum\Sanctum;
 
 return [
 
+    // Bearer device tokens only (P0-02): the /sanctum/csrf-cookie route is not registered
+    // and the API never sets a cookie.
+    'routes' => false,
+
     /*
     |--------------------------------------------------------------------------
     | Stateful Domains

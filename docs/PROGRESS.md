@@ -22,6 +22,9 @@ The legacy Node/Mongo code was removed from the development branch. It remains o
 - Docker: multi-stage FrankenPHP image (classic mode), roles app/worker/scheduler, `docker-compose.yml` (app, worker, scheduler, Postgres 16). See `docs/DOCKER.md`. The image was **not built in this environment** (no Docker daemon); the first CI/deploy build must confirm it.
 - CI: `.github/workflows/backend-ci.yml` (Postgres service, composer install, pint --test, phpstan, pest, migrate + rollback).
 
+### Authentication decision (P0-02, 2026-11-12) – for attendance-frontend
+**Bearer device tokens only** (Sanctum personal access tokens, one per device). No cookie, no session, no CSRF route (`/sanctum/csrf-cookie` is not registered). The PWA stores the token on the device and sends `Authorization: Bearer <token>`; only a 401 logs the user out. See `docs/api/openapi.yaml`.
+
 ### How to run locally
 See `README.md` (PHP + local PostgreSQL, or `docker compose up --build`).
 
@@ -51,6 +54,7 @@ See `README.md` (PHP + local PostgreSQL, or `docker compose up --build`).
 - Backend test host: not chosen; Render procedure ready in `docs/DEPLOYMENT.md` (backend repo).
 
 ## Blocked / questions for the owner
+- **P0-01 – legacy v1 admin password in git history (owner action)**: a v1 admin password is readable in the repository history (`scripts/fixAdminPassword.js`, removed but still in history). Consider it compromised: change it on the v1 production admin and on any account that reuses it; never reuse it for v2. The history is not rewritten (force-push forbidden).
 - **Vercel (owner action)**: either (a) in Vercel, grant the Claude/MCP Vercel integration access to the personal scope "benediction-ahouanse-s-projects" (Vercel dashboard > Settings > Integrations/Connected apps, or re-authorize the Vercel connector in claude.ai Settings > Connectors and select that scope), then ask the deploy agent to retry; or (b) create it yourself: Add New > Project > import `Benediction-aho/frontend_Attendance` (install the Vercel GitHub app on that repo if asked), framework Vite, build `npm run build`, output `dist`, env `VITE_API_URL=https://api.example.invalid/api` (Preview + Production). Preview deployments of `claude/upbeat-noether-f7defe` are then automatic.
 - **Backend test host**: approve Render (or another host) and create the account; then provide in Render secrets (never in chat): Supabase DB password, Resend API key, Sentry DSN, VAPID keys. Steps: `docs/DEPLOYMENT.md` section 3.
 - Accounts to provide (see `PLAN_DEVELOPPEMENT.md` section 8): Supabase, Resend + sending domain, Vercel, backend test host.
