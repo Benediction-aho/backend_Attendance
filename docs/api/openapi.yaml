@@ -25,18 +25,86 @@ paths:
                 required: [status]
                 properties:
                   status: { type: string, enum: [ok] }
+  /admin/settings:
+    get:
+      summary: All settings with current value, default and scheduled future values (super admin only)
+      security: [{ deviceToken: [] }]
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data: { type: array, items: { $ref: '#/components/schemas/Setting' } }
+        '401': { $ref: '#/components/responses/Unauthenticated' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+    put:
+      summary: Change one or more settings, now or from a future date (super admin only). History is kept; past records keep the old rule.
+      security: [{ deviceToken: [] }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [values]
+              properties:
+                values: { type: object, additionalProperties: true, example: { checkin_radius_m: 60, late_after: '08:15' } }
+                effective_from: { type: string, format: date, description: 'Optional, today or later (Africa/Accra). Omitted or today = immediately.' }
+      responses:
+        '200': { description: Updated settings (same shape as GET) }
+        '422': { $ref: '#/components/responses/ValidationError' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+  /admin/settings/history:
+    get:
+      summary: Settings change history, newest first, 50 per page (super admin only)
+      security: [{ deviceToken: [] }]
+      parameters:
+        - { name: key, in: query, schema: { type: string } }
+        - { name: page, in: query, schema: { type: integer } }
+      responses:
+        '200': { description: 'data[] {key, old_value, new_value, effective_from, changed_at, changed_by{id,name}} + meta' }
+
 components:
   securitySchemes:
     deviceToken:
       type: http
       scheme: bearer
+  responses:
+    Unauthenticated:
+      description: Missing, invalid or expired device token, or the account is no longer active. The client must discard its token.
+      content: { application/json: { schema: { $ref: '#/components/schemas/Error' } } }
+    Forbidden:
+      description: Authenticated but not allowed. When `code` is `password_change_required`, the user must change the identification code first.
+      content: { application/json: { schema: { $ref: '#/components/schemas/Error' } } }
+    ValidationError:
+      description: Invalid input.
+      content: { application/json: { schema: { $ref: '#/components/schemas/Error' } } }
+    TooManyRequests:
+      description: Rate limited or temporarily blocked. `retry_after_seconds` may be present.
+      content: { application/json: { schema: { $ref: '#/components/schemas/Error' } } }
   schemas:
+    Setting:
+      type: object
+      properties:
+        key: { type: string }
+        label: { type: string }
+        group: { type: string, enum: [attendance, reports, system, security] }
+        type: { type: string, enum: [int, float, bool, time, string, int_list] }
+        editable: { type: boolean }
+        value: {}
+        default: {}
+        scheduled: { type: array, items: { type: object, properties: { value: {}, effective_from: { type: string, format: date-time } } } }
     Error:
       description: Every error response (no stack trace, generic English message).
       type: object
       required: [message]
       properties:
         message: { type: string, example: Not found. }
+        code: { type: string, description: 'Machine-readable reason when useful (e.g. password_change_required, blocked, locked).' }
+        retry_after_seconds: { type: integer }
         errors:
           description: Present on 422 only, field => list of messages.
           type: object

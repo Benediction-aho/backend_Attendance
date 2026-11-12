@@ -115,7 +115,7 @@ return new class extends Migration
 
         // Append-only: no UPDATE; DELETE only by the retention purge (session flag).
         DB::unprepared(<<<'SQL'
-CREATE FUNCTION activity_logs_append_only() RETURNS trigger AS $$
+CREATE OR REPLACE FUNCTION activity_logs_append_only() RETURNS trigger AS $$
 BEGIN
     IF TG_OP = 'DELETE' AND current_setting('attendance.allow_log_purge', true) = 'on' THEN
         RETURN OLD;
