@@ -134,27 +134,35 @@ class AttendanceService
             throw new ApiError(422, 'Face ID verification failed. Please try again.', 'faceid_failed');
         }
 
-        $claimed = CheckinIntent::query()->whereKey($intent->id)->whereNull('consumed_at')
-            ->where('expires_at', '>', $now)->whereDate('work_date', $date)
-            ->update(['consumed_at' => $now]);
-        if ($claimed !== 1) {
+        // Claim and insert in one transaction: a parallel double submit waits on the intent row lock,
+        // then sees it consumed and the attendance committed (READ COMMITTED re-evaluation).
+        $result = DB::transaction(function () use ($intent, $user, $date, $now, $verified) {
+            $claimed = CheckinIntent::query()->whereKey($intent->id)->whereNull('consumed_at')
+                ->where('expires_at', '>', $now)->whereDate('work_date', $date)
+                ->update(['consumed_at' => $now]);
+            if ($claimed !== 1) {
+                return null;
+            }
+
+            return $this->insert($user, $date, $now, [
+                'check_in_type' => $intent->type,
+                'check_in_lat' => $intent->lat,
+                'check_in_lng' => $intent->lng,
+                'check_in_accuracy_m' => $intent->accuracy_m,
+                'check_in_distance_m' => $intent->distance_m,
+                'faceid_verified' => $verified,
+                'reason' => $intent->reason,
+                'mission_status' => $intent->type === Attendance::TYPE_MISSION ? 'pending' : null,
+            ]);
+        });
+        if ($result === null) {
             // Double submit: the first confirmation already wrote today's attendance.
-            if ($intent->consumed_at !== null && ($existing = $this->forDate($user, $date)) !== null) {
+            $consumed = CheckinIntent::query()->whereKey($intent->id)->whereNotNull('consumed_at')->exists();
+            if ($consumed && ($existing = $this->forDate($user, $date)) !== null) {
                 return [$existing, false];
             }
             throw new ApiError(422, 'This check-in request has expired. Please start again.', 'intent_invalid');
         }
-
-        $result = $this->insert($user, $date, $now, [
-            'check_in_type' => $intent->type,
-            'check_in_lat' => $intent->lat,
-            'check_in_lng' => $intent->lng,
-            'check_in_accuracy_m' => $intent->accuracy_m,
-            'check_in_distance_m' => $intent->distance_m,
-            'faceid_verified' => $verified,
-            'reason' => $intent->reason,
-            'mission_status' => $intent->type === Attendance::TYPE_MISSION ? 'pending' : null,
-        ]);
 
         if ($result[1]) {
             $attendance = $result[0];
