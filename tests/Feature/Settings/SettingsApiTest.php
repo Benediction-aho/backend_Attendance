@@ -67,3 +67,22 @@ it('rejects invalid values, unknown keys, read-only keys and past dates', functi
     'past date' => [['values' => ['checkin_radius_m' => 60], 'effective_from' => '2026-11-01']],
     'empty' => [['values' => []]],
 ]);
+
+it('accepts only active admins and super admins as monthly report recipients, and an empty list (P1-09)', function () {
+    $sa = User::factory()->superAdmin()->create();
+    $admin = User::factory()->admin()->create();
+    $employee = User::factory()->create();
+    $deleted = User::factory()->admin()->create();
+    $deleted->delete();
+    Sanctum::actingAs($sa);
+
+    foreach ([$employee->id, $deleted->id, 999999] as $id) {
+        $this->putJson('/api/admin/settings', ['values' => ['monthly_report_recipient_ids' => [$id]]])->assertUnprocessable();
+    }
+    $this->putJson('/api/admin/settings', ['values' => ['monthly_report_recipient_ids' => [$admin->id, $sa->id]]])->assertOk();
+    expect(app(SettingsService::class)->intList('monthly_report_recipient_ids'))->toBe([$admin->id, $sa->id]);
+
+    $this->putJson('/api/admin/settings', ['values' => ['monthly_report_recipient_ids' => []]])->assertOk();
+    app()->forgetScopedInstances();
+    expect(app(SettingsService::class)->intList('monthly_report_recipient_ids'))->toBe([]);
+});

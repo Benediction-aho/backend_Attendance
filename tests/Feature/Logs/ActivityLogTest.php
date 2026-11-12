@@ -4,10 +4,12 @@ use App\Enums\LogLevel;
 use App\Enums\LogType;
 use App\Enums\Permission;
 use App\Models\ActivityLog;
+use App\Models\Device;
 use App\Models\ScheduledRun;
 use App\Models\User;
 use App\Services\ActivityLogger;
 use App\Services\ScheduledRunner;
+use App\Settings\SettingsService;
 use Illuminate\Support\Carbon;
 use Illuminate\Support\Facades\Artisan;
 use Illuminate\Support\Facades\Route;
@@ -125,4 +127,27 @@ it('runs a scheduled task once per run key and retries a failed run', function (
         $count++;
     }))->toBeFalse();
     expect($count)->toBe(2)->and(ScheduledRun::query()->where('run_key', 'demo:1')->value('status'))->toBe('succeeded');
+});
+
+it('hides super admin events from admins with view_logs unless configured (P1-11)', function () {
+    app(ActivityLogger::class)->security('auth.login_succeeded', 'Signed in', LogLevel::Info, $this->sa, $this->sa);
+    $admin = User::factory()->admin(Permission::ViewLogs)->create();
+
+    $this->bearer(deviceToken($admin))->getJson('/api/admin/activity-logs')->assertOk()->assertJsonPath('meta.total', 3);
+    $this->bearer(deviceToken($this->sa, 'device-test-sa-000001'))->getJson('/api/admin/activity-logs')->assertOk()->assertJsonPath('meta.total', 4);
+
+    app(SettingsService::class)->set(['logs_admins_see_super_admin_events' => true]);
+    app()->forgetScopedInstances();
+    $this->app['auth']->forgetGuards();
+    $this->bearer(deviceToken($admin, 'device-test-adm-00001'))->getJson('/api/admin/activity-logs')->assertOk()->assertJsonPath('meta.total', 4);
+});
+
+it('keeps log entries when a device or user they reference is deleted (P1-08)', function () {
+    $device = Device::query()->create(['user_id' => $this->emp->id, 'identifier_hash' => str_repeat('a', 64)]);
+    $log = ActivityLog::query()->create(['type' => LogType::Security, 'level' => LogLevel::Info, 'event' => 't', 'description' => 'T', 'device_id' => $device->id, 'user_id' => $this->emp->id]);
+
+    $device->delete();
+    $this->emp->forceDelete();
+
+    expect($log->fresh()->device_id)->toBe($device->id)->and($log->fresh()->user_id)->toBe($this->emp->id);
 });

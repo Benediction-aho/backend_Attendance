@@ -3,6 +3,8 @@
 namespace App\Http\Controllers\Admin;
 
 use App\Enums\LogLevel;
+use App\Enums\Role;
+use App\Enums\UserStatus;
 use App\Models\SettingHistory;
 use App\Models\User;
 use App\Services\ActivityLogger;
@@ -11,6 +13,7 @@ use App\Settings\SettingsService;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Carbon;
+use Illuminate\Validation\Rule;
 use Illuminate\Validation\ValidationException;
 
 class SettingsController
@@ -32,10 +35,13 @@ class SettingsController
             'effective_from' => ['nullable', 'date_format:Y-m-d', 'after_or_equal:'.$today],
         ];
         foreach ($definitions as $key => $definition) {
-            $rules["values.$key"] = ['sometimes', 'required', ...$definition['rules']];
+            // Lists may be emptied (present) when their own rules allow it; scalars are required.
+            $rules["values.$key"] = ['sometimes', $definition['type'] === 'int_list' ? 'present' : 'required', ...$definition['rules']];
             if ($definition['type'] === 'int_list') {
                 $rules["values.$key.*"] = $key === 'monthly_report_recipient_ids'
-                    ? ['integer', 'exists:users,id']
+                    // Only active admins and super admins may receive the monthly report (P1-09).
+                    ? ['integer', 'distinct', Rule::exists('users', 'id')->whereIn('role', [Role::Admin->value, Role::SuperAdmin->value])
+                        ->where('status', UserStatus::Active->value)->whereNull('deleted_at')]
                     : ['integer', 'min:1', 'max:1440'];
             }
         }

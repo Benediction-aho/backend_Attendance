@@ -4,7 +4,10 @@ namespace App\Http\Controllers\Admin;
 
 use App\Enums\LogLevel;
 use App\Enums\LogType;
+use App\Enums\Role;
 use App\Models\ActivityLog;
+use App\Models\User;
+use App\Settings\SettingsService;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Carbon;
@@ -15,7 +18,7 @@ use Illuminate\Validation\Rule;
  */
 class ActivityLogController
 {
-    public function index(Request $request): JsonResponse
+    public function index(Request $request, SettingsService $settings): JsonResponse
     {
         $f = $request->validate([
             'user_id' => ['nullable', 'integer', 'min:1'],
@@ -29,7 +32,14 @@ class ActivityLogController
         ]);
         $tz = (string) config('app.timezone');
 
+        /** @var User $viewer */
+        $viewer = $request->user();
+        // Super admin events (sign-ins, IPs, email changes) are visible to super admins only, unless configured (P1-11).
+        $hideSuperAdmins = ! $viewer->isSuperAdmin() && ! $settings->bool('logs_admins_see_super_admin_events');
+        $superAdminIds = fn ($q) => $q->select('id')->from('users')->where('role', Role::SuperAdmin->value);
+
         $page = ActivityLog::query()
+            ->when($hideSuperAdmins, fn ($q) => $q->where(fn ($w) => $w->whereNull('user_id')->orWhereNotIn('user_id', $superAdminIds)))
             ->with(['user:id,first_name,last_name,email,deleted_at', 'actor:id,first_name,last_name,deleted_at'])
             ->when($f['user_id'] ?? null, fn ($q, $v) => $q->where('user_id', $v))
             ->when($f['actor_id'] ?? null, fn ($q, $v) => $q->where('actor_id', $v))
