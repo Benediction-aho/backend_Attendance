@@ -2,6 +2,7 @@
 
 use App\Mail\RecoveryLinkMail;
 use App\Mail\SuperAdminLoginCodeMail;
+use App\Models\ActivityLog;
 use App\Models\LoginCode;
 use App\Models\User;
 use App\Settings\SettingsService;
@@ -86,6 +87,41 @@ it('rate limits code requests per account', function () {
         $this->postJson('/api/auth/super-admin/code', ['email' => 'boss@example.com'])->assertStatus(202);
     }
     Mail::assertQueued(SuperAdminLoginCodeMail::class, 5);
+});
+
+it('lets a stranger neither use up the owner quota nor cancel the code in transit (P1-05)', function () {
+    $code = requestCode($this, 'boss@example.com'); // the owner, from 127.0.0.1
+
+    // A stranger from another network floods requests for the same email.
+    for ($i = 0; $i < 10; $i++) {
+        $this->withServerVariables(['REMOTE_ADDR' => '203.0.113.9'])
+            ->postJson('/api/auth/super-admin/code', ['email' => 'boss@example.com'])->assertStatus(202);
+    }
+    expect(ActivityLog::query()->where('event', 'auth.login_code_throttled')->exists())->toBeTrue();
+
+    // The owner's code still works, and the owner can still ask for a new one.
+    $this->withServerVariables(['REMOTE_ADDR' => '127.0.0.1'])
+        ->postJson('/api/auth/login', loginPayload('boss@example.com', $code))->assertOk();
+    Mail::fake();
+    $again = requestCode($this->withServerVariables(['REMOTE_ADDR' => '127.0.0.1']), 'boss@example.com');
+    expect($again)->not->toBeNull();
+});
+
+it('keeps at most the configured number of codes valid at once, which also bounds the emails (P1-05)', function () {
+    foreach (['198.51.100.1', '198.51.100.2', '198.51.100.3', '198.51.100.4'] as $ip) {
+        $this->withServerVariables(['REMOTE_ADDR' => $ip])->postJson('/api/auth/super-admin/code', ['email' => 'boss@example.com'])->assertStatus(202);
+    }
+    Mail::assertQueued(SuperAdminLoginCodeMail::class, 3);
+    expect(LoginCode::query()->whereNull('used_at')->count())->toBe(3);
+
+    // Any of the valid codes signs in (one keyed lookup, one bcrypt check).
+    $codes = [];
+    Mail::assertQueued(SuperAdminLoginCodeMail::class, function ($m) use (&$codes) {
+        $codes[] = $m->code;
+
+        return true;
+    });
+    $this->postJson('/api/auth/login', loginPayload('boss@example.com', $codes[0]))->assertOk();
 });
 
 it('never accepts a password for a super admin', function () {
