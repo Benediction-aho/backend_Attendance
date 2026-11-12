@@ -166,7 +166,6 @@ describe('check-in reminder', function () {
         foreach ([$checked, $dayOff, $onLeave, $blocked, $admin] as $u) {
             Notification::assertNotSentTo($u, CheckinReminder::class);
         }
-        Queue::assertPushed(SendWebPush::class, 1);
     });
 
     it('stores the reminder in the notification centre', function () {
@@ -178,6 +177,9 @@ describe('check-in reminder', function () {
         at('2026-11-16 08:05');
         $this->artisan('attendance:checkin-reminder');
         expect($missing->notifications()->sole()->data['kind'])->toBe('checkin_reminder');
+        // Push copy queued from the stored in-app notification (phase 4).
+        Queue::assertPushed(SendWebPush::class, fn (SendWebPush $job) => $job->userId === $missing->id && $job->kind === 'checkin_reminder');
+        Queue::assertPushed(SendWebPush::class, 1);
     });
 
     it('catches up a missed run the same day but not after the end of the day', function () {

@@ -5,6 +5,7 @@ namespace App\Http\Controllers\Auth;
 use App\Enums\LogLevel;
 use App\Exceptions\ApiError;
 use App\Http\Resources\UserResource;
+use App\Models\PushSubscription;
 use App\Models\User;
 use App\Services\AccountService;
 use App\Services\ActivityLogger;
@@ -104,6 +105,11 @@ class AuthController
     {
         /** @var User $user */
         $user = $request->user();
+        $deviceId = $request->attributes->get('device_id');
+        if (is_int($deviceId)) {
+            // No more pushes to this browser for this account once signed out.
+            PushSubscription::query()->where('user_id', $user->id)->where('device_id', $deviceId)->delete();
+        }
         $user->currentAccessToken()->delete();
         $logger->security('auth.logout', 'Signed out', LogLevel::Info, $user, $user);
 

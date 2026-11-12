@@ -7,7 +7,6 @@ use App\Enums\LogLevel;
 use App\Enums\LogType;
 use App\Enums\Role;
 use App\Enums\UserStatus;
-use App\Jobs\SendWebPush;
 use App\Models\Attendance;
 use App\Models\User;
 use App\Notifications\CheckinReminder as ReminderNotification;
@@ -63,7 +62,7 @@ class CheckinReminder extends Command
                 }
                 try {
                     $employee->notifyNow(new ReminderNotification($date, $lateAfter));
-                    SendWebPush::dispatch($employee->id, 'checkin_reminder', ['work_date' => $date]);
+                    // The push copy is queued by PushInAppNotification when the in-app record is stored.
                     $sent++;
                 } catch (Throwable $e) {
                     // One failing address must not stop the others; release the claim so the retry resends it.

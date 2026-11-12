@@ -6,6 +6,8 @@ use App\Domain\Attendance\CheckinAssertionVerifier;
 use App\Domain\FaceId\WebAuthnAssertionVerifier;
 use App\Enums\Permission;
 use App\Models\User;
+use App\Services\Push\PushTransport;
+use App\Services\Push\WebPushTransport;
 use App\Settings\SettingsService;
 use Illuminate\Cache\RateLimiting\Limit;
 use Illuminate\Http\Request;
@@ -27,6 +29,7 @@ class AppServiceProvider extends ServiceProvider
         // Scoped: fresh per request / queued job, so long-running workers never keep stale values.
         $this->app->scoped(SettingsService::class);
         $this->app->bind(CheckinAssertionVerifier::class, WebAuthnAssertionVerifier::class);
+        $this->app->bind(PushTransport::class, WebPushTransport::class);
     }
 
     /**

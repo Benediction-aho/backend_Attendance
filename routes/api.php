@@ -16,6 +16,7 @@ use App\Http\Controllers\HealthController;
 use App\Http\Controllers\MeController;
 use App\Http\Controllers\NotificationController;
 use App\Http\Controllers\ProfileController;
+use App\Http\Controllers\PushSubscriptionController;
 use App\Http\Middleware\EnsureAccountUsable;
 use App\Http\Middleware\EnsureEmployee;
 use Illuminate\Support\Facades\Route;
@@ -49,6 +50,11 @@ Route::middleware(['auth:sanctum', EnsureAccountUsable::class])->group(function 
     Route::get('/notifications', [NotificationController::class, 'index'])->name('notifications.index');
     Route::post('/notifications/read-all', [NotificationController::class, 'readAll'])->name('notifications.read-all');
     Route::post('/notifications/{id}/read', [NotificationController::class, 'read'])->whereUuid('id')->name('notifications.read');
+
+    // Web Push (VAPID public key, subscriptions of this device).
+    Route::get('/push/public-key', [PushSubscriptionController::class, 'publicKey'])->name('push.public-key');
+    Route::post('/push/subscriptions', [PushSubscriptionController::class, 'store'])->middleware('throttle:attendance')->name('push.subscriptions.store');
+    Route::delete('/push/subscriptions', [PushSubscriptionController::class, 'destroy'])->name('push.subscriptions.destroy');
 
     Route::get('/holidays', [HolidayController::class, 'index'])->name('holidays.index');
 
