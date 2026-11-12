@@ -124,7 +124,10 @@ Variante : un super admin / admin autorisé peut aussi créer un compte directem
 Également prévu : **code / mot de passe oublié** par email.
 
 ### Super admin
-- Se connecte avec **son email et son mot de passe**, définis à la création de son compte.
+- Se connecte **sans mot de passe** : il saisit son email et reçoit **à chaque connexion un nouveau code à usage unique** par email (valable quelques minutes, par défaut 10 min, paramétrable ; utilisable une seule fois ; stocké haché). Voir `security.md` section 2.
+- Le blocage 5 / 5 / 5 s'applique aussi à lui ; s'il est verrouillé, il reçoit un **lien de récupération** par email (ou un autre super admin le déverrouille).
+- Le changement de son adresse email se confirme **sur l'ancienne et la nouvelle adresse**.
+- Le premier super admin est créé une seule fois par une commande côté serveur (pas de page publique de « setup »).
 - Gère tout depuis son tableau de bord, y compris l'ajout d'admins et de super admins.
 - Un **nouveau super admin** a **toutes** les fonctionnalités du super admin.
 - Un **nouvel admin** n'a que les autorisations cochées pour lui (voir section 2).

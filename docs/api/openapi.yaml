@@ -96,7 +96,8 @@ paths:
         Lockout (security.md 1): per known device 5 failures → 429 for 10 min, 5 more → 429 for 20 min, 5 more → 423 locked
         (values from settings). All unknown devices of an account share one bucket. Unknown emails behave exactly like real ones.
         Error codes: invalid_credentials (401), code_expired (401), account_blocked (403), login_blocked (429, retry_after_seconds),
-        ip_limited (429), account_locked (423).
+        ip_limited (429, only for unknown devices / unknown emails; known devices are never IP-limited), account_locked (423).
+        Attempts are reserved before the secret is checked: parallel requests never get more than one series checked.
       requestBody:
         required: true
         content:
@@ -128,7 +129,7 @@ paths:
         '429': { $ref: '#/components/responses/TooManyRequests' }
   /auth/super-admin/code:
     post:
-      summary: Ask for a one-time sign-in code (super admins). Always 202; a code is emailed only to an active super admin. Rate limited per account and IP.
+      summary: Ask for a one-time sign-in code (super admins). Always 202; a code is emailed only to an active super admin. Rate limited per (account, IP) and per IP; a request only cancels earlier codes asked from the same IP; at most settings.otp_max_active_codes codes are valid at once (any of them signs in).
       requestBody: { required: true, content: { application/json: { schema: { type: object, required: [email], properties: { email: { type: string } } } } } }
       responses:
         '202': { description: '{ message }' }
@@ -200,10 +201,12 @@ paths:
                 new_password_confirmation: { type: string }
       responses:
         '200': { description: '{ message, data: User }' }
+        '401': { description: 'reauth_limit: a series of wrong current passwords (settings.lockout_failures_per_series) signs this device out (alert email)' }
         '422': { description: 'validation, wrong_password, same_password, no_password' }
+        '429': { description: 'login_blocked: current-password checks blocked for this account (same 10/20 min stages as sign-in)' }
   /me/photo:
     post:
-      summary: Upload a profile photo (jpeg/png/webp, max settings.photo_max_kb). Stored privately; User.photo_url is a short-lived URL.
+      summary: Upload a profile photo (jpeg/png/webp, max settings.photo_max_kb). Re-encoded (metadata removed) and resized to settings.photo_max_dimension_px. Stored privately; User.photo_url is a short-lived URL.
       security: [{ deviceToken: [] }]
       requestBody:
         required: true
@@ -233,8 +236,10 @@ paths:
                 email: { type: string, format: email }
                 current_password: { type: string, description: Required except for super admins }
       responses:
-        '202': { description: '{ message }' }
-        '422': { description: 'wrong_password, same_email, email_unavailable, validation' }
+        '202': { description: '{ message }. Same answer when the address is already used by another account (nothing is sent then).' }
+        '401': { description: reauth_limit (see PUT /me/password) }
+        '422': { description: 'wrong_password, same_email, validation' }
+        '429': { description: 'too_many_requests (settings.email_change_requests_per_hour) or login_blocked' }
   /files/{path}:
     get:
       summary: Private file through a signed, short-lived URL (local disk only; online the URL points to Supabase Storage). Never build it by hand; use the URLs returned by the API.
@@ -404,7 +409,7 @@ paths:
         '409': { description: last_super_admin or not_active }
   /admin/activity-logs:
     get:
-      summary: Activity, security, automatic and error logs (super admin, or admin with view_logs). Read-only. Newest first.
+      summary: Activity, security, automatic and error logs (super admin, or admin with view_logs). Read-only. Newest first. Entries about super admin accounts are returned to super admins only, unless settings.logs_admins_see_super_admin_events is true.
       security: [{ deviceToken: [] }]
       parameters:
         - { name: user_id, in: query, schema: { type: integer } }
