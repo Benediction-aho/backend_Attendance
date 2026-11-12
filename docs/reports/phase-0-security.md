@@ -70,3 +70,12 @@ Environment: local only, `php artisan serve` with (a) `APP_ENV=production APP_DE
 | P0-03 | Fixed | Moot: the API sets no cookie at all. Test asserts no `Set-Cookie` on API responses (success, 404, 405, 401, 422). |
 | P0-04 | Fixed (documentation + tests) | `TRUSTED_PROXIES` documented in `docs/DEPLOYMENT.md`. Tests: a forged `X-Forwarded-For` is ignored when `TRUSTED_PROXIES` is empty and honoured only when the request comes from a configured proxy range. |
 | – | Done | CI PostgreSQL aligned to 17 (Supabase), docker-compose too. |
+
+## Re-test (backend-security-tester, 2026-11-12, phase 1 build)
+
+| ID | Status | Evidence |
+|---|---|---|
+| P0-01 | Still open (owner action) | Not a code issue; listed in `PROGRESS.md`. |
+| P0-02 | **Fixed** | `GET /sanctum/csrf-cookie` → `404 {"message":"Not found."}`, no `Set-Cookie`, no `XSRF-TOKEN`. |
+| P0-03 | **Fixed** (moot) | No `Set-Cookie` header on any API response tested (200, 401, 404, 405, 422, 429, 500). |
+| P0-04 | **Fixed** | With `TRUSTED_PROXIES` empty, 33 failed logins with a different forged `X-Forwarded-For` each were all counted on the real IP (30 × 401, then `429 ip_limited`). Deployment note present in `docs/DEPLOYMENT.md`. |
