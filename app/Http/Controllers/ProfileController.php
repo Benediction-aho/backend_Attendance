@@ -2,19 +2,20 @@
 
 namespace App\Http\Controllers;
 
-use App\Enums\LogLevel;
 use App\Exceptions\ApiError;
 use App\Http\Resources\UserResource;
 use App\Models\User;
 use App\Services\ActivityLogger;
+use App\Services\AtomicLimiter;
+use App\Services\Auth\CurrentPasswordGuard;
 use App\Services\EmailChangeService;
 use App\Services\FileUrls;
+use App\Services\ImageSanitizer;
 use App\Settings\SettingsService;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Http\UploadedFile;
 use Illuminate\Support\Carbon;
-use Illuminate\Support\Facades\Hash;
 use Illuminate\Support\Facades\Storage;
 use Illuminate\Support\Str;
 
@@ -62,9 +63,10 @@ class ProfileController
 
         $user = $this->user($request);
         $disk = Storage::disk(FileUrls::disk());
-        // Server-generated name; the original file name is never used.
-        $path = $disk->putFileAs('photos/'.$user->id, $file, Str::uuid()->toString().'.'.$extension);
-        if ($path === false) {
+        // Re-encoded (no EXIF, no appended bytes) and stored under a server-generated name.
+        $bytes = ImageSanitizer::reencode((string) $file->getRealPath(), $extension, $settings->int('photo_max_dimension_px'));
+        $path = 'photos/'.$user->id.'/'.Str::uuid()->toString().'.'.$extension;
+        if (! $disk->put($path, $bytes)) {
             throw new ApiError(500, 'The photo could not be saved. Please try again.', 'upload_failed');
         }
 
@@ -92,16 +94,19 @@ class ProfileController
         return response()->json(['data' => new UserResource($user)]);
     }
 
-    public function requestEmailChange(Request $request, EmailChangeService $emails): JsonResponse
+    public function requestEmailChange(Request $request, EmailChangeService $emails, CurrentPasswordGuard $guard, SettingsService $settings): JsonResponse
     {
         $user = $this->user($request);
         $data = $request->validate([
             'email' => ['required', 'string', 'email:rfc', 'max:254'],
             'current_password' => [$user->isSuperAdmin() ? 'nullable' : 'required', 'string', 'max:200'],
         ]);
-        if (! $user->isSuperAdmin() && ($user->password === null || ! Hash::check((string) $data['current_password'], $user->password))) {
-            $this->logger->security('profile.email_change_refused', 'Email change refused: wrong password', LogLevel::Warning, $user, $user);
-            throw new ApiError(422, 'The current code or password is incorrect.', 'wrong_password');
+        if (! $user->isSuperAdmin()) {
+            $guard->verify($user, $data['current_password'] ?? null, 'profile.email_change_refused', 'Email change');
+        }
+        // Throttled per user (counted before sending) (P1-06): bounds the confirmation emails sent to any address.
+        if (! AtomicLimiter::hit('email-change:'.$user->id, $settings->int('email_change_requests_per_hour'), 3600)) {
+            throw new ApiError(429, 'Too many requests. Please try again later.', 'too_many_requests');
         }
 
         $emails->request($user, $data['email']);

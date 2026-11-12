@@ -29,8 +29,11 @@ class EmailChangeService
         if ($newEmail === $user->email) {
             throw new ApiError(422, 'This is already your email address.', 'same_email');
         }
+        // No enumeration (P1-06): an address already in use gets the same answer, and nothing is sent to it.
         if (User::findByEmail($newEmail) !== null) {
-            throw new ApiError(422, 'This email address cannot be used.', 'email_unavailable');
+            $this->logger->security('profile.email_change_unavailable', 'Email change requested to an address already in use', LogLevel::Warning, $user, $user);
+
+            return;
         }
 
         $minutes = $this->settings->int('email_change_ttl_minutes');

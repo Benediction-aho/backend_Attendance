@@ -101,12 +101,77 @@ it('changes the email after confirmation from the new address, with an alert to 
     $this->postJson('/api/auth/login', loginPayload('ama.new@example.com', 'Current-pass-1'))->assertOk();
 });
 
-it('requires the current password and an available address', function () {
+it('requires the current password and never reveals whether an address is taken (P1-06)', function () {
     User::factory()->create(['email' => 'taken@example.com']);
 
     $this->bearer($this->token)->postJson('/api/me/email', ['email' => 'new@example.com', 'current_password' => 'wrong'])->assertStatus(422)->assertJsonPath('code', 'wrong_password');
-    $this->bearer($this->token)->postJson('/api/me/email', ['email' => 'taken@example.com', 'current_password' => 'Current-pass-1'])->assertStatus(422)->assertJsonPath('code', 'email_unavailable');
+    $free = $this->bearer($this->token)->postJson('/api/me/email', ['email' => 'free@example.com', 'current_password' => 'Current-pass-1'])->assertStatus(202);
+    Mail::fake();
+    $taken = $this->bearer($this->token)->postJson('/api/me/email', ['email' => 'taken@example.com', 'current_password' => 'Current-pass-1'])->assertStatus(202);
+    expect($taken->json())->toBe($free->json());
+    Mail::assertNothingQueued();
+    expect(ActivityLog::query()->where('event', 'profile.email_change_unavailable')->exists())->toBeTrue();
+});
+
+it('validates the new address', function () {
     $this->bearer($this->token)->postJson('/api/me/email', ['email' => 'nope', 'current_password' => 'Current-pass-1'])->assertUnprocessable();
+});
+
+it('throttles email change requests per user (P1-06)', function () {
+    for ($i = 0; $i < 3; $i++) {
+        $this->bearer($this->token)->postJson('/api/me/email', ['email' => "new$i@example.com", 'current_password' => 'Current-pass-1'])->assertStatus(202);
+    }
+    $this->bearer($this->token)->postJson('/api/me/email', ['email' => 'new9@example.com', 'current_password' => 'Current-pass-1'])->assertStatus(429);
+    Mail::assertQueued(EmailChangeConfirmMail::class, 3);
+});
+
+it('signs the session out after repeated wrong current passwords and alerts the user (P1-03)', function (string $method, string $url, array $payload) {
+    for ($i = 0; $i < 4; $i++) {
+        $this->bearer($this->token)->json($method, $url, $payload)->assertStatus(422)->assertJsonPath('code', 'wrong_password');
+    }
+    $this->bearer($this->token)->json($method, $url, $payload)->assertStatus(401)->assertJsonPath('code', 'reauth_limit');
+    $this->app['auth']->forgetGuards();
+    $this->bearer($this->token)->getJson('/api/me')->assertUnauthorized();
+
+    expect(ActivityLog::query()->where('event', 'auth.reauth_limit')->where('user_id', $this->user->id)->exists())->toBeTrue();
+    Mail::assertQueued(SecurityAlertMail::class, fn ($m) => $m->hasTo('ama@example.com'));
+
+    // A new session cannot keep guessing during the block, even with the right password.
+    $token = deviceToken($this->user, 'device-test-0000000002');
+    $this->app['auth']->forgetGuards();
+    $good = $url === '/api/me/password'
+        ? ['current_password' => 'Current-pass-1', 'new_password' => 'Brand-new-pass-9', 'new_password_confirmation' => 'Brand-new-pass-9']
+        : ['email' => 'x@example.com', 'current_password' => 'Current-pass-1'];
+    $this->bearer($token)->json($method, $url, $good)->assertStatus(429);
+
+    // After the block, the right password works and resets the counter.
+    Carbon::setTestNow(Carbon::now()->addMinutes(11));
+    $token = deviceToken($this->user, 'device-test-0000000003');
+    $this->app['auth']->forgetGuards();
+    $this->bearer($token)->json($method, $url, $good)->assertSuccessful();
+})->with([
+    'password change' => ['PUT', '/api/me/password', ['current_password' => 'wrong', 'new_password' => 'Brand-new-pass-9', 'new_password_confirmation' => 'Brand-new-pass-9']],
+    'email change' => ['POST', '/api/me/email', ['email' => 'x@example.com', 'current_password' => 'wrong']],
+]);
+
+it('re-encodes uploaded photos: EXIF metadata and appended bytes are dropped, large images are resized (P1-13)', function () {
+    // A JPEG with an EXIF block (GPS-like text) and a PHP payload appended after the image data.
+    $img = imagecreatetruecolor(2000, 1500);
+    ob_start();
+    imagejpeg($img);
+    $jpeg = (string) ob_get_clean();
+    $exifPayload = "Exif\0\0".str_repeat('GPSLatitude-5.6037', 4);
+    $app1 = "\xFF\xE1".pack('n', strlen($exifPayload) + 2).$exifPayload;
+    $bytes = substr($jpeg, 0, 2).$app1.substr($jpeg, 2).'<?php echo "pwned"; ?>';
+    $path = tempnam(sys_get_temp_dir(), 'img');
+    file_put_contents($path, $bytes);
+
+    $this->bearer($this->token)->post('/api/me/photo', ['photo' => new UploadedFile($path, 'gps.jpg', 'image/jpeg', null, true)], ['Accept' => 'application/json'])->assertOk();
+
+    $stored = Storage::disk('local')->get($this->user->refresh()->photo_path);
+    expect($stored)->not->toContain('GPSLatitude')->not->toContain('<?php');
+    [$w, $h] = getimagesizefromstring($stored);
+    expect([$w, $h])->toBe([1024, 768]);
 });
 
 it('expires email change links', function () {
