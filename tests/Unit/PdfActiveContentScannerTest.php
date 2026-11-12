@@ -83,3 +83,83 @@ it('rejects hex-escaped names, plain JS, OpenAction/AA URI or Launch, and XFA fo
     'xfa' => '<</Type/Catalog/Pages 2 0 R/AcroForm<</XFA 6 0 R>>>>',
     'submit' => '<</Type/Catalog/Pages 2 0 R/AcroForm<</Fields[<</A<</S/SubmitForm>>>>]>>>>',
 ]);
+
+// Round 3 (P5-12 / P5-13): samples mirror tests/security/phase5_pdf_bypass_r2.py.
+
+function r2Pages(): array
+{
+    return ['<</Type/Pages/Kids[3 0 R]/Count 1>>', '<</Type/Page/Parent 2 0 R/MediaBox[0 0 612 792]>>'];
+}
+
+function r2Ascii85(string $data): string
+{
+    $out = '';
+    foreach (str_split($data, 4) as $chunk) {
+        $n = strlen($chunk);
+        $v = unpack('N', str_pad($chunk, 4, "\0"))[1];
+        $g = '';
+        for ($i = 0; $i < 5; $i++) {
+            $g = chr($v % 85 + 33).$g;
+            $v = intdiv($v, 85);
+        }
+        $out .= substr($g, 0, $n + 1);
+    }
+
+    return $out.'~>';
+}
+
+function r2Rejected(): array
+{
+    $js = '<</S/JavaScript/JS(app.alert(1))>>';
+    $body = '4 0 '.$js;
+    $cat = '<</Type/Catalog/Pages 2 0 R/OpenAction 4 0 R>>';
+    $uri = '<</S/URI/URI(http://evil.example)>>';
+    $base = scanPdf(['<</Type/Catalog/Pages 2 0 R>>', ...r2Pages()]);
+
+    return [
+        'objstm_hex' => scanPdf([$cat, ...r2Pages(), '0', scanStream(bin2hex($body).'>', '/Type/ObjStm/N 1/First 4/Filter/ASCIIHexDecode')]),
+        'objstm_a85flate' => scanPdf([$cat, ...r2Pages(), '0', scanStream(r2Ascii85((string) gzcompress($body)), '/Type/ObjStm/N 1/First 4/Filter[/ASCII85Decode/FlateDecode]')]),
+        'objstm_pred' => scanPdf([$cat, ...r2Pages(), '0', scanStream((string) gzcompress("\x00".$body), '/Type/ObjStm/N 1/First 4/Filter/FlateDecode/DecodeParms<</Predictor 12/Columns '.strlen($body).'>>')]),
+        'objstm_pred_up' => scanPdf([$cat, ...r2Pages(), '0', scanStream((string) gzcompress("\x02".$body), '/Type/ObjStm/N 1/First 4/Filter/FlateDecode/DecodeParms<</Predictor 12/Columns '.strlen($body).'>>')]),
+        'objstm_lzw (unsupported filter)' => scanPdf(['<</Type/Catalog/Pages 2 0 R>>', ...r2Pages(), '0', scanStream('xxxx', '/Type/ObjStm/N 1/First 4/Filter/LZWDecode')]),
+        'objstm_bad_flate' => scanPdf(['<</Type/Catalog/Pages 2 0 R>>', ...r2Pages(), '0', scanStream('not zlib', '/Type/ObjStm/N 1/First 4/Filter/FlateDecode')]),
+        'string_stream' => str_replace('endstream', '', scanPdf(["<</Type/Catalog/Pages 2 0 R/Lang (en stream\n) /OpenAction<</S/JavaScript/JS(app.alert(1))>>>>", ...r2Pages()])),
+        'string_stream2' => scanPdf(["<</Type/Catalog/Pages 2 0 R/Lang (a stream\n)/OpenAction<</S/JavaScript/JS(app.alert(1))>>/Foo (endstream)>>", ...r2Pages()]),
+        'nested string with escapes' => scanPdf(["<</Type/Catalog/Pages 2 0 R/Lang (a (b \\) stream\n) c)/OpenAction<</S/JavaScript/JS(x)>>>>", ...r2Pages()]),
+        'chain5' => scanPdf([$cat, ...r2Pages(), '5 0 R', '6 0 R', '7 0 R', '8 0 R', $uri]),
+        'chain_next' => scanPdf([$cat, ...r2Pages(), '<</S/GoTo/D[3 0 R/Fit]/Next 5 0 R>>', '<</S/GoTo/D[3 0 R/Fit]/Next 6 0 R>>', '<</S/GoTo/D[3 0 R/Fit]/Next 7 0 R>>', '<</S/GoTo/D[3 0 R/Fit]/Next 8 0 R>>', $uri]),
+        'incremental' => $base."1 0 obj\n<</Type/Catalog/Pages 2 0 R/OpenAction<</S/JavaScript/JS(app.alert(1))>>>>\nendobj\n%%EOF\n",
+        'broken_xref' => "%PDF-1.7\n1 0 obj<</Type/Catalog/Pages 2 0 R/OpenAction<</S/Java#53cript/JS(x)>>>>endobj\n2 0 obj".r2Pages()[0]."endobj\ntrailer<</Root 1 0 R>>\n%%EOF",
+        'hexstring_name' => scanPdf(['<</Type/Catalog/Pages 2 0 R/Names<</JavaScript 4 0 R>>>>', ...r2Pages(), '<</Names[(a) 5 0 R]>>', $js]),
+        'stray stream keyword' => scanPdf(["<</Type/Catalog/Pages 2 0 R/K [1] stream\n/JS endstream>>", ...r2Pages()]),
+        'unterminated string' => scanPdf(['<</Type/Catalog/Pages 2 0 R/Lang (abc>>', ...r2Pages()]),
+        'missing endstream' => scanPdf(["<</Length 999>>stream\nabc", ...r2Pages()]),
+        'JS hidden after wrong /Length' => scanPdf(['<</Type/Catalog/Pages 2 0 R/OpenAction 4 0 R>>', ...r2Pages(), "<</Length 2>>stream\nabcdef\nendstream\nendobj\n4 0 obj\n".$js]),
+    ];
+}
+
+it('rejects every round-2 bypass sample and fail-closed structure', function (string $pdf) {
+    expect(PdfActiveContentScanner::hasActiveContent($pdf))->toBeTrue();
+})->with(fn () => r2Rejected());
+
+it('accepts link, random Flate streams, indirect /Length, comments and strings containing keywords', function () {
+    $link = scanPdf(['<</Type/Catalog/Pages 2 0 R>>', r2Pages()[0], '<</Type/Page/Parent 2 0 R/MediaBox[0 0 612 792]/Annots[<</Type/Annot/Subtype/Link/Rect[0 0 9 9]/A<</S/URI/URI(https://x.example)>>>>]>>']);
+    expect(PdfActiveContentScanner::hasActiveContent($link))->toBeFalse();
+
+    for ($k = 0; $k < 3; $k++) {
+        $pdf = scanPdf(['<</Type/Catalog/Pages 2 0 R>>', ...r2Pages(), scanStream((string) gzcompress(random_bytes(3 * 1024 * 1024)), '/Filter/FlateDecode')]);
+        expect(PdfActiveContentScanner::hasActiveContent($pdf))->toBeFalse();
+    }
+
+    $data = "BT (stream endstream /JS) Tj ET\nendstream";
+    $indirect = scanPdf(['<</Type/Catalog/Pages 2 0 R/Title (has \\( stream /JS words)>>% comment /JS', ...r2Pages(), "<</Length 5 0 R>>stream\n".$data."\nendstream", (string) strlen($data)]);
+    expect(PdfActiveContentScanner::hasActiveContent($indirect))->toBeFalse();
+
+    // OpenAction to a page destination whose page holds a hyperlink is not an automatic URI.
+    $goto = scanPdf(['<</Type/Catalog/Pages 2 0 R/OpenAction[3 0 R/Fit]>>', r2Pages()[0], '<</Type/Page/Parent 2 0 R/Annots[<</Subtype/Link/A<</S/URI/URI(https://x.example)>>>>]>>']);
+    expect(PdfActiveContentScanner::hasActiveContent($goto))->toBeFalse();
+
+    // Clean object stream with ASCIIHex + Flate is decoded and accepted.
+    $objstm = scanPdf(['<</Type/Catalog/Pages 2 0 R/OpenAction 4 0 R>>', ...r2Pages(), '0', scanStream(bin2hex((string) gzcompress('4 0 [3 0 R/Fit]')).'>', '/Type/ObjStm/N 1/First 4/Filter[/AHx/FlateDecode]')]);
+    expect(PdfActiveContentScanner::hasActiveContent($objstm))->toBeFalse();
+});

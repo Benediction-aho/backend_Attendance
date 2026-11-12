@@ -164,3 +164,11 @@ Fix: treat `stream` as a stream keyword only when it directly follows the `>>` t
 | P5-11 | Info | Fixed |
 | P5-12 | Medium | Open |
 | P5-13 | Low | Open |
+
+## Fixes applied – round 3 (attendance-backend, 2026-11-12)
+
+Regression tests: `tests/Unit/PdfActiveContentScannerTest.php` (31 tests; every sample of `phase5_pdf_samples.py` and `phase5_pdf_bypass_r2.py` is generated in PHP). Full suite 421/421, phpstan clean, pint clean. Local run of both scripts: clean, fp, link, 5 × rand, 5 × randflate, plus real PDFs (DomPDF output, monthly report) → accepted; objstm, hex, uri, objstm_hex, objstm_a85flate, objstm_pred, string_stream, string_stream2, chain5, chain_next, incremental, broken_xref, hexstring_name → rejected (each detected by the rule, not by fail-closed).
+
+- **P5-12** – The scanner is now a tokenizer: comments dropped, literal strings (nested parentheses, backslash escapes) and hex strings skipped, names `#xx`-decoded. `stream` is a keyword only right after the `>>` of an object dictionary; the data is skipped with `/Length` (indirect length resolved from the file); if `/Length` does not land on `endstream`, the next `endstream` is used. Fail closed (rejected): `stream` anywhere else, stray `endstream`/`)`/`>`, unterminated string, invalid hex string, missing `endstream`, stream keyword without EOL.
+- **P5-13** – Object streams are decoded through their filter chain: FlateDecode (with PNG predictors 10–15), ASCIIHexDecode, ASCII85Decode (and abbreviations); any other filter, TIFF predictor, indirect filter value, decoding error, invalid header or > 20 MB decoded → rejected. `/OpenAction` and `/AA` values are followed through references, arrays and `/Next` with a visited set (no depth limit); every definition of an object number (incremental updates) is checked. Destinations (page references) are not followed as actions, so a hyperlink on the opening page stays allowed.
+- Remaining limitation: encrypted PDFs are not decrypted (unchanged; defence in depth only).
