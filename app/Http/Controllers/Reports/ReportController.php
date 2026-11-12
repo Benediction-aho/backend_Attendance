@@ -77,6 +77,9 @@ class ReportController
         if (! $file instanceof UploadedFile || ! $file->isValid() || ! WeeklyReportService::isPdf($file)) {
             throw new ApiError(422, 'Please upload a PDF file.', 'invalid_pdf');
         }
+        if (WeeklyReportService::isEncrypted($file)) {
+            throw new ApiError(422, 'Password-protected PDFs are not accepted. Please export the report without a password.', 'pdf_encrypted');
+        }
         if (WeeklyReportService::hasActiveContent($file)) {
             throw new ApiError(422, 'This PDF contains scripts, actions or embedded files. Please export it again as a plain PDF.', 'pdf_active_content');
         }

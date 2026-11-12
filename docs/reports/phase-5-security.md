@@ -189,3 +189,7 @@ Setup unchanged (local production-mode server on `attendance_sec5`, window close
 No Critical/High/Medium finding remains open. **Phase 5 backend security: closed.**
 
 Remaining limitations (accepted, defence in depth only): encrypted PDFs are not decrypted, so active content inside an encrypted PDF is not detected (files are served as downloads with `nosniff`/CSP through temporary signed URLs; optionally reject `/Encrypt` outright if the business allows).
+
+## Encrypted PDFs – limitation closed by owner decision (2026-11-12)
+
+Owner decision: password-protected / encrypted PDFs are refused. `PdfActiveContentScanner::isEncrypted()` rejects any file whose trailer or cross-reference stream dictionary (incremental updates included, `#xx`-escaped names decoded) contains `/Encrypt`, before the active-content scan, with 422 `pdf_encrypted` ("Password-protected PDFs are not accepted. Please export the report without a password."). `encrypt.pdf` from `phase5_pdf_bypass_r3.py` is now rejected. The "encrypted PDFs not decrypted" limitation above is therefore closed. Tests: `tests/Feature/Reports/Phase5FixesTest.php`.

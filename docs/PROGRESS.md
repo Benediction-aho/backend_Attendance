@@ -33,6 +33,7 @@ Updated by the agents at the end of every work session.
 - **Tests** (`tests/Feature/Reports`, frozen clock): 16:59:59 / 17:00 / 17:00:01 boundaries, 15:59:59 window, 16:29:59 / 16:30 / 17:00 reminder, 18:59:59 / 19:00 monthly, catch-up and "never twice", failed recipient retry, grace (leave, no check-in, setting off), versions cap, abuse (HTML renamed .pdf, MZ header, empty, oversize, path traversal name, tampered/expired URL), tiers per endpoint, PDF text content parsed. **Pest 380 green, Larastan 0 errors, Pint clean, migration rollback/migrate OK.**
 
 ### For attendance-frontend (phase 5)
+- **New 422 code on weekly report upload: `pdf_encrypted`** (owner decision 2026-11-12): password-protected PDFs are refused with "Password-protected PDFs are not accepted. Please export the report without a password." Show the message as-is (checked before `pdf_active_content`).
 Contract `docs/api/openapi.yaml` 0.5.0 (additive). Writes return 403 `checkin_required` before the check-in; send nothing time-related (work date and completion time are server-side). Use `GET /clients/services?q=` for the service autocomplete. Weekly upload: show `GET /me/reports/weekly/submission` (`can_submit`, `opens_at`, `deadline`, `is_late_now`, versions); `window_not_open` carries `opens_at`. Admin screens: notification paths above.
 
 ### For backend-security-tester (phase 5 focus)

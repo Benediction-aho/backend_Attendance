@@ -953,7 +953,7 @@ paths:
       responses:
         '201': { description: 'data: WeeklySubmission' }
         '403': { description: checkin_required | employees_only }
-        '422': { description: 'invalid_pdf | pdf_active_content (scripts, launch actions or embedded files) | window_not_open (opens_at) | too_many_versions | validation (size)' }
+        '422': { description: 'invalid_pdf | pdf_encrypted (password-protected PDF; checked before active content) | pdf_active_content (scripts, launch actions or embedded files) | window_not_open (opens_at) | too_many_versions | validation (size)' }
         '429': { $ref: '#/components/responses/TooManyRequests' }
   /admin/reports/daily:
     get:

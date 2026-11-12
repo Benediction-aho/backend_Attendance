@@ -103,6 +103,24 @@ describe('P5-03 PDF hardening', function () {
         $this->postJson('/api/me/reports/weekly/submission', ['file' => p5Pdf('<< /Type /Catalog /JSONData 1 >>')])->assertStatus(201);
     });
 
+    it('rejects password-protected PDFs (trailer, incremental update, xref stream, escaped name) with pdf_encrypted', function () {
+        at('2026-11-20 16:05');
+        Sanctum::actingAs($this->u);
+        $obj = "1 0 obj\n<< /Type /Catalog /Pages 2 0 R >>\nendobj\n";
+        $samples = [
+            $obj."trailer\n<< /Root 1 0 R /Encrypt << /Filter /Standard /V 1 /R 2 /O (x) /U (y) /P -4 >> >>",
+            $obj."trailer\n<< /Root 1 0 R >>\nstartxref\n0\n%%EOF\ntrailer\n<< /Root 1 0 R /Prev 0 /Encrypt 5 0 R >>",
+            $obj."9 0 obj\n<< /Type /XRef /Size 10 /W [1 2 1] /Root 1 0 R /Encrypt 5 0 R /Length 0 >>\nstream\n\nendstream\nendobj",
+            $obj."trailer\n<< /Root 1 0 R /En#63rypt 5 0 R >>",
+        ];
+        foreach ($samples as $body) {
+            $this->postJson('/api/me/reports/weekly/submission', ['file' => p5Pdf($body)])
+                ->assertStatus(422)->assertJsonPath('code', 'pdf_encrypted')
+                ->assertJsonPath('message', 'Password-protected PDFs are not accepted. Please export the report without a password.');
+        }
+        $this->postJson('/api/me/reports/weekly/submission', ['file' => p5Pdf($obj."trailer\n<< /Root 1 0 R /EncryptionNote 1 >>")])->assertStatus(201);
+    });
+
     it('serves files as attachments with a safe name and a sandbox CSP', function () {
         at('2026-11-20 16:05');
         Sanctum::actingAs($this->u);

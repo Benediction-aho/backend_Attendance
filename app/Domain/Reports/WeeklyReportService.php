@@ -50,6 +50,12 @@ class WeeklyReportService
         return str_starts_with($head, '%PDF-');
     }
 
+    /** Owner decision: password-protected PDFs are refused. */
+    public static function isEncrypted(UploadedFile $file): bool
+    {
+        return PdfActiveContentScanner::isEncrypted((string) @file_get_contents((string) $file->getRealPath()));
+    }
+
     /** P5-03 / P5-09 / P5-10: structural active-content scan (see PdfActiveContentScanner). */
     public static function hasActiveContent(UploadedFile $file): bool
     {

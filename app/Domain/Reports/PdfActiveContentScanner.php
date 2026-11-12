@@ -52,6 +52,22 @@ class PdfActiveContentScanner
         }
     }
 
+    /**
+     * Owner decision (phase 5): password-protected / encrypted PDFs are refused. True when any trailer or
+     * cross-reference stream dictionary (incremental updates included) carries an /Encrypt entry. Names are
+     * matched after #xx decoding; if the structure cannot be tokenized, a raw name scan is used instead.
+     */
+    public static function isEncrypted(string $bytes): bool
+    {
+        try {
+            $text = (new self)->tokenize($bytes, true);
+        } catch (RuntimeException) {
+            $text = (string) preg_replace_callback('/#([0-9A-Fa-f]{2})/', fn (array $m): string => chr((int) hexdec($m[1])), $bytes);
+        }
+
+        return preg_match('~/Encrypt(?![A-Za-z0-9])~', $text) === 1;
+    }
+
     private function scan(string $bytes): bool
     {
         $this->raw = $bytes;
