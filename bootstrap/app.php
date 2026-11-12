@@ -17,6 +17,7 @@ return Application::configure(basePath: dirname(__DIR__))
     ->withMiddleware(function (Middleware $middleware): void {
         $middleware->prepend(SecurityHeaders::class);
         $middleware->replace(Illuminate\Http\Middleware\TrustProxies::class, TrustProxies::class);
+        $middleware->throttleApi();
     })
     ->withExceptions(function (Exceptions $exceptions): void {
         // API-only: every error is JSON, never an HTML page.
