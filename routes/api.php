@@ -40,8 +40,20 @@ Route::middleware(['auth:sanctum', EnsureAccountUsable::class])->group(function 
     Route::post('/notifications/{id}/read', [NotificationController::class, 'read'])->whereUuid('id')->name('notifications.read');
 
     Route::prefix('admin')->group(function () {
+        // Authorization per action in UserPolicy (role + permission tier).
+        Route::get('/permissions', [UserController::class, 'permissionCatalog'])->middleware('can:super-admin')->name('admin.permissions.index');
+        Route::get('/users', [UserController::class, 'index'])->name('admin.users.index');
+        Route::post('/users', [UserController::class, 'store'])->name('admin.users.store');
+        Route::get('/users/{user}', [UserController::class, 'show'])->name('admin.users.show');
+        Route::delete('/users/{user}', [UserController::class, 'destroy'])->name('admin.users.destroy');
         Route::post('/users/{user}/approve', [UserController::class, 'approve'])->name('admin.users.approve');
         Route::post('/users/{user}/reject', [UserController::class, 'reject'])->name('admin.users.reject');
+        Route::post('/users/{user}/block', [UserController::class, 'block'])->name('admin.users.block');
+        Route::post('/users/{user}/unblock', [UserController::class, 'unblock'])->name('admin.users.unblock');
+        Route::post('/users/{user}/unlock', [UserController::class, 'unlock'])->name('admin.users.unlock');
+        Route::post('/users/{user}/code', [UserController::class, 'regenerateCode'])->name('admin.users.code');
+        Route::put('/users/{user}/permissions', [UserController::class, 'permissions'])->name('admin.users.permissions');
+        Route::put('/users/{user}/role', [UserController::class, 'role'])->name('admin.users.role');
 
         Route::middleware('can:super-admin')->group(function () {
             Route::get('/settings', [SettingsController::class, 'index'])->name('admin.settings.index');

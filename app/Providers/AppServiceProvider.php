@@ -10,6 +10,7 @@ use Illuminate\Http\Request;
 use Illuminate\Support\Carbon;
 use Illuminate\Support\Facades\Gate;
 use Illuminate\Support\Facades\RateLimiter;
+use Illuminate\Support\Facades\Route;
 use Illuminate\Support\ServiceProvider;
 use Laravel\Sanctum\PersonalAccessToken;
 use Laravel\Sanctum\Sanctum;
@@ -30,6 +31,9 @@ class AppServiceProvider extends ServiceProvider
      */
     public function boot(): void
     {
+        // Numeric ids only (anything else is a plain 404, never a database error).
+        Route::pattern('user', '[0-9]{1,18}');
+
         // Every API route is rate limited per user (or per IP for guests); values come from settings.
         RateLimiter::for('api', function (Request $request) {
             $user = $request->user('sanctum');

@@ -158,7 +158,9 @@ class User extends Authenticatable
             return [];
         }
 
-        return array_keys($this->grantedPermissions());
+        $granted = $this->grantedPermissions();
+
+        return array_values(array_filter(array_map(fn (Permission $p) => $p->value, Permission::cases()), fn ($k) => isset($granted[$k])));
     }
 
     public function flushPermissionCache(): void
