@@ -124,11 +124,12 @@ No Critical or High finding. 3 Medium, 6 Low, 5 Info.
 | P1-12 | Whole-account lock never triggered by external attacker (Q2) | Info | Owner decision (unchanged) |
 | P1-13 | Photos not re-encoded (EXIF/polyglot) | Info | Fixed |
 | P1-14 | Sign-up timing difference | Info | Accepted |
-| P1-15 | Runtime DB role can erase the whole log through `purge_activity_logs(cutoff)` | Low | Open (new) |
-| P1-16 | Super admin sign-in can still be denied with 3 source IPs (max active codes) | Low | Open (new) |
-| P1-17 | Other valid super admin codes survive a successful sign-in | Low | Open (new) |
-| P1-18 | `RateLimiter::hit` on the database cache store loses hits when a key is created under burst | Low | Open (new) |
-| P1-19 | Re-auth block signs out the owner's other sessions that try during the block | Info | Open (new) |
+| P1-15 | Runtime DB role can erase the whole log through `purge_activity_logs(cutoff)` | Low | Fixed (final check) |
+| P1-16 | Super admin sign-in can still be denied with 3 source IPs (max active codes) | Low | Fixed (final check) |
+| P1-17 | Other valid super admin codes survive a successful sign-in | Low | Fixed (final check) |
+| P1-18 | `RateLimiter::hit` on the database cache store loses hits when a key is created under burst | Low | Fixed (final check) |
+| P1-19 | Re-auth block signs out the owner's other sessions that try during the block | Info | Accepted (by design) |
+| P1-20 | `DatabaseSeeder` uses removed `name` column (`migrate:fresh --seed` fails) | Info | Open (new) |
 
 ## Passed checks
 **Phase 0 re-test:** P0-02, P0-03 and P0-04 are fixed (see `phase-0-security.md`).
@@ -276,3 +277,25 @@ Authorization matrix (`authz_matrix.sh`): **68/68 passed** again. Multiple super
 | P1-19 | Behaviour kept (not weakened): during a re-auth block every current-password attempt is refused and that session is signed out. The owner recovers by signing in again (sign-in uses a separate bucket and is not affected) and changing the password after the 10-minute block, or immediately after an admin unlock (`unlock` clears the re-auth bucket). The alert email tells the user to change the password and contact an administrator. Accepted as Info. | Existing `CurrentPasswordGuard` tests unchanged |
 
 Result: `php artisan test` 188/188 green, PHPStan 0 errors, Pint clean. All phase 1 findings closed pending the security tester's final check.
+
+## Final check (backend-security-tester, 2026-11-12, commit `4004a4a`)
+
+Environment: local only. `php -S 127.0.0.1:8181 public/index.php` with `PHP_CLI_SERVER_WORKERS=16`, `APP_ENV=production APP_DEBUG=false MAIL_MAILER=log`, local PostgreSQL. Several client IPs simulated with loopback source addresses (`curl --interface 127.0.0.x`). No real email sent.
+
+| ID | Result | Evidence |
+|---|---|---|
+| P1-15 | **Fixed** | Migrated with `DB_APP_ROLE=attendance_app_test`, then as `SET ROLE attendance_app_test`: `SELECT purge_activity_logs('infinity')` → *permission denied for function*; `DELETE` (also after `set_config('attendance.allow_log_purge','on')`), `TRUNCATE`, `UPDATE created_at` → *permission denied for table*; `CREATE OR REPLACE FUNCTION purge_activity_logs` → *permission denied for schema*. Worst case (EXECUTE granted by mistake): `purge_activity_logs('infinity')` deleted only the 13-month-old row, the 1-day-old row survived. `PUT /admin/settings` `log_retention_months` = 1 or 11 → 422, 12 → 200. `attendance:purge-logs` runs (0 rows, nothing older than the floor). |
+| P1-16 | **Fixed** | `tests/security/sa_code_cap.sh` (19/19 PASS): 3 strangers from 3 IPs fill the cap; a 4th stranger and an unknown `device_id` get the same neutral 202 but no code and no email; the owner's known device from a **new** IP gets a code, the oldest stranger code is cancelled (→ 401), `auth.login_code_contention` stored at level `critical`. Burst of 31 parallel requests from 31 IPs: all 202, exactly 3 active codes (cap holds under concurrency). |
+| P1-17 | **Fixed** | Same script: after the owner signs in, 0 active codes remain; the two remaining stranger codes → 401; replay of the owner's code → 401. |
+| P1-18 | **Fixed** | `burst.sh /auth/login` (unknown emails/devices, `ip_login_failures_limit`=60), limiter + cache cleared between runs: 100 parallel → exactly **60×401 / 40×429**, `rate_limit_counters.hits = 100` (no hit lost, no overshoot), twice in a row. 200 parallel → 60×401 / 140×429 (the 79 extra are refused earlier by the generic `api` throttle, counter = 121). No 5xx. Latency on the local php -S server (bcrypt dummy check, 16 workers): p50 ≈ 4.6 s, p95 ≈ 5.3 s for 100 parallel – local only, not representative. |
+| P1-19 | Accepted (Info) | Behaviour documented by attendance-backend; no security weakness. |
+
+Regression: `race_login.sh` 40 parallel → 4×401 / 36×429, 100 parallel → 4×401 / 96×429 (never more than 5 secrets checked). `timing_login.sh` (15 rounds): login known 24.5 ms vs unknown 23.5 ms, code request known 228 ms vs unknown 221 ms (no usable oracle). `authz_matrix.sh`: 68/68 PASS. `php artisan test`: 188/188.
+
+### New finding
+
+| ID | Title | Severity | Status |
+|---|---|---|---|
+| P1-20 | `DatabaseSeeder` still inserts the removed `name` column: `php artisan migrate:fresh --seed` fails (`column "name" of relation "users" does not exist`). No security impact; breaks local/test environment setup. Fix: seed with `first_name`/`last_name` (or no default user; the super admin is created with `attendance:create-super-admin`). | Info | Open |
+
+**Conclusion: no Critical, High, Medium or Low finding open for phase 1.** Phase 1 backend passes the security gate.
