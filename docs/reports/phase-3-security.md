@@ -131,3 +131,7 @@ Still no Critical or High finding open. P3-04 (Face ID, phase 4) and P3-06 (`che
 ## Re-test of P3-04 (2026-11-12, phase 4)
 
 **P3-04 – Fixed.** `faceid_required_for_checkin` now defaults to `true`. Over HTTP (`tests/security/phase4_faceid_push.php`): `gps`, `mission` and `remote` intents without an approved credential on the device → 403 `faceid_not_registered` / `faceid_pending_approval` / `faceid_other_device`; confirmation without assertion → 422 `faceid_failed`; replayed, foreign-challenge, other-intent, revoked-credential, no-UV, wrong-origin, counter-regression and other-device assertions → 422. Admin on-behalf check-in still works without Face ID and still requires a reason and `checkin_for_employee`. Details in `phase-4-security.md`.
+
+## Re-test of P3-06 (2026-11-12, phase 5)
+
+**P3-06 – Fixed.** All 7 phase 5 write routes carry `checked-in` and answer 403 `checkin_required` before the check-in (`tests/security/Phase5SecurityTest.php`, see `phase-5-security.md`).

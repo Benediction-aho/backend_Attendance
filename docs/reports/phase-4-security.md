@@ -104,3 +104,11 @@ Logs: WebAuthn failures log only the exception class and user id; no challenge, 
 - **P4-02 – Fixed.** Every Face ID registration (first device included) sends the account owner an email + in-app alert (`faceid_device_registered`: "A new device was registered for Face ID on your account. If it wasn't you, contact your admin."). Credentials now store `registration_ip` and `registration_user_agent`; `GET /admin/faceid/credentials` returns `registration {device_id, registered_at, ip, platform, browser, user_agent, device_first_seen_at}` (approvers only). Tests: `tests/Feature/FaceId/FaceIdTest.php`.
 - **P4-03 – Fixed.** `WebPushTransport` builds the client with `['allow_redirects' => false, 'connect_timeout' => 5]`. Test checks the Guzzle config.
 - P4-04 remains an owner decision (see PROGRESS questions).
+
+## Re-test of the fixes (2026-11-12, during phase 5)
+
+- **P4-01 – Fixed (verified).** `PushSubscriptionController` answers 409 `push_endpoint_conflict`; `tests/Feature/Push/WebPushTest.php` green on a separate database.
+- **P4-02 – Fixed (verified).** `faceid_device_registered` alert sent from `WebAuthnService` at every registration; `tests/Feature/FaceId/FaceIdTest.php` green.
+- **P4-03 – Fixed (verified).** `WebPushTransport` uses `['allow_redirects' => false, 'connect_timeout' => 5]`.
+
+57 tests of the two suites passed (`DB_DATABASE=attendance_sec5`). No phase 4 finding open.
