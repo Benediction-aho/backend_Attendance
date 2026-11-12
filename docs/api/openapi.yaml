@@ -133,9 +133,10 @@ paths:
       requestBody: { required: true, content: { application/json: { schema: { type: object, required: [email], properties: { email: { type: string }, device_id: { type: string, maxLength: 200, nullable: true } } } } } }
       responses:
         '202': { description: '{ message }' }
+        '429': { description: 'too_many_code_requests (UX2-07): retry_after_seconds + Retry-After header; same for unknown emails' }
   /auth/recovery:
     post:
-      summary: Ask for a recovery link (super admin whose sign-in is locked). Always 202.
+      summary: Ask for a recovery link (super admin whose sign-in is locked or temporarily blocked). Always 202.
       requestBody: { required: true, content: { application/json: { schema: { type: object, required: [email], properties: { email: { type: string } } } } } }
       responses:
         '202': { description: '{ message }' }
@@ -865,7 +866,8 @@ components:
         full_name: { type: string }
         email: { type: string }
         role: { type: string, enum: [super_admin, admin, employee] }
-        employee_type: { type: string, enum: [intern, employee] }
+        employee_type: { type: [string, 'null'], enum: [intern, employee, null], description: 'null for admins and super admins (UX2-18)' }
+        last_login_at: { type: [string, 'null'], format: date-time, description: 'own account (/me) and admin views' }
         job_title: { type: [string, 'null'] }
         status: { type: string, enum: [pending, active, blocked, locked, deleted] }
         photo_url: { type: [string, 'null'], description: Short-lived URL (settings.file_url_ttl_minutes) }

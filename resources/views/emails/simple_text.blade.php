@@ -1,19 +1,19 @@
-{{ $greeting }}
+{!! $greeting !!}
 
 @foreach ($lines as $line)
-{{ $line }}
+{!! $line !!}
 
 @endforeach
 @if ($highlight)
-{{ $highlight }}
+{!! $highlight !!}
 
 @endif
 @if ($actionUrl)
-{{ $actionText }}: {{ $actionUrl }}
+{!! $actionText !!}: {!! $actionUrl !!}
 
 @endif
 @foreach ($outro as $line)
-{{ $line }}
+{!! $line !!}
 @endforeach
 
 Assistance Ghana Attendance

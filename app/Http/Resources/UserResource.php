@@ -2,6 +2,7 @@
 
 namespace App\Http\Resources;
 
+use App\Enums\Role;
 use App\Models\User;
 use App\Services\FileUrls;
 use Illuminate\Http\Request;
@@ -33,7 +34,8 @@ class UserResource extends JsonResource
             'full_name' => $user->fullName(),
             'email' => $user->email,
             'role' => $user->role->value,
-            'employee_type' => $user->employee_type->value,
+            // UX2-18: the type only means something for employees.
+            'employee_type' => $user->role === Role::Employee ? $user->employee_type->value : null,
             'job_title' => $user->job_title,
             'status' => $user->status->value,
             'photo_url' => app(FileUrls::class)->temporaryUrl($user->photo_path),
@@ -52,6 +54,7 @@ class UserResource extends JsonResource
             $data += [
                 'must_change_password' => $user->must_change_password,
                 'permissions' => $user->permissionKeys(),
+                'last_login_at' => $user->last_login_at?->toIso8601String(),
             ];
         }
 

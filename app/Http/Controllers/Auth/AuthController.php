@@ -10,6 +10,7 @@ use App\Models\User;
 use App\Services\AccountService;
 use App\Services\ActivityLogger;
 use App\Services\AtomicLimiter;
+use App\Services\Auth\LockoutService;
 use App\Services\Auth\LoginService;
 use App\Services\Auth\RecoveryService;
 use App\Services\Auth\SuperAdminCodeService;
@@ -25,8 +26,10 @@ class AuthController
     public function register(Request $request, AccountService $accounts, SettingsService $settings): JsonResponse
     {
         // Counted before any work (P1-01): parallel bursts can never exceed the hourly limit.
-        if (! AtomicLimiter::hit('signup:'.$request->ip(), $settings->int('signup_requests_per_hour'), 3600)) {
-            throw new ApiError(429, 'Too many requests. Please try again later.', 'too_many_requests');
+        // UX2-02: per-IP limit sized for a whole office behind one Wi-Fi, plus a per-email limit.
+        $ipKey = 'signup:'.$request->ip();
+        if (! AtomicLimiter::hit($ipKey, $settings->int('signup_requests_per_hour'), 3600)) {
+            $this->tooManySignups(AtomicLimiter::availableIn($ipKey));
         }
 
         $data = $request->validate([
@@ -36,6 +39,10 @@ class AuthController
             'employee_type' => ['required', Rule::in(['intern', 'employee'])],
             'job_title' => ['required', 'string', 'max:150'],
         ]);
+        $emailKey = 'signup-email:'.LockoutService::accountKey($data['email']);
+        if (! AtomicLimiter::hit($emailKey, $settings->int('signup_requests_per_email_per_hour'), 3600)) {
+            $this->tooManySignups(AtomicLimiter::availableIn($emailKey));
+        }
 
         $accounts->register([
             'email' => $data['email'],
@@ -49,6 +56,11 @@ class AuthController
         return response()->json([
             'message' => 'Your request has been sent. You will receive an email with your identification code once an administrator approves it.',
         ], 202);
+    }
+
+    private function tooManySignups(int $seconds): never
+    {
+        throw new ApiError(429, 'Too many sign-up requests. Please try again later or ask an administrator to add you.', 'too_many_requests', ['retry_after_seconds' => $seconds], ['Retry-After' => (string) $seconds]);
     }
 
     public function login(Request $request, LoginService $login): JsonResponse

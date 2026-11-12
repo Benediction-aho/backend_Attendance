@@ -83,10 +83,17 @@ it('answers the same and sends nothing for unknown emails, employees and admins'
 });
 
 it('rate limits code requests per account', function () {
-    for ($i = 0; $i < 7; $i++) {
+    for ($i = 0; $i < 5; $i++) {
         $this->postJson('/api/auth/super-admin/code', ['email' => 'boss@example.com'])->assertStatus(202);
     }
+    // UX2-07: explicit 429 with the waiting time, the same for an unknown email (no enumeration).
+    $this->postJson('/api/auth/super-admin/code', ['email' => 'boss@example.com'])->assertStatus(429)
+        ->assertJsonPath('code', 'too_many_code_requests')->assertHeader('Retry-After');
     Mail::assertQueued(SuperAdminLoginCodeMail::class, 5);
+    for ($i = 0; $i < 5; $i++) {
+        $this->postJson('/api/auth/super-admin/code', ['email' => 'nobody@example.com'])->assertStatus(202);
+    }
+    $this->postJson('/api/auth/super-admin/code', ['email' => 'nobody@example.com'])->assertStatus(429)->assertJsonPath('code', 'too_many_code_requests');
 });
 
 it('lets a stranger neither use up the owner quota nor cancel the code in transit (P1-05)', function () {
@@ -95,7 +102,7 @@ it('lets a stranger neither use up the owner quota nor cancel the code in transi
     // A stranger from another network floods requests for the same email.
     for ($i = 0; $i < 10; $i++) {
         $this->withServerVariables(['REMOTE_ADDR' => '203.0.113.9'])
-            ->postJson('/api/auth/super-admin/code', ['email' => 'boss@example.com'])->assertStatus(202);
+            ->postJson('/api/auth/super-admin/code', ['email' => 'boss@example.com'])->assertStatus($i < 5 ? 202 : 429);
     }
     expect(ActivityLog::query()->where('event', 'auth.login_code_throttled')->exists())->toBeTrue();
 

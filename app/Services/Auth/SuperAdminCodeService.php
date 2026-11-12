@@ -4,6 +4,7 @@ namespace App\Services\Auth;
 
 use App\Enums\LogLevel;
 use App\Enums\UserStatus;
+use App\Exceptions\ApiError;
 use App\Mail\SuperAdminLoginCodeMail;
 use App\Models\Device;
 use App\Models\LoginCode;
@@ -43,7 +44,7 @@ class SuperAdminCodeService
         }
 
         $user = User::findByEmail($email);
-        if ($user !== null && $user->isSuperAdmin() && $this->lockout->hasLock($user)) {
+        if ($user !== null && $user->isSuperAdmin() && $this->lockout->hasLockOrBlock($user)) {
             $this->recovery->send($user);
         }
     }
@@ -73,18 +74,19 @@ class SuperAdminCodeService
         $withinIp = AtomicLimiter::hit($ipKey, $perHour * 4, 3600);
 
         $user = User::findByEmail($email);
+        if (! $withinAccount || ! $withinIp) {
+            // UX2-07: explicit 429 for this email + IP whether or not the account exists (no enumeration).
+            if ($user !== null && $user->isSuperAdmin()) {
+                $this->logger->security('auth.login_code_throttled', 'One-time code request refused: too many requests', LogLevel::Warning, $user);
+            }
+            $seconds = max(AtomicLimiter::availableIn($accountKey), $withinIp ? 0 : AtomicLimiter::availableIn($ipKey));
+            throw new ApiError(429, 'You asked for several codes. Use the last code you received, or try again later.', 'too_many_code_requests', ['retry_after_seconds' => $seconds], ['Retry-After' => (string) $seconds]);
+        }
         if ($user === null || ! $user->isSuperAdmin() || $user->status !== UserStatus::Active) {
             Hash::make('timing-equaliser');
 
             return;
         }
-        if (! $withinAccount || ! $withinIp) {
-            $this->logger->security('auth.login_code_throttled', 'One-time code request refused: too many requests', LogLevel::Warning, $user);
-            Hash::make('timing-equaliser');
-
-            return;
-        }
-
         $code = Codes::numeric($this->settings->int('otp_length'));
         $minutes = $this->settings->int('otp_ttl_minutes');
         $maxActive = $this->settings->int('otp_max_active_codes');

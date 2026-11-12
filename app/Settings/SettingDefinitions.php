@@ -75,7 +75,8 @@ final class SettingDefinitions
             'logs_admins_see_super_admin_events' => ['type' => 'bool', 'default' => false, 'rules' => ['boolean'], 'group' => 'security', 'label' => 'Admins with log access also see super admin events'],
             'password_min_length' => ['type' => 'int', 'default' => 10, 'rules' => ['integer', 'min:8', 'max:64'], 'group' => 'security', 'label' => 'Minimum password length'],
             'session_idle_days' => ['type' => 'int', 'default' => 30, 'rules' => ['integer', 'min:1', 'max:365'], 'group' => 'security', 'label' => 'Device session expires after inactivity (days)'],
-            'signup_requests_per_hour' => ['type' => 'int', 'default' => 5, 'rules' => ['integer', 'min:1', 'max:100'], 'group' => 'security', 'label' => 'Sign-up requests per hour per IP'],
+            'signup_requests_per_hour' => ['type' => 'int', 'default' => 50, 'rules' => ['integer', 'min:1', 'max:1000'], 'group' => 'security', 'label' => 'Sign-up requests per hour per IP (the whole office shares one IP)'],
+            'signup_requests_per_email_per_hour' => ['type' => 'int', 'default' => 3, 'rules' => ['integer', 'min:1', 'max:20'], 'group' => 'security', 'label' => 'Sign-up requests per hour per email'],
             'api_requests_per_minute' => ['type' => 'int', 'default' => 120, 'rules' => ['integer', 'min:30', 'max:10000'], 'group' => 'security', 'label' => 'API requests per minute per user/IP'],
         ];
     }

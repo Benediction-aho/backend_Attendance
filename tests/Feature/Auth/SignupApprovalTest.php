@@ -68,17 +68,26 @@ it('validates the sign-up form', function (array $override, string $field) {
     [['job_title' => ''], 'job_title'],
 ]);
 
-it('rate limits sign-up requests per IP', function () {
-    for ($i = 0; $i < 5; $i++) {
+it('lets a whole office register from one IP, then rate limits with retry_after (UX2-02)', function () {
+    for ($i = 0; $i < 50; $i++) {
         $this->postJson('/api/auth/register', signupPayload(['email' => "u$i@example.com"]))->assertStatus(202);
     }
-    $this->postJson('/api/auth/register', signupPayload(['email' => 'u9@example.com']))->assertStatus(429);
+    $this->postJson('/api/auth/register', signupPayload(['email' => 'u99@example.com']))->assertStatus(429)
+        ->assertJsonPath('code', 'too_many_requests')->assertHeader('Retry-After')
+        ->assertJson(fn ($json) => $json->where('retry_after_seconds', fn ($v) => $v > 0 && $v <= 3600)->etc());
+});
+
+it('rate limits sign-up requests per email (UX2-02)', function () {
+    for ($i = 0; $i < 3; $i++) {
+        $this->withServerVariables(['REMOTE_ADDR' => "198.51.100.$i"])->postJson('/api/auth/register', signupPayload(['email' => 'Same@example.com']))->assertStatus(202);
+    }
+    $this->withServerVariables(['REMOTE_ADDR' => '198.51.100.9'])->postJson('/api/auth/register', signupPayload(['email' => 'same@example.com']))->assertStatus(429)->assertHeader('Retry-After');
 });
 
 it('counts sign-up requests before doing any work, so bursts cannot exceed the limit (P1-01)', function () {
     // Simulates 5 requests already in flight from this IP (counted, not finished yet).
-    for ($i = 0; $i < 5; $i++) {
-        AtomicLimiter::hit('signup:127.0.0.1', 5, 3600);
+    for ($i = 0; $i < 50; $i++) {
+        AtomicLimiter::hit('signup:127.0.0.1', 50, 3600);
     }
     $this->postJson('/api/auth/register', signupPayload())->assertStatus(429);
     expect(User::query()->where('email', 'ama.mensah@example.com')->exists())->toBeFalse();

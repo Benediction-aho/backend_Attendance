@@ -157,6 +157,13 @@ class LockoutService
         }
     }
 
+    /** Locked, or temporarily blocked after a series of failures (UX2-08: recovery link available in both cases). */
+    public function hasLockOrBlock(User $user): bool
+    {
+        return $this->hasLock($user) || LoginAttempt::query()->where('account_key', self::accountKey($user->email))
+            ->whereNotNull('blocked_until')->where('blocked_until', '>', Carbon::now())->exists();
+    }
+
     public function hasLock(User $user): bool
     {
         return $user->status === UserStatus::Locked

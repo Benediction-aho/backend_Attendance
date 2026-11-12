@@ -66,7 +66,10 @@ class LoginService
             $this->dummyCheck($input['password']);
             $valid = false;
         } else {
-            $valid = $this->verifySecret($user, $input['password'], $code);
+            // UX2-01: generated codes (identification code, one-time code) never contain whitespace; a pasted
+            // space must not count as a failure. Chosen passwords are compared as typed.
+            $secret = ($user->isSuperAdmin() || $user->must_change_password) ? (string) preg_replace('/\s+/u', '', $input['password']) : $input['password'];
+            $valid = $this->verifySecret($user, $secret, $code);
         }
 
         if (! $valid) {
