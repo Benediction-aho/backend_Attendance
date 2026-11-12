@@ -168,3 +168,23 @@ No Critical or High finding. 3 Medium, 6 Low, 5 Info.
 **Input / disclosure (production mode)**: SQL-injection strings in email and `q` are handled as data. Arrays/objects in string fields, invalid UTF-8 and truncated JSON → 422 JSON. `/.env`, `/.git/HEAD`, `/composer.json`, `/docs/api/openapi.yaml`, `/storage/logs/laravel.log`, `/vendor/...`, `/phpinfo.php` → 404. No `X-Powered-By`/`Server`. Stored XSS strings are returned JSON-escaped (the frontend must keep escaping them). Mail templates have no unescaped `{!! !!}`. A CORS preflight from a foreign origin is not reflected.
 
 **Load (local php -S, 16 workers, not representative of production latency)**: 200 parallel logins → 0 × 5xx (401/429 only), p50 4.6 s / p95 5.5 s / p99 5.7 s (bcrypt-bound on 4 CPUs). 200 parallel sign-ups → 0 × 5xx, p50 0.38 s / p95 0.54 s / p99 0.62 s.
+
+## Fixes applied (attendance-backend, 2026-11-12) – ready for re-test
+
+| ID | Fix | Regression test |
+|---|---|---|
+| P1-01 | `LockoutService::reserve()` takes the bucket row lock, refuses while blocked/locked and counts the attempt **before** the secret is checked; the block/lock is applied by the reservation that completes a series (correct secret → bucket reset). Per-IP limit, sign-up limit, OTP/recovery request limits and the email-change limit are hit-first (`App\Services\AtomicLimiter`, `RateLimiter::hit` ≤ max). `throttle:signup` middleware removed. | `LockoutTest`: reserve before check (6 in-flight → 5 reserved, 6th 429; 10-min stage not skipped, next series → 20 min), IP limit counted before check; `SignupApprovalTest`: in-flight burst |
+| P1-02 | One precomputed bcrypt hash (cost 12 constant; other costs cached forever) and a single `Hash::check`; no `Hash::make` on the sign-in path. | `LockoutTest`: counting hasher → unknown email, super admin without code, wrong password = 0 make / 1 check each |
+| P1-03 | `CurrentPasswordGuard` on `PUT /me/password` and `POST /me/email`: same 5/5/5 series (bucket `reauth`), reserved before the check; a completed series deletes the current token (401 `reauth_limit`), logs `auth.reauth_limit` (critical) and emails the user; during the block even the right password gets 429. | `ProfileTest` (both routes) |
+| P1-04 | `redirectGuestsTo(fn () => null)`: JSON 401 without `Accept`, no `server.error` row. | `SecurityBaselineTest` |
+| P1-05 | Limits per (account, IP) and per IP; a request only cancels earlier codes from the same IP; at most `otp_max_active_codes` (3) valid codes, found by HMAC lookup (`lookup_hash`) so sign-in still does one bcrypt check; throttled requests logged `auth.login_code_throttled`. | `SuperAdminLoginTest` (stranger flood from another IP, max active codes) |
+| P1-06 | Address already used → same 202, nothing sent, logged `profile.email_change_unavailable`; `email_change_requests_per_hour` (3) per user, counted after the password check and before sending. | `ProfileTest` |
+| P1-07 | Migration `2026_11_13_100000_harden_activity_logs`: BEFORE TRUNCATE statement trigger; DELETE accepted only from the table owner with the flag; purge via `purge_activity_logs()` SECURITY DEFINER (EXECUTE revoked from PUBLIC); `DB_APP_ROLE` gets runtime grants only (SELECT/INSERT on the log); migrations run on the `pgsql_owner` connection (`DB_OWNER_USERNAME`). Owner-run setup documented in `DEPLOYMENT.md` §2.1. | `SchemaTest`: purge function, TRUNCATE refused, non-owner role with flag refused but purge function works |
+| P1-08 | Foreign keys of `activity_logs.user_id/actor_id/device_id` dropped (plain references). | `ActivityLogTest`: delete device + force-delete user keeps the log ids |
+| P1-09 | Recipients must be active, non-deleted admins/super admins (distinct); list settings use `present` so `[]` is accepted. | `SettingsApiTest` |
+| P1-10 | Per-IP limit counts only unknown devices/unknown emails and gives back successful attempts; default raised to 60 / 15 min (setting); documented in `DEPLOYMENT.md` §2.2. | `LockoutTest` (known device not IP-limited; successful new-device sign-ins not counted) |
+| P1-11 | Entries whose account is a super admin are returned to super admins only, unless `logs_admins_see_super_admin_events` is on. | `ActivityLogTest` |
+| P1-12 | Unchanged, owner decision (Q2). | – |
+| P1-13 | `ImageSanitizer`: GD decode + re-encode (EXIF orientation applied), resized to `photo_max_dimension_px` (1024). | `ProfileTest`: EXIF text and appended PHP gone, 2000×1500 → 1024×768 |
+| P1-14 | Accepted (Info): 5 requests/hour/IP and queued mail online make the gap impractical. | – |
+
