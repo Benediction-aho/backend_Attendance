@@ -25,10 +25,15 @@ Values live in the host's secret settings, never in Git.
 - Database: `DB_CONNECTION` (=pgsql), `DB_HOST`, `DB_PORT`, `DB_DATABASE`, `DB_USERNAME`, `DB_PASSWORD`, `DB_SSLMODE` (=require)
 - Session/cache/queue: `SESSION_DRIVER`, `SESSION_SECURE_COOKIE` (=true), `SESSION_ENCRYPT`, `QUEUE_CONNECTION` (=database), `CACHE_STORE` (=database)
 - Mail: `MAIL_MAILER` (=resend), `MAIL_FROM_ADDRESS`, `MAIL_FROM_NAME`, `RESEND_API_KEY`
-- Storage: `FILESYSTEM_DISK`, `AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY`, `AWS_DEFAULT_REGION`, `AWS_BUCKET`, `AWS_ENDPOINT`, `AWS_USE_PATH_STYLE_ENDPOINT` (=true)
+- Storage: `PRIVATE_FILES_DISK` (=s3 online: profile photos and reports, served only through short-lived pre-signed URLs), `FILESYSTEM_DISK`, `AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY`, `AWS_DEFAULT_REGION`, `AWS_BUCKET`, `AWS_ENDPOINT`, `AWS_USE_PATH_STYLE_ENDPOINT` (=true)
 - Monitoring: `SENTRY_DSN`
 - Web Push: `VAPID_SUBJECT`, `VAPID_PUBLIC_KEY`, `VAPID_PRIVATE_KEY`
 - Frontend (Vercel): `VITE_API_URL` (later also `VITE_SENTRY_DSN`, `VITE_VAPID_PUBLIC_KEY`)
+
+### First super admin (once, after the first deployment)
+There is no public setup page. From a shell in the `app` container: `php artisan attendance:create-super-admin --email=… --first-name=… --last-name=…`
+(refuses to run when a super admin already exists). The super admin then signs in with the email address and a one-time code sent by email.
+Note: the API is Bearer-token only and sets no cookie; `SESSION_*` variables are unused by the API.
 
 ## 3. Backend test host on Render (ready once the owner approves Render)
 

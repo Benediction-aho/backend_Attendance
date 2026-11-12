@@ -36,5 +36,5 @@ cp .env.example .env            # set DB_PASSWORD=attendance for compose
 docker compose up --build       # API on http://localhost:8000, Postgres on 5432
 docker compose exec app php artisan key:generate --show   # put the value in .env as APP_KEY
 ```
-Compose starts `app`, `worker`, `scheduler` and `db` (Postgres 16, with an extra `attendance_test` database
+Compose starts `app`, `worker`, `scheduler` and `db` (Postgres 17, with an extra `attendance_test` database
 for the test suite).

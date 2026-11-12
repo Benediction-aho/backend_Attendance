@@ -1,5 +1,6 @@
 <?php
 
+use App\Models\User;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Route;
 
@@ -46,4 +47,14 @@ it('honours X-Forwarded-For only from a configured proxy', function () {
         ->withHeader('X-Forwarded-For', '203.0.113.9')
         ->getJson('/api/_ip')
         ->assertJsonPath('ip', '198.51.100.7');
+});
+
+it('sets no cookie on a successful login nor on authenticated requests', function () {
+    $user = User::factory()->withPassword('Correct-Pass-1')->create(['email' => 'c@example.com']);
+
+    $login = $this->postJson('/api/auth/login', loginPayload('c@example.com', 'Correct-Pass-1'))->assertOk();
+    expect($login->headers->getCookies())->toBeEmpty();
+
+    $me = $this->bearer($login->json('token'))->getJson('/api/me')->assertOk();
+    expect($me->headers->getCookies())->toBeEmpty();
 });

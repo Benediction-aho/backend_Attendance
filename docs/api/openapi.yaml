@@ -2,7 +2,7 @@
 openapi: 3.1.0
 info:
   title: Assistance Ghana Attendance API
-  version: 0.0.1
+  version: 0.1.0
   description: |
     Authentication: **Bearer device tokens only** (Sanctum personal access tokens, one per device).
     The API sets no cookie and has no CSRF/session endpoint. After login the client receives
@@ -66,12 +66,369 @@ paths:
         - { name: page, in: query, schema: { type: integer } }
       responses:
         '200': { description: 'data[] {key, old_value, new_value, effective_from, changed_at, changed_by{id,name}} + meta' }
+  /auth/register:
+    post:
+      summary: Public sign-up request (no password). Same 202 answer whether or not the email is already used. Rate limited per IP (settings.signup_requests_per_hour).
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [email, first_name, last_name, employee_type, job_title]
+              properties:
+                email: { type: string, format: email, maxLength: 254 }
+                first_name: { type: string, maxLength: 100 }
+                last_name: { type: string, maxLength: 100 }
+                employee_type: { type: string, enum: [intern, employee] }
+                job_title: { type: string, maxLength: 150, description: As written on the appointment letter }
+      responses:
+        '202': { description: 'Request recorded (or silently ignored). { message }' }
+        '422': { $ref: '#/components/responses/ValidationError' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+  /auth/login:
+    post:
+      summary: Sign in on a device and receive its Bearer token
+      description: |
+        `password` is the identification code, the personal password, or for super admins the one-time code
+        requested with /auth/super-admin/code. `device_id` is a random id generated once by the PWA and kept on the device
+        (16–128 chars, [A-Za-z0-9_-]). One token per device: signing in again on the same device replaces its token.
+        Lockout (security.md 1): per known device 5 failures → 429 for 10 min, 5 more → 429 for 20 min, 5 more → 423 locked
+        (values from settings). All unknown devices of an account share one bucket. Unknown emails behave exactly like real ones.
+        Error codes: invalid_credentials (401), code_expired (401), account_blocked (403), login_blocked (429, retry_after_seconds),
+        ip_limited (429), account_locked (423).
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [email, password, device_id]
+              properties:
+                email: { type: string }
+                password: { type: string }
+                device_id: { type: string, minLength: 16, maxLength: 128 }
+                device_name: { type: string, maxLength: 120, example: Ama's phone }
+                is_pwa: { type: boolean }
+      responses:
+        '200':
+          description: Signed in
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  token: { type: string, description: 'Send as Authorization: Bearer <token>. Shown only once.' }
+                  token_type: { type: string, enum: [Bearer] }
+                  must_change_password: { type: boolean, description: 'true → only /me, /me/password and /auth/logout are allowed until the code is changed' }
+                  user: { $ref: '#/components/schemas/User' }
+        '401': { description: 'invalid_credentials or code_expired', content: { application/json: { schema: { $ref: '#/components/schemas/Error' } } } }
+        '403': { description: account_blocked (only after a correct secret) }
+        '423': { description: account_locked }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+  /auth/super-admin/code:
+    post:
+      summary: Ask for a one-time sign-in code (super admins). Always 202; a code is emailed only to an active super admin. Rate limited per account and IP.
+      requestBody: { required: true, content: { application/json: { schema: { type: object, required: [email], properties: { email: { type: string } } } } } }
+      responses:
+        '202': { description: '{ message }' }
+  /auth/recovery:
+    post:
+      summary: Ask for a recovery link (super admin whose sign-in is locked). Always 202.
+      requestBody: { required: true, content: { application/json: { schema: { type: object, required: [email], properties: { email: { type: string } } } } } }
+      responses:
+        '202': { description: '{ message }' }
+  /auth/recovery/confirm:
+    post:
+      summary: Use the recovery link token (from the PWA page /recover?token=…). Single use, expires (settings.recovery_link_ttl_minutes).
+      requestBody: { required: true, content: { application/json: { schema: { type: object, required: [token], properties: { token: { type: string } } } } } }
+      responses:
+        '200': { description: Access restored }
+        '422': { description: invalid_link }
+  /auth/email-change/confirm:
+    post:
+      summary: Confirm an email change (from the PWA page /confirm-email?token=…). Public. status = applied | pending (super admin must also confirm from the old address).
+      requestBody: { required: true, content: { application/json: { schema: { type: object, required: [token], properties: { token: { type: string } } } } } }
+      responses:
+        '200': { description: '{ status, message }' }
+        '422': { description: invalid_link or email_unavailable }
+  /auth/logout:
+    post:
+      summary: Sign out this device (deletes its token)
+      security: [{ deviceToken: [] }]
+      responses:
+        '200': { description: Signed out }
+  /me:
+    get:
+      summary: Current user (includes must_change_password and permissions)
+      security: [{ deviceToken: [] }]
+      responses:
+        '200': { description: '{ data: User }' }
+        '401': { $ref: '#/components/responses/Unauthenticated' }
+    patch:
+      summary: Update own profile (only the listed fields; role/status/email are ignored)
+      security: [{ deviceToken: [] }]
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                first_name: { type: string, maxLength: 100 }
+                last_name: { type: string, maxLength: 100 }
+                birth_date: { type: [string, 'null'], format: date }
+                address: { type: [string, 'null'], maxLength: 255 }
+                phone: { type: [string, 'null'], example: '+233 24 123 4567' }
+                whatsapp: { type: [string, 'null'] }
+      responses:
+        '200': { description: '{ data: User }' }
+        '422': { $ref: '#/components/responses/ValidationError' }
+  /me/password:
+    put:
+      summary: Replace the identification code / password. Signs out the other devices; alert email. Not for super admins (422 no_password).
+      security: [{ deviceToken: [] }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [current_password, new_password, new_password_confirmation]
+              properties:
+                current_password: { type: string }
+                new_password: { type: string, description: 'min length from settings (10), letters and digits, not a common password' }
+                new_password_confirmation: { type: string }
+      responses:
+        '200': { description: '{ message, data: User }' }
+        '422': { description: 'validation, wrong_password, same_password, no_password' }
+  /me/photo:
+    post:
+      summary: Upload a profile photo (jpeg/png/webp, max settings.photo_max_kb). Stored privately; User.photo_url is a short-lived URL.
+      security: [{ deviceToken: [] }]
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema: { type: object, required: [photo], properties: { photo: { type: string, format: binary } } }
+      responses:
+        '200': { description: '{ data: User }' }
+        '422': { $ref: '#/components/responses/ValidationError' }
+    delete:
+      summary: Remove the profile photo
+      security: [{ deviceToken: [] }]
+      responses:
+        '200': { description: '{ data: User }' }
+  /me/email:
+    post:
+      summary: Request an email change. Link to the new address + alert to the old one (super admins confirm from both).
+      security: [{ deviceToken: [] }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [email]
+              properties:
+                email: { type: string, format: email }
+                current_password: { type: string, description: Required except for super admins }
+      responses:
+        '202': { description: '{ message }' }
+        '422': { description: 'wrong_password, same_email, email_unavailable, validation' }
+  /files/{path}:
+    get:
+      summary: Private file through a signed, short-lived URL (local disk only; online the URL points to Supabase Storage). Never build it by hand; use the URLs returned by the API.
+      parameters: [{ name: path, in: path, required: true, schema: { type: string } }]
+      responses:
+        '200': { description: File }
+        '404': { description: Invalid/expired signature or missing file }
+  /notifications:
+    get:
+      summary: In-app notification centre, newest first, 30 per page
+      security: [{ deviceToken: [] }]
+      parameters: [{ name: unread, in: query, schema: { type: boolean } }, { name: page, in: query, schema: { type: integer } }]
+      responses:
+        '200': { description: '{ data: [{ id, data: { kind, title, body, path, ... }, read_at, created_at }], meta: { current_page, last_page, total, unread_count } }' }
+  /notifications/{id}/read:
+    post:
+      summary: Mark one notification as read
+      security: [{ deviceToken: [] }]
+      parameters: [{ name: id, in: path, required: true, schema: { type: string, format: uuid } }]
+      responses:
+        '200': { description: OK }
+        '404': { description: Not found }
+  /notifications/read-all:
+    post:
+      summary: Mark all notifications as read
+      security: [{ deviceToken: [] }]
+      responses:
+        '200': { description: OK }
+  /client-errors:
+    post:
+      summary: Report an error that happened in the app (stored in the activity log on the account). 10/min.
+      security: [{ deviceToken: [] }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [message]
+              properties:
+                message: { type: string, maxLength: 500 }
+                app_version: { type: string }
+                page: { type: string }
+                platform: { type: string, example: Android 13 / Chrome 120 }
+                stack: { type: string, maxLength: 2000 }
+      responses:
+        '202': { description: Recorded }
+  /admin/permissions:
+    get:
+      summary: Permission tier catalogue (super admin)
+      security: [{ deviceToken: [] }]
+      responses:
+        '200': { description: '{ data: [{ key, label }] }' }
+  /admin/users:
+    get:
+      summary: List accounts (super admin; or admins with create/approve/block/delete tier, employees only). Pending first, then by name. 25 per page.
+      security: [{ deviceToken: [] }]
+      parameters:
+        - { name: status, in: query, schema: { type: string, enum: [pending, active, blocked, locked, deleted] } }
+        - { name: role, in: query, schema: { type: string, enum: [super_admin, admin, employee] } }
+        - { name: employee_type, in: query, schema: { type: string, enum: [intern, employee] } }
+        - { name: q, in: query, schema: { type: string }, description: Search in name and email }
+        - { name: per_page, in: query, schema: { type: integer, maximum: 100 } }
+        - { name: page, in: query, schema: { type: integer } }
+      responses:
+        '200': { description: '{ data: User[], meta }' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+    post:
+      summary: Create an account directly (active, identification code emailed). Admin/super admin roles and permissions require a super admin.
+      security: [{ deviceToken: [] }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [email, first_name, last_name, employee_type, job_title]
+              properties:
+                email: { type: string }
+                first_name: { type: string }
+                last_name: { type: string }
+                employee_type: { type: string, enum: [intern, employee] }
+                job_title: { type: string }
+                role: { type: string, enum: [employee, admin, super_admin], default: employee }
+                permissions: { type: array, items: { type: string }, description: For role admin }
+      responses:
+        '201': { description: '{ message, data: User }' }
+        '409': { description: email_taken }
+  /admin/users/{id}:
+    get:
+      summary: One account (same visibility rules as the list)
+      security: [{ deviceToken: [] }]
+      parameters: [{ $ref: '#/components/parameters/UserId' }]
+      responses:
+        '200': { description: '{ data: User }' }
+        '404': { description: Not found (also deleted accounts) }
+    delete:
+      summary: Soft delete (delete_users tier on employees; super admin for staff). Sessions revoked; history keeps the name.
+      security: [{ deviceToken: [] }]
+      parameters: [{ $ref: '#/components/parameters/UserId' }]
+      responses:
+        '200': { description: Deleted }
+        '409': { description: last_super_admin }
+  /admin/users/{id}/approve:
+    post:
+      summary: Approve a pending sign-up (approve_users tier). Generates and emails the identification code.
+      security: [{ deviceToken: [] }]
+      parameters: [{ $ref: '#/components/parameters/UserId' }]
+      responses:
+        '200': { description: '{ message, data: User }' }
+        '403': { description: Not allowed or not pending }
+  /admin/users/{id}/reject:
+    post:
+      summary: Reject a pending sign-up (approve_users tier). The email can be used again.
+      security: [{ deviceToken: [] }]
+      parameters: [{ $ref: '#/components/parameters/UserId' }]
+      responses:
+        '200': { description: Rejected }
+  /admin/users/{id}/block:
+    post:
+      summary: Block (block_users tier on employees; super admin for staff). Access cut immediately.
+      security: [{ deviceToken: [] }]
+      parameters: [{ $ref: '#/components/parameters/UserId' }]
+      responses:
+        '200': { description: '{ message, data: User }' }
+        '409': { description: last_super_admin }
+  /admin/users/{id}/unblock:
+    post:
+      summary: Unblock
+      security: [{ deviceToken: [] }]
+      parameters: [{ $ref: '#/components/parameters/UserId' }]
+      responses:
+        '200': { description: '{ message, data: User }' }
+        '409': { description: not_blocked }
+  /admin/users/{id}/unlock:
+    post:
+      summary: Restore sign-in after a lockout (block_users tier on employees; super admin for admins). Optionally email a new identification code.
+      security: [{ deviceToken: [] }]
+      parameters: [{ $ref: '#/components/parameters/UserId' }]
+      requestBody: { content: { application/json: { schema: { type: object, properties: { send_new_code: { type: boolean } } } } } }
+      responses:
+        '200': { description: '{ message, data: User }' }
+        '409': { description: not_locked }
+  /admin/users/{id}/code:
+    post:
+      summary: Email a new identification code (approve_users or block_users tier on employees; super admin for admins). Ends the account's sessions.
+      security: [{ deviceToken: [] }]
+      parameters: [{ $ref: '#/components/parameters/UserId' }]
+      responses:
+        '200': { description: '{ message, data: User }' }
+  /admin/users/{id}/permissions:
+    put:
+      summary: Replace an admin's permission tiers (super admin)
+      security: [{ deviceToken: [] }]
+      parameters: [{ $ref: '#/components/parameters/UserId' }]
+      requestBody: { required: true, content: { application/json: { schema: { type: object, required: [permissions], properties: { permissions: { type: array, items: { type: string } } } } } } }
+      responses:
+        '200': { description: '{ message, data: User }' }
+  /admin/users/{id}/role:
+    put:
+      summary: Change role / promote (super admin; never on oneself; the last active super admin cannot be demoted). Ends the account's sessions.
+      security: [{ deviceToken: [] }]
+      parameters: [{ $ref: '#/components/parameters/UserId' }]
+      requestBody: { required: true, content: { application/json: { schema: { type: object, required: [role], properties: { role: { type: string, enum: [employee, admin, super_admin] } } } } } }
+      responses:
+        '200': { description: '{ message, data: User }' }
+        '409': { description: last_super_admin or not_active }
+  /admin/activity-logs:
+    get:
+      summary: Activity, security, automatic and error logs (super admin, or admin with view_logs). Read-only. Newest first.
+      security: [{ deviceToken: [] }]
+      parameters:
+        - { name: user_id, in: query, schema: { type: integer } }
+        - { name: actor_id, in: query, schema: { type: integer } }
+        - { name: type, in: query, schema: { type: string, enum: [action, error, security, automatic] } }
+        - { name: level, in: query, schema: { type: string, enum: [info, warning, error, critical] } }
+        - { name: event, in: query, schema: { type: string }, description: Prefix match, e.g. auth. }
+        - { name: from, in: query, schema: { type: string, format: date } }
+        - { name: to, in: query, schema: { type: string, format: date } }
+        - { name: per_page, in: query, schema: { type: integer, maximum: 200 } }
+      responses:
+        '200': { description: '{ data: [{ id, created_at, type, level, event, description, user{id,name,email,deleted}, actor{id,name}, context, ip, device_id, user_agent }], meta }' }
 
 components:
   securitySchemes:
     deviceToken:
       type: http
       scheme: bearer
+  parameters:
+    UserId:
+      name: id
+      in: path
+      required: true
+      schema: { type: integer }
   responses:
     Unauthenticated:
       description: Missing, invalid or expired device token, or the account is no longer active. The client must discard its token.
@@ -86,6 +443,31 @@ components:
       description: Rate limited or temporarily blocked. `retry_after_seconds` may be present.
       content: { application/json: { schema: { $ref: '#/components/schemas/Error' } } }
   schemas:
+    User:
+      description: Fields depend on the caller. Personal fields only for the user and account managers; admin fields only for administrators; must_change_password only for oneself.
+      type: object
+      properties:
+        id: { type: integer }
+        first_name: { type: string }
+        last_name: { type: string }
+        full_name: { type: string }
+        email: { type: string }
+        role: { type: string, enum: [super_admin, admin, employee] }
+        employee_type: { type: string, enum: [intern, employee] }
+        job_title: { type: [string, 'null'] }
+        status: { type: string, enum: [pending, active, blocked, locked, deleted] }
+        photo_url: { type: [string, 'null'], description: Short-lived URL (settings.file_url_ttl_minutes) }
+        phone: { type: [string, 'null'] }
+        whatsapp: { type: [string, 'null'] }
+        birth_date: { type: [string, 'null'], format: date }
+        address: { type: [string, 'null'] }
+        must_change_password: { type: boolean }
+        permissions: { type: array, items: { type: string } }
+        code_pending: { type: boolean }
+        code_expires_at: { type: [string, 'null'], format: date-time }
+        approved_at: { type: [string, 'null'], format: date-time }
+        last_login_at: { type: [string, 'null'], format: date-time }
+        created_at: { type: string, format: date-time }
     Setting:
       type: object
       properties:
