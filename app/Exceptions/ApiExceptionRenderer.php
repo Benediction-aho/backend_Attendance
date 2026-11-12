@@ -47,6 +47,15 @@ class ApiExceptionRenderer
             ], 422);
         }
 
+        if ($e instanceof ApiError) {
+            $body = ['message' => $e->getMessage()];
+            if ($e->errorCode !== null) {
+                $body['code'] = $e->errorCode;
+            }
+
+            return response()->json($body + $e->extra, $e->getStatusCode(), $e->getHeaders());
+        }
+
         $status = match (true) {
             $e instanceof AuthenticationException => 401,
             $e instanceof AuthorizationException => 403,
