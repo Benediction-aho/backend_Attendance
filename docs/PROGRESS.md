@@ -3,10 +3,30 @@
 Updated by the agents at the end of every work session.
 
 ## Current phase
-Phase 1 – Backend foundations: security review done (`docs/reports/phase-1-security.md`: 0 Critical/High, 3 Medium, 6 Low, 5 Info).
-**Phase 1 backend: all findings closed pending final check.** Re-test findings P1-15 … P1-18 fixed with regression tests and P1-19 accepted (owner recovers by signing in again or by admin unlock) – **ready for final check by backend-security-tester** (see "Fixes applied after the re-test" in the report).
-API note (non-breaking): `POST /auth/super-admin/code` accepts an optional `device_id`; the PWA should send the same id as for sign-in. `log_retention_months` minimum is now 12. Deployment: the scheduler container needs the owner DB credentials for the log purge (DEPLOYMENT.md §2.1).
-Phase 0: re-test done by backend-security-tester (P0-02, P0-03, P0-04 confirmed fixed); P0-01 waits for the owner.
+**Phase 3 – Attendance (manual), backend: done – ready for backend-security-tester** (report expected in `docs/reports/phase-3-security.md`).
+Phase 1 backend: all findings closed (final check P1-15 … P1-20 done). Phase 0: P0-01 waits for the owner.
+
+### Phase 3 backend – what exists
+- **Schema** (reversible migration `2026_11_15_100000_create_attendance_tables`): `attendances` (unique `(user_id, work_date)`, timestamptz, check-in type `gps|mission|remote|admin_on_behalf`, position/accuracy/distance, `is_late` + `late_after` rule snapshot, `day_status` snapshot, mission status/validator/note, `checked_in_by`, check-out time/type `manual|auto_midnight`, check-out position/distance, early leave + reason + `end_of_day` snapshot, CHECK constraints), `checkin_intents` (single-use, short-lived), `checkin_attempts` (refused: `out_of_perimeter`, `low_accuracy`), `work_schedules` (versioned by `effective_from`), `holidays`, `leaves`.
+- **Domain** (`app/Domain/Attendance`): `WorkCalendar` (server time, Accra work date, day status: holiday > leave > non-working day > day off > remote > working), `AttendanceService`, `AttendancePresenter` (fields per tier), `Geo` (haversine), `CheckinAssertionVerifier` interface (phase 4 binds WebAuthn; phase 3 binds `UnavailableAssertionVerifier`).
+- **Check-in flow** (two steps, Face ID ready): `POST /attendance/check-in/intent` (gps: server perimeter check with accuracy; mission: reason; remote: only on remote days) → `POST /attendance/check-in/confirm` (`assertion` from phase 4). `faceid_required_for_checkin` (default **false**) enforces a verified assertion. Lateness and work date use the server time of the confirmation. Claim + `INSERT … ON CONFLICT DO NOTHING` in one transaction: double submits return 200 `created: false` with the same row.
+- **Check-out** from anywhere with optional position (distance, `check_out_at_office`, "position not available"), reason required before `end_of_day_time` (setting), early leave notifies `view_lateness` holders (in-app, queued).
+- **Mission** check-in pending approval (`approve_mission_checkins`): list, approve, reject (once), approvers notified, employee notified. **Admin fallback check-in** (`checkin_for_employee`) with reason, logged as warning.
+- **Schedules**: employee selects days off / remote days once (`POST /me/work-schedule`, max `max_days_off_per_week`, only `working_days`), then only `manage_work_schedules` admins change them from an effective date (past never rewritten). **Holidays** (super admin / `manage_leaves`), **leaves** (`manage_leaves`, no overlap).
+- **Admin views**: `GET /admin/attendance/day` (every active employee with day status + attendance), `GET /admin/users/{id}/attendance`, `GET /admin/attendance/attempts` (`view_lateness`); lateness fields only with `view_lateness`, raw coordinates only for super admins.
+- **Check-in gate**: middleware alias `checked-in` (`EnsureCheckedInToday`) → 403 `checkin_required` for employees without today's check-in on expected days. To be applied to the phase 5 routes (tasks, clients, reports); never on auth/profile/notification/attendance routes.
+- **Scheduled jobs** (every minute, `scheduled_runs` keys, catch-up, never twice): `attendance:auto-checkout` (closes open days at `auto_checkout_time`, default 00:00 next night, "check-out forgotten"; check-out never before check-in), `attendance:checkin-reminder` (at `checkin_reminder_time`, expected employees without check-in, stored notification + queued `SendWebPush` placeholder; catch-up the same day until `end_of_day_time` only).
+- **New settings**: `checkin_max_accuracy_m` (50), `checkin_intent_ttl_seconds` (120), `faceid_required_for_checkin` (false), `working_days` ([1..5]), `checkin_attempts_per_minute` (20, named limiter `attendance`).
+- **Load test**: `php artisan attendance:load-fixtures --count=200` (refused in production) + `tests/load/checkin.js` (k6) / `tests/load/parallel_checkin.sh` (curl). Local result (PHP built-in server, 32 workers, local PostgreSQL): **200 parallel check-ins each with a parallel double confirmation → 200 × 201, 200 × 200, 0 error, 0 duplicate** (20 s wall time on the dev server; to re-run with k6 on the test host).
+- **API contract**: `docs/api/openapi.yaml` v0.3.0 (all phase 3 routes, `Attendance`, `DayStatus`).
+- **Checks**: Pest 264 tests green on PostgreSQL; Larastan level 8: 0 errors; Pint clean; migration rollback/migrate OK.
+
+### For attendance-frontend (phase 3)
+- Check-in = intent then confirm (send nothing time-related). Handle 422 codes `low_accuracy` (retry automatically, show `accuracy_m`), `out_of_perimeter` (show `distance_m`), `not_remote_day`, `reason_required`, `intent_invalid` (restart), `faceid_failed`; 409 `already_checked_in` (refresh today). Use `server_timestamp_ms` from `/attendance/today` to sync the displayed clock.
+- 403 `checkin_required` on phase 5 routes = show the check-in screen. 403 `employees_only` on attendance routes for staff accounts.
+
+### For backend-security-tester (phase 3 focus)
+Perimeter bypass attempts (validation, huge/negative accuracy, mission/remote abuse), intent replay/expiry/other user, parallel double submit (`tests/load/parallel_checkin.sh`), tier checks on every admin attendance route, field filtering, mission self-approval, schedule re-selection race, scheduled job idempotency.
 
 ### Phase 1 backend – what exists
 - **Schema** (reversible migrations, PostgreSQL 17 in CI): `users` (roles, type, job title, status, profile, hashed code/password, code expiry; email unique case-insensitively among non-deleted accounts; CHECK constraints), `permissions` + `user_permissions` (19 tiers seeded), `settings` (versions with `effective_from`) + `setting_history`, `devices`, `personal_access_tokens.device_id`, `login_attempts` (lockout buckets), `login_codes` (hashed one-time codes and links), `activity_logs` (append-only, enforced by a trigger; only the retention purge may delete), `scheduled_runs` (unique run key), `notifications`.
@@ -61,7 +81,7 @@ See `README.md` (PHP + local PostgreSQL, or `docker compose up --build`).
 | 0 – Preparation | Backend skeleton done; online env pending | phase-0-security (fixes re-tested OK) | P0-01 owner action |
 | 1 – Backend foundations | Backend done, security fixes applied | phase-1-security (all Medium/Low fixed, re-test pending) | Ready for backend-security-tester re-test |
 | 2 – Frontend foundations | Not started | – | |
-| 3 – Attendance (manual) | Not started | – | |
+| 3 – Attendance (manual) | Backend done | phase-3-security pending | Ready for backend-security-tester |
 | 4 – PWA, Face ID, notifications | Not started | – | |
 | 5 – Tasks, clients, reports | Not started | – | |
 | 6 – Dashboards and logs | Not started | – | |
@@ -76,6 +96,17 @@ See `README.md` (PHP + local PostgreSQL, or `docker compose up --build`).
 - Backend test host: Render approved by the owner (account to create); Render procedure ready in `docs/DEPLOYMENT.md` (backend repo).
 
 ## Blocked / questions for the owner
+Phase 3 business questions (safe default implemented, configurable where possible):
+- **Q10 – GPS accuracy rule**: the check-in is refused while the reported accuracy is worse than `checkin_max_accuracy_m` (50 m), then accepted if the measured position is within the radius (50 m). Stricter alternative: require distance + accuracy ≤ radius (often impossible indoors). Confirm.
+- **Q11 – Working days**: default Monday–Friday (`working_days`). Is Saturday worked?
+- **Q12 – Who checks in**: attendance is for employees/interns only; admins and super admins do not check in. Confirm.
+- **Q13 – Check-in on a non-expected day** (day off, holiday, leave, weekend): allowed, never late, not reminded. Confirm.
+- **Q14 – Tiers**: early check-out notifications and refused attempts go to `view_lateness` holders; holidays are managed by super admins and `manage_leaves` admins. Confirm or name other tiers.
+- **Q15 – Rejected mission check-in**: the attendance stays (marked `rejected`, employee notified); it is not deleted and the employee keeps access for the day. What should a rejection mean for reports (absence?)
+- **Q16 – Lateness time**: the time of the confirmation (after Face ID) is used, not the time of the position check (a few seconds earlier). Confirm.
+- **Q17 – Office GPS coordinates and holiday list** (owner input, PLAN §8): defaults 5.595223, -0.216703 in use; please provide the coordinates measured on site and the holiday list.
+- Note: the existing `faceid_required` setting (SPECS §3, default on) and the new `faceid_required_for_checkin` (default off until phase 4) overlap; phase 4 will merge them.
+
 Phase 1 business questions (safe default implemented, configurable where possible):
 - **Q1 – Super admin sign-in**: resolved – one-time code by email (security.md §2); SPECS §4 aligned in both repositories (2026-11-12).
 - **Q2 – Multi-device lockout guard**: implemented as "the whole account is locked when 2 device buckets are locked" (`lockout_multi_device_threshold`). An attacker using only unknown devices locks only unknown devices; the employee keeps signing in from her own phone. Confirm or choose another threshold.
@@ -95,6 +126,7 @@ Phase 1 business questions (safe default implemented, configurable where possibl
 _Not given yet._
 
 ## Log
+- 2026-11-12 – Phase 3 backend: attendance schema, two-step check-in (GPS perimeter + accuracy, mission, remote, admin fallback), check-out with distance and early-leave reason, schedules/holidays/leaves, admin views per tier, check-in gate, auto check-out and 08:05 reminder jobs, load test (200 parallel: 0 error, 0 duplicate). 264 tests green. Ready for backend-security-tester.
 - 2026-11-12 – P1-15 (purge floor 12 months + no EXECUTE for runtime role, purge on owner connection), P1-16 (known device evicts oldest unknown code, critical log), P1-17 (other codes cancelled on sign-in), P1-18 (atomic upsert limiter table), P1-19 accepted. 188 tests green, PHPStan clean.
 - 2026-11-12 – Phase 1 security fixes: P1-01 … P1-09, P1-10, P1-11, P1-13 fixed with regression tests (182 tests green); SPECS §4 aligned (super admin one-time code); ready for re-test.
 - 2026-11-12 – Phase 1 backend complete (schema, settings, roles/tiers, sign-up/approval/codes, super admin OTP + recovery, device lockout, sessions, profile, admin user management, activity logs, install command); phase 0 findings P0-02/03/04 fixed; CI on Postgres 17.

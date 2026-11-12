@@ -2,7 +2,7 @@
 openapi: 3.1.0
 info:
   title: Assistance Ghana Attendance API
-  version: 0.1.0
+  version: 0.3.0
   description: |
     Authentication: **Bearer device tokens only** (Sanctum personal access tokens, one per device).
     The API sets no cookie and has no CSRF/session endpoint. After login the client receives
@@ -129,7 +129,7 @@ paths:
         '429': { $ref: '#/components/responses/TooManyRequests' }
   /auth/super-admin/code:
     post:
-      summary: Ask for a one-time sign-in code (super admins). Always 202; a code is emailed only to an active super admin. Rate limited per (account, IP) and per IP; a request only cancels earlier codes asked from the same IP; at most settings.otp_max_active_codes codes are valid at once (any of them signs in). When the cap is reached, a request sent with the `device_id` of a device the super admin already signed in on still gets a code (the oldest code asked from an unknown device is cancelled; P1-16). A successful sign-in cancels every other outstanding code (P1-17). Non-breaking: `device_id` is optional; the PWA should send the same id as for /auth/login.
+      summary: 'Ask for a one-time sign-in code (super admins). Always 202; a code is emailed only to an active super admin. Rate limited per (account, IP) and per IP; a request only cancels earlier codes asked from the same IP; at most settings.otp_max_active_codes codes are valid at once (any of them signs in). When the cap is reached, a request sent with the `device_id` of a device the super admin already signed in on still gets a code (the oldest code asked from an unknown device is cancelled; P1-16). A successful sign-in cancels every other outstanding code (P1-17). Non-breaking: `device_id` is optional; the PWA should send the same id as for /auth/login.'
       requestBody: { required: true, content: { application/json: { schema: { type: object, required: [email], properties: { email: { type: string }, device_id: { type: string, maxLength: 200, nullable: true } } } } } }
       responses:
         '202': { description: '{ message }' }
@@ -423,6 +423,275 @@ paths:
       responses:
         '200': { description: '{ data: [{ id, created_at, type, level, event, description, user{id,name,email,deleted}, actor{id,name}, context, ip, device_id, user_agent }], meta }' }
 
+  # ---------------- Phase 3: attendance ----------------
+  /attendance/today:
+    get:
+      summary: Today's status for the employee (employees only, else 403 employees_only). Includes the server time for clock sync.
+      description: |
+        Work date and lateness are computed by the server (Africa/Accra). The client never sends a time or a date.
+        `available_check_ins` lists the check-in types allowed now (empty once checked in). `rules` come from settings.
+        Office coordinates are never returned; the server decides the perimeter.
+      security: [{ deviceToken: [] }]
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  server_time: { type: string, format: date-time }
+                  server_timestamp_ms: { type: integer }
+                  timezone: { type: string, example: Africa/Accra }
+                  work_date: { type: string, format: date }
+                  day_status: { $ref: '#/components/schemas/DayStatus' }
+                  expected: { type: boolean }
+                  holiday_name: { type: [string, 'null'] }
+                  checked_in: { type: boolean }
+                  checked_out: { type: boolean }
+                  attendance: { oneOf: [{ $ref: '#/components/schemas/Attendance' }, { type: 'null' }] }
+                  available_check_ins: { type: array, items: { type: string, enum: [gps, mission, remote] } }
+                  rules:
+                    type: object
+                    properties:
+                      radius_m: { type: integer }
+                      max_accuracy_m: { type: integer }
+                      late_after: { type: string, example: '08:10' }
+                      end_of_day: { type: string, example: '17:00' }
+                      early_checkout_reason_required: { type: boolean }
+                      faceid_required: { type: boolean }
+        '403': { $ref: '#/components/responses/Forbidden' }
+  /attendance/check-in/intent:
+    post:
+      summary: 'Check-in step 1: perimeter check (gps) or eligibility (mission, remote). Rate limited (checkin_attempts_per_minute).'
+      description: |
+        gps: latitude, longitude, accuracy required. Refused with 422 `low_accuracy` (accuracy_m, max_accuracy_m: retry automatically
+        while the position improves) or `out_of_perimeter` (distance_m, radius_m); refusals are recorded for admins.
+        mission: reason required, position optional. remote: only on the employee's remote days (422 `not_remote_day`).
+        409 `already_checked_in` once today's attendance exists. The intent expires after checkin_intent_ttl_seconds (default 120).
+      security: [{ deviceToken: [] }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [type]
+              properties:
+                type: { type: string, enum: [gps, mission, remote] }
+                latitude: { type: number }
+                longitude: { type: number }
+                accuracy: { type: number, description: metres }
+                reason: { type: string, maxLength: 500 }
+      responses:
+        '201':
+          description: Intent created
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  intent_id: { type: string, format: uuid }
+                  type: { type: string }
+                  expires_at: { type: string, format: date-time }
+                  distance_m: { type: [number, 'null'] }
+                  faceid_required: { type: boolean }
+                  faceid_options: { type: ['object', 'null'], description: 'Phase 4: WebAuthn request options (challenge). null in phase 3.' }
+        '409': { description: already_checked_in }
+        '422': { description: 'low_accuracy | out_of_perimeter | not_remote_day | reason_required | location_required | validation' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+  /attendance/check-in/confirm:
+    post:
+      summary: 'Check-in step 2: confirmation (Face ID assertion from phase 4). Idempotent.'
+      description: |
+        201 with `created: true` when the attendance is written; 200 with `created: false` and the same attendance on a double submit.
+        422 `intent_invalid` (expired, other user, other day) or `faceid_failed` (when faceid_required_for_checkin is on).
+        Lateness uses the server time of this confirmation.
+      security: [{ deviceToken: [] }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [intent_id]
+              properties:
+                intent_id: { type: string, format: uuid }
+                assertion: { type: object, description: 'WebAuthn assertion (phase 4)' }
+      responses:
+        '201': { description: '{ data: Attendance, created: true }' }
+        '200': { description: '{ data: Attendance, created: false }' }
+        '422': { description: intent_invalid | faceid_failed }
+  /attendance/check-out:
+    post:
+      summary: Check-out from anywhere. Position optional (distance to the office shown in history). Reason required before end_of_day.
+      security: [{ deviceToken: [] }]
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                latitude: { type: number }
+                longitude: { type: number }
+                accuracy: { type: number }
+                reason: { type: string, maxLength: 500 }
+      responses:
+        '200': { description: '{ data: Attendance }' }
+        '409': { description: not_checked_in | already_checked_out }
+        '422': { description: 'reason_required (end_of_day)' }
+  /attendance/history:
+    get:
+      summary: Own attendances, newest first.
+      security: [{ deviceToken: [] }]
+      parameters:
+        - { name: from, in: query, schema: { type: string, format: date } }
+        - { name: to, in: query, schema: { type: string, format: date } }
+        - { name: per_page, in: query, schema: { type: integer, maximum: 100 } }
+      responses:
+        '200': { description: '{ data: Attendance[], meta }' }
+  /me/work-schedule:
+    get:
+      summary: Own days off / remote days (employees). `locked` once selected.
+      security: [{ deviceToken: [] }]
+      responses:
+        '200': { description: '{ selected, locked, max_days_off_per_week, working_days, current: WorkSchedule|null, upcoming: WorkSchedule[] }' }
+    post:
+      summary: One-time selection by the employee (ISO weekdays 1 = Monday … 7 = Sunday, only working days). 409 schedule_locked afterwards.
+      security: [{ deviceToken: [] }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { type: object, required: [days_off, remote_days], properties: { days_off: { type: array, items: { type: integer } }, remote_days: { type: array, items: { type: integer } } } }
+      responses:
+        '201': { description: Saved }
+        '409': { description: schedule_locked }
+        '422': { description: 'Validation or schedule_overlap' }
+  /me/leaves:
+    get:
+      summary: Own leave periods.
+      security: [{ deviceToken: [] }]
+      responses:
+        '200': { description: '{ data: [{ id, start_date, end_date, note }] }' }
+  /holidays:
+    get:
+      summary: Public holidays (any signed-in user).
+      security: [{ deviceToken: [] }]
+      parameters: [{ name: year, in: query, schema: { type: integer } }]
+      responses:
+        '200': { description: '{ data: [{ id, date, name }] }' }
+  /admin/holidays:
+    post:
+      summary: Add a holiday (super admin or manage_leaves).
+      security: [{ deviceToken: [] }]
+      requestBody: { content: { application/json: { schema: { type: object, required: [date, name], properties: { date: { type: string, format: date }, name: { type: string } } } } } }
+      responses:
+        '201': { description: Created }
+  /admin/holidays/{id}:
+    delete:
+      summary: Remove a holiday (super admin or manage_leaves).
+      security: [{ deviceToken: [] }]
+      parameters: [{ name: id, in: path, required: true, schema: { type: integer } }]
+      responses:
+        '204': { description: Deleted }
+  /admin/leaves:
+    get:
+      summary: Leave periods of employees (manage_leaves).
+      security: [{ deviceToken: [] }]
+      parameters:
+        - { name: user_id, in: query, schema: { type: integer } }
+        - { name: from, in: query, schema: { type: string, format: date } }
+        - { name: to, in: query, schema: { type: string, format: date } }
+      responses:
+        '200': { description: '{ data: [{ id, user_id, start_date, end_date, note, created_by }], meta }' }
+  /admin/users/{id}/leaves:
+    post:
+      summary: Declare a leave for an active employee (manage_leaves). 422 leave_overlap.
+      security: [{ deviceToken: [] }]
+      parameters: [{ $ref: '#/components/parameters/UserId' }]
+      requestBody: { content: { application/json: { schema: { type: object, required: [start_date, end_date], properties: { start_date: { type: string, format: date }, end_date: { type: string, format: date }, note: { type: string } } } } } }
+      responses:
+        '201': { description: Created }
+  /admin/leaves/{id}:
+    delete:
+      summary: Remove a leave (manage_leaves).
+      security: [{ deviceToken: [] }]
+      parameters: [{ name: id, in: path, required: true, schema: { type: integer } }]
+      responses:
+        '204': { description: Deleted }
+  /admin/users/{id}/work-schedule:
+    get:
+      summary: An employee's schedule (manage_work_schedules or any attendance tier).
+      security: [{ deviceToken: [] }]
+      parameters: [{ $ref: '#/components/parameters/UserId' }]
+      responses:
+        '200': { description: Same shape as GET /me/work-schedule }
+    put:
+      summary: Change days off / remote days (manage_work_schedules), from effective_from (default today, never in the past).
+      security: [{ deviceToken: [] }]
+      parameters: [{ $ref: '#/components/parameters/UserId' }]
+      requestBody: { content: { application/json: { schema: { type: object, required: [days_off, remote_days], properties: { days_off: { type: array, items: { type: integer } }, remote_days: { type: array, items: { type: integer } }, effective_from: { type: string, format: date } } } } } }
+      responses:
+        '200': { description: Saved }
+  /admin/attendance/day:
+    get:
+      summary: 'Every active employee for a date with day status and attendance. Any attendance tier (view_lateness, view_activities, view_performance, approve_mission_checkins, checkin_for_employee, manage_leaves, manage_work_schedules).'
+      description: is_late, late_after, early_leave and early_leave_reason only with view_lateness; raw positions only for super admins.
+      security: [{ deviceToken: [] }]
+      parameters: [{ name: date, in: query, schema: { type: string, format: date } }]
+      responses:
+        '200': { description: '{ date, server_time, data: [{ user: { id, first_name, last_name, job_title, employee_type }, day_status, expected, attendance: Attendance|null }] }' }
+  /admin/users/{id}/attendance:
+    get:
+      summary: An employee's attendance history (any attendance tier, employees only).
+      security: [{ deviceToken: [] }]
+      parameters:
+        - { $ref: '#/components/parameters/UserId' }
+        - { name: from, in: query, schema: { type: string, format: date } }
+        - { name: to, in: query, schema: { type: string, format: date } }
+      responses:
+        '200': { description: '{ data: Attendance[], meta }' }
+  /admin/users/{id}/check-in:
+    post:
+      summary: Fallback check-in on behalf of an employee (checkin_for_employee), with a reason. Logged. 409 already_checked_in.
+      security: [{ deviceToken: [] }]
+      parameters: [{ $ref: '#/components/parameters/UserId' }]
+      requestBody: { content: { application/json: { schema: { type: object, required: [reason], properties: { reason: { type: string, minLength: 3, maxLength: 500 } } } } } }
+      responses:
+        '201': { description: '{ data: Attendance }' }
+        '409': { description: already_checked_in }
+  /admin/attendance/missions:
+    get:
+      summary: Mission check-ins (approve_mission_checkins), default status pending.
+      security: [{ deviceToken: [] }]
+      parameters: [{ name: status, in: query, schema: { type: string, enum: [pending, approved, rejected] } }]
+      responses:
+        '200': { description: '{ data: (Attendance + user { id, first_name, last_name })[], meta }' }
+  /admin/attendance/{id}/mission/approve:
+    post:
+      summary: Approve a pending mission check-in (approve_mission_checkins). 409 mission_already_reviewed.
+      security: [{ deviceToken: [] }]
+      parameters: [{ name: id, in: path, required: true, schema: { type: integer } }]
+      requestBody: { content: { application/json: { schema: { type: object, properties: { note: { type: string } } } } } }
+      responses:
+        '200': { description: '{ data: Attendance }' }
+  /admin/attendance/{id}/mission/reject:
+    post:
+      summary: Reject a pending mission check-in (approve_mission_checkins). The attendance stays, marked rejected.
+      security: [{ deviceToken: [] }]
+      parameters: [{ name: id, in: path, required: true, schema: { type: integer } }]
+      responses:
+        '200': { description: '{ data: Attendance }' }
+  /admin/attendance/attempts:
+    get:
+      summary: Refused check-ins (view_lateness).
+      security: [{ deviceToken: [] }]
+      parameters:
+        - { name: user_id, in: query, schema: { type: integer } }
+        - { name: date, in: query, schema: { type: string, format: date } }
+      responses:
+        '200': { description: '{ data: [{ id, user_id, work_date, outcome: out_of_perimeter|low_accuracy, distance_m, accuracy_m, created_at }], meta }' }
 components:
   securitySchemes:
     deviceToken:
@@ -496,3 +765,30 @@ components:
           description: Present on 422 only, field => list of messages.
           type: object
           additionalProperties: { type: array, items: { type: string } }
+    DayStatus:
+      type: string
+      enum: [working, remote, day_off, holiday, leave, non_working]
+      description: Only working and remote days are expected (lateness, reminders, check-in gate).
+    Attendance:
+      type: object
+      description: Admin views add user_id, checked_in_by, mission_validated_by/at, mission_note; lateness fields need view_lateness; positions only for super admins.
+      properties:
+        id: { type: integer }
+        work_date: { type: string, format: date }
+        day_status: { $ref: '#/components/schemas/DayStatus' }
+        check_in_type: { type: string, enum: [gps, mission, remote, admin_on_behalf] }
+        check_in_at: { type: string, format: date-time }
+        check_in_distance_m: { type: [number, 'null'] }
+        is_late: { type: boolean }
+        late_after: { type: string, description: Rule used for this attendance (HH:MM) }
+        faceid_verified: { type: boolean }
+        reason: { type: [string, 'null'], description: Mission or admin fallback reason }
+        mission_status: { type: [string, 'null'], enum: [pending, approved, rejected, null] }
+        check_out_at: { type: [string, 'null'], format: date-time }
+        check_out_type: { type: [string, 'null'], enum: [manual, auto_midnight, null] }
+        checkout_forgotten: { type: boolean }
+        check_out_distance_m: { type: [number, 'null'] }
+        check_out_position_available: { type: [boolean, 'null'], description: 'false = "position not available"' }
+        check_out_at_office: { type: [boolean, 'null'] }
+        early_leave: { type: boolean }
+        early_leave_reason: { type: [string, 'null'] }
