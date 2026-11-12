@@ -3,7 +3,27 @@
 Updated by the agents at the end of every work session.
 
 ## Current phase
-**Phase 3 – Attendance (manual), backend: security fixes P3-01, P3-02, P3-03, P3-07 applied – ready for re-test by backend-security-tester** (`docs/reports/phase-3-security.md`, "Fixes applied").
+**Phase 4 – PWA, Face ID, notifications: backend done – ready for backend-security-tester** (focus below). Phase 3 backend: fixes re-tested, no Critical/High open (P3-04 is addressed by phase 4).
+
+### Phase 4 backend – what exists (2026-11-12)
+- **Libraries**: `web-auth/webauthn-lib` 5.3 (reference PHP WebAuthn implementation, maintained, framework-agnostic, full W3C ceremony checks: challenge, origin, RP ID hash, UP/UV flags, signature, counter, backup flags; chosen over laragear/webauthn because we need device binding, admin approval and a challenge bound to the check-in intent, which laragear's login-oriented flow does not model). `minishlink/web-push` 9 (standard PHP Web Push, VAPID + aes128gcm). Composer also refreshed a few minor framework/symfony versions.
+- **Schema** (reversible): `webauthn_credentials` (public key only, base64url credential id unique, user handle, sign count, transports, backup flags, device link, status `pending|approved|revoked` with partial unique indexes "one approved / one pending per user", approved_by/at, revoked_by/at/reason), `webauthn_challenges` (uuid, random 32 bytes, purpose `registration|checkin`, user + device, unique `checkin_intent_id`, expiry, consumed_at), `attendances.webauthn_credential_id`, `push_subscriptions` (endpoint hash unique, keys, device link).
+- **Face ID flow**: `POST /me/faceid/register/options` → `navigator.credentials.create()` → `POST /me/faceid/register`. Platform authenticator, `userVerification: required` (also checked on the UV flag), attestation `none`, RP ID/origins from env (`WEBAUTHN_RP_ID`, `WEBAUTHN_ORIGINS`). First credential of an account approved automatically (`faceid_first_device_auto_approve`, default on – registration happens at first sign-in after the emailed code); any later one is **pending**, replaces an earlier pending request, notifies `approve_faceid_devices` holders (in-app + push). Approval revokes the previous credential; reject; **super admin revoke** of any credential. Audit log for registration, failure, approval, rejection, revocation.
+- **Check-in**: `faceid_required_for_checkin` now **default true** (old `faceid_required` merged by the migration). Intent refused first with 403 `faceid_not_registered | faceid_pending_approval | faceid_other_device`; otherwise the intent returns `faceid_options` (request options whose challenge is bound to that intent, user and device, allowCredentials = the approved credential of this device). Confirm verifies the assertion (approved credential of that user **and** that device, UV, origin, RP ID, signature, counter not going back), then consumes the challenge in the same transaction as the intent claim (no replay; a double submit still returns 200 with the existing attendance). Applies to gps, mission and remote. Admin on-behalf check-in unchanged (reason, no Face ID). `GET /attendance/today` adds `faceid_state`.
+- **Web Push**: `GET /push/public-key`, `POST/DELETE /push/subscriptions` (any role; https endpoints on known push services only – no SSRF; max `push_max_subscriptions_per_user`, oldest dropped; endpoint moved to the account signed in now; removed on sign-out). Every stored in-app notification queues a `SendWebPush` job (listener `PushInAppNotification`, after commit): 08:05 reminder placeholder replaced; Face ID requests/decisions, mission check-ins, early check-outs, sign-ups, alerts are pushed too; phase 5 weekly reminders will follow automatically. Job: VAPID via `PushTransport` (fake in tests), minimal payload (kind, title, body, path, tag), 404/410 → subscription deleted, never retried (no duplicate), skipped without keys / when `push_enabled` is off / for inactive accounts. `php artisan attendance:vapid-keys` generates keys.
+- **New settings**: `faceid_challenge_ttl_seconds` (120), `faceid_first_device_auto_approve` (true), `push_enabled` (true), `push_ttl_seconds` (3600), `push_max_subscriptions_per_user` (5); `faceid_required` removed (merged).
+- **Tests**: software authenticator (`tests/Support/webauthn.php`, ES256, real CBOR/attestation/signatures): registration, replayed/expired/foreign challenge, no UV, wrong origin/RP/type, pending/approval/reject/revoke per tier, check-in assertion, foreign key, other user's credential, revoked (before and between steps), pending, other device, replay on a new intent, double submit, sign count regression, mission with Face ID, admin fallback; push subscriptions, SSRF filter, cap, sign-out, delivery/expiry with a fake transport, in-app → push. **Pest 326 green, Larastan 0 errors, Pint clean, migrations rollback/migrate OK.**
+- **Docs**: `docs/api/openapi.yaml` v0.4.0, `docs/DEPLOYMENT.md` §2.3 (RP ID must be the final domain) and §2.4 (VAPID), `.env.example`.
+
+### For attendance-frontend (phase 4) – new endpoints and contract changes
+- **Breaking**: Face ID is now required by default. `POST /attendance/check-in/intent` may return 403 `faceid_not_registered` / `faceid_pending_approval` / `faceid_other_device`; show the registration or "waiting for approval" screen. Use `faceid_state` from `GET /attendance/today` or `GET /me/faceid`.
+- Registration at first sign-in (after the code change): `POST /me/faceid/register/options` → `navigator.credentials.create({ publicKey: PublicKeyCredential.parseCreationOptionsFromJSON(public_key) })` → `POST /me/faceid/register { challenge_id, credential: credential.toJSON(), name }`. Codes: 422 `challenge_invalid` (restart), `faceid_failed`, 409 `faceid_already_registered`.
+- Check-in: intent → `navigator.credentials.get({ publicKey: parseRequestOptionsFromJSON(faceid_options.public_key) })` → confirm `{ intent_id, assertion: credential.toJSON() }`. After `faceid_failed`, start again from the intent. Binary fields are base64url (use a polyfill when `toJSON`/`parse…FromJSON` are missing on older Safari).
+- Admin: `GET /admin/faceid/credentials?status=pending`, `POST /admin/faceid/credentials/{id}/approve|reject` (tier `approve_faceid_devices`), `POST …/revoke` (super admin). Notification path `/admin/faceid-devices`.
+- Push: `GET /push/public-key` → `pushManager.subscribe({ userVisibleOnly: true, applicationServerKey })` → `POST /push/subscriptions` (subscription.toJSON()); `DELETE /push/subscriptions {endpoint}` when the user disables it. Re-subscribe after each sign-in (sign-out deletes the device's subscriptions). Service worker payload: `{kind, title, body, path, tag}`; open `path` on click.
+
+### For backend-security-tester (phase 4 focus)
+Assertion replay (same and new intent), foreign credential / other user's authenticator, revoked or pending credential, credential of another device of the same user, sign counter regression, UV flag off, origin/RP ID spoofing, registration challenge reuse/expiry/cross-user, approval tier checks (admin on admin, self-approval, approve after reject, parallel approvals vs. unique index), super-admin-only revoke, push endpoint SSRF (host suffix tricks, redirects), subscription hijack (deleting/moving another user's endpoint), payload content (no sensitive data), push job idempotency. Re-test P3-04.
 
 ### Phase 3 security fixes (2026-11-12)
 - P3-01: new setting `max_remote_days_per_week` (default 2, see Q18); employee self-selection takes effect from the next day (never the same day) and notifies every `manage_work_schedules` holder (in-app + email, queued). **Contract change for attendance-frontend**: after `POST /me/work-schedule` the choice is in `upcoming[0]`, `current` stays as before today; `max_remote_days_per_week` added to `GET /me/work-schedule`.
@@ -88,8 +108,8 @@ See `README.md` (PHP + local PostgreSQL, or `docker compose up --build`).
 | 0 – Preparation | Backend skeleton done; online env pending | phase-0-security (fixes re-tested OK) | P0-01 owner action |
 | 1 – Backend foundations | Backend done, security fixes applied | phase-1-security (all Medium/Low fixed, re-test pending) | Ready for backend-security-tester re-test |
 | 2 – Frontend foundations | Not started | – | |
-| 3 – Attendance (manual) | Backend done | phase-3-security pending | Ready for backend-security-tester |
-| 4 – PWA, Face ID, notifications | Not started | – | |
+| 3 – Attendance (manual) | Backend done | phase-3-security (fixes re-tested, no Critical/High) | P3-04 closed by phase 4 (re-test) |
+| 4 – PWA, Face ID, notifications | Backend done | phase-4-security pending | Ready for backend-security-tester; frontend can start |
 | 5 – Tasks, clients, reports | Not started | – | |
 | 6 – Dashboards and logs | Not started | – | |
 | 7 – Quality and pilot | Not started | – | |
@@ -113,7 +133,13 @@ Phase 3 business questions (safe default implemented, configurable where possibl
 - **Q16 – Lateness time**: the time of the confirmation (after Face ID) is used, not the time of the position check (a few seconds earlier). Confirm.
 - **Q18 – Remote days per week (P3-01)**: an employee can self-select at most `max_remote_days_per_week` remote days (default 2); the choice applies from the next day and admins with `manage_work_schedules` are notified. Confirm the number (contract-dependent?) and whether remote days chosen by the employee should need admin validation.
 - **Q17 – Office GPS coordinates and holiday list** (owner input, PLAN §8): defaults 5.595223, -0.216703 in use; please provide the coordinates measured on site and the holiday list.
-- Note: the existing `faceid_required` setting (SPECS §3, default on) and the new `faceid_required_for_checkin` (default off until phase 4) overlap; phase 4 will merge them.
+- Note: `faceid_required` and `faceid_required_for_checkin` merged in phase 4 (one setting, default on).
+
+Phase 4 business questions (safe default implemented, configurable):
+- **Q19 – First Face ID registration**: approved automatically (setting `faceid_first_device_auto_approve`); every later device (new phone, Face ID reset, revoked by the super admin) needs an `approve_faceid_devices` admin. Should the very first registration also be approved by an admin?
+- **Q20 – Push for every notification**: SPECS 8 lists push only for the 08:05 reminder and the Friday 16:30 reminder; the backend now pushes a copy of every in-app notification (setting `push_enabled` on/off for all). Confirm, or list the kinds that must stay in-app only.
+- **Q21 – Revoke by the tier holder**: only super admins revoke an approved credential; `approve_faceid_devices` admins approve/reject pending ones. Confirm.
+- **Q22 – Final domain** (owner input): needed for `WEBAUTHN_RP_ID` before the pilot; passkeys created on the test domain will not work in production.
 
 Phase 1 business questions (safe default implemented, configurable where possible):
 - **Q1 – Super admin sign-in**: resolved – one-time code by email (security.md §2); SPECS §4 aligned in both repositories (2026-11-12).
@@ -134,6 +160,7 @@ Phase 1 business questions (safe default implemented, configurable where possibl
 _Not given yet._
 
 ## Log
+- 2026-11-12 – Phase 4 backend: Face ID (WebAuthn passkeys: registration, admin approval of new devices, revoke, assertion bound to the check-in intent, required by default), Web Push (VAPID subscriptions, queued delivery, expired cleanup, push copy of every in-app notification). 326 tests green. Ready for backend-security-tester.
 - 2026-11-12 – Phase 3 security fixes P3-01 (remote-days cap, next-day effect, admin notification), P3-02 (per-recipient reminder records, stale run takeover for all jobs), P3-03 (intent bound to device), P3-07 (escaping tests). 275 tests green. Ready for re-test.
 - 2026-11-12 – Phase 3 backend: attendance schema, two-step check-in (GPS perimeter + accuracy, mission, remote, admin fallback), check-out with distance and early-leave reason, schedules/holidays/leaves, admin views per tier, check-in gate, auto check-out and 08:05 reminder jobs, load test (200 parallel: 0 error, 0 duplicate). 264 tests green. Ready for backend-security-tester.
 - 2026-11-12 – P1-15 (purge floor 12 months + no EXECUTE for runtime role, purge on owner connection), P1-16 (known device evicts oldest unknown code, critical log), P1-17 (other codes cancelled on sign-in), P1-18 (atomic upsert limiter table), P1-19 accepted. 188 tests green, PHPStan clean.

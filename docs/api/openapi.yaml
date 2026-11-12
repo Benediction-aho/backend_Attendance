@@ -2,7 +2,7 @@
 openapi: 3.1.0
 info:
   title: Assistance Ghana Attendance API
-  version: 0.3.0
+  version: 0.4.0
   description: |
     Authentication: **Bearer device tokens only** (Sanctum personal access tokens, one per device).
     The API sets no cookie and has no CSRF/session endpoint. After login the client receives
@@ -460,6 +460,7 @@ paths:
                       end_of_day: { type: string, example: '17:00' }
                       early_checkout_reason_required: { type: boolean }
                       faceid_required: { type: boolean }
+                  faceid_state: { type: string, enum: [ready, not_registered, pending_approval, other_device], description: Face ID readiness on this device }
         '403': { $ref: '#/components/responses/Forbidden' }
   /attendance/check-in/intent:
     post:
@@ -469,6 +470,8 @@ paths:
         while the position improves) or `out_of_perimeter` (distance_m, radius_m); refusals are recorded for admins.
         mission: reason required, position optional. remote: only on the employee's remote days (422 `not_remote_day`).
         409 `already_checked_in` once today's attendance exists. The intent expires after checkin_intent_ttl_seconds (default 120).
+        When faceid_required_for_checkin is on (default), refused first with 403 `faceid_not_registered` (register on this device),
+        `faceid_pending_approval` (new device waiting for an admin) or `faceid_other_device` (registered on another phone).
       security: [{ deviceToken: [] }]
       requestBody:
         required: true
@@ -496,16 +499,23 @@ paths:
                   expires_at: { type: string, format: date-time }
                   distance_m: { type: [number, 'null'] }
                   faceid_required: { type: boolean }
-                  faceid_options: { type: ['object', 'null'], description: 'Phase 4: WebAuthn request options (challenge). null in phase 3.' }
+                  faceid_options:
+                    type: ['object', 'null']
+                    description: 'null when Face ID is not required. public_key = PublicKeyCredentialRequestOptionsJSON (base64url challenge bound to this intent, rpId, allowCredentials, userVerification: required) for navigator.credentials.get().'
+                    properties:
+                      challenge_id: { type: string, format: uuid }
+                      public_key: { type: object }
+        '403': { description: 'faceid_not_registered | faceid_pending_approval | faceid_other_device | employees_only' }
         '409': { description: already_checked_in }
         '422': { description: 'low_accuracy | out_of_perimeter | not_remote_day | reason_required | location_required | validation' }
         '429': { $ref: '#/components/responses/TooManyRequests' }
   /attendance/check-in/confirm:
     post:
-      summary: 'Check-in step 2: confirmation (Face ID assertion from phase 4). Idempotent.'
+      summary: 'Check-in step 2: confirmation with the Face ID assertion. Idempotent.'
       description: |
         201 with `created: true` when the attendance is written; 200 with `created: false` and the same attendance on a double submit.
-        422 `intent_invalid` (expired, other user, other day) or `faceid_failed` (when faceid_required_for_checkin is on).
+        422 `intent_invalid` (expired, other user, other day, other device) or `faceid_failed` (missing/invalid assertion, wrong credential,
+        revoked credential, replayed challenge, sign counter regression). After `faceid_failed` start again with a new intent.
         Lateness uses the server time of this confirmation.
       security: [{ deviceToken: [] }]
       requestBody:
@@ -517,7 +527,7 @@ paths:
               required: [intent_id]
               properties:
                 intent_id: { type: string, format: uuid }
-                assertion: { type: object, description: 'WebAuthn assertion (phase 4)' }
+                assertion: { type: object, description: 'PublicKeyCredential JSON from navigator.credentials.get() (id, rawId, type, response.clientDataJSON/authenticatorData/signature/userHandle, base64url) – e.g. credential.toJSON()' }
       responses:
         '201': { description: '{ data: Attendance, created: true }' }
         '200': { description: '{ data: Attendance, created: false }' }
@@ -692,6 +702,134 @@ paths:
         - { name: date, in: query, schema: { type: string, format: date } }
       responses:
         '200': { description: '{ data: [{ id, user_id, work_date, outcome: out_of_perimeter|low_accuracy, distance_m, accuracy_m, created_at }], meta }' }
+  /me/faceid:
+    get:
+      summary: Face ID status on this device and the employee's credentials (pending/approved). Employees only.
+      security: [{ deviceToken: [] }]
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  state: { type: string, enum: [ready, not_registered, pending_approval, other_device] }
+                  data: { type: array, items: { allOf: [{ $ref: '#/components/schemas/FaceIdCredential' }, { type: object, properties: { this_device: { type: boolean } } }] } }
+  /me/faceid/register/options:
+    post:
+      summary: Face ID registration step 1 (PublicKeyCredentialCreationOptionsJSON). Employees only; requires a device token.
+      description: |
+        Platform authenticator, userVerification required, attestation none. The challenge is single use, expires after
+        faceid_challenge_ttl_seconds (default 120) and is bound to this user and device. 409 `faceid_already_registered` when this
+        device is already ready; 403 `device_required` for a token without device.
+      security: [{ deviceToken: [] }]
+      responses:
+        '201':
+          description: Options
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  challenge_id: { type: string, format: uuid }
+                  expires_at: { type: string, format: date-time }
+                  public_key: { type: object, description: 'pass to navigator.credentials.create({ publicKey }) after base64url decoding (PublicKeyCredential.parseCreationOptionsFromJSON)' }
+  /me/faceid/register:
+    post:
+      summary: Face ID registration step 2. First credential of the account approved; any later one pending until an admin approves.
+      description: |
+        422 `challenge_invalid` (expired, used, other user/device: restart), `faceid_failed` (verification failed, no user verification),
+        409 `faceid_already_registered`. A new pending request replaces an earlier pending one. Approvers are notified.
+      security: [{ deviceToken: [] }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [challenge_id, credential]
+              properties:
+                challenge_id: { type: string, format: uuid }
+                credential: { type: object, description: 'PublicKeyCredential JSON from navigator.credentials.create() (id, rawId, type, response.clientDataJSON, response.attestationObject, response.transports)' }
+                name: { type: string, maxLength: 100, description: 'e.g. "iPhone 13"' }
+      responses:
+        '201':
+          description: Registered
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data: { $ref: '#/components/schemas/FaceIdCredential' }
+                  state: { type: string, enum: [ready, not_registered, pending_approval, other_device] }
+  /admin/faceid/credentials:
+    get:
+      summary: Face ID devices by status (default pending). Tier approve_faceid_devices; admins see employees only.
+      security: [{ deviceToken: [] }]
+      parameters:
+        - { name: status, in: query, schema: { type: string, enum: [pending, approved, revoked] } }
+        - { name: user_id, in: query, schema: { type: integer } }
+      responses:
+        '200': { description: 'data: FaceIdCredential + user {id, first_name, last_name}; meta' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+  /admin/faceid/credentials/{id}/approve:
+    post:
+      summary: Approve a pending device (tier approve_faceid_devices; never one's own, admins only employees). The previous approved credential is revoked.
+      security: [{ deviceToken: [] }]
+      responses:
+        '200': { description: 'data: FaceIdCredential' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '409': { description: faceid_already_reviewed }
+  /admin/faceid/credentials/{id}/reject:
+    post:
+      summary: Reject a pending device (status revoked, revoke_reason rejected).
+      security: [{ deviceToken: [] }]
+      responses:
+        '200': { description: 'data: FaceIdCredential' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '409': { description: faceid_already_reviewed }
+  /admin/faceid/credentials/{id}/revoke:
+    post:
+      summary: Revoke any credential (super admin only). The employee must register again (pending approval).
+      security: [{ deviceToken: [] }]
+      responses:
+        '200': { description: 'data: FaceIdCredential' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '409': { description: faceid_already_revoked }
+  /push/public-key:
+    get:
+      summary: VAPID public key for pushManager.subscribe (applicationServerKey); null when push is not configured.
+      security: [{ deviceToken: [] }]
+      responses:
+        '200': { description: 'public_key: string|null' }
+  /push/subscriptions:
+    post:
+      summary: Save this browser's push subscription (PushSubscription.toJSON()), linked to this device session. Any role.
+      description: |
+        Endpoint must be https on a known push service (FCM, Apple, Mozilla, Windows) – 422 `push_endpoint_invalid` otherwise.
+        The same endpoint is moved to the account signed in now. Removed automatically on sign-out and when the push service answers 404/410.
+        Every in-app notification is also pushed (payload JSON: kind, title, body, path, tag). Re-subscribe after each sign-in.
+      security: [{ deviceToken: [] }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [endpoint, keys]
+              properties:
+                endpoint: { type: string, maxLength: 2048 }
+                keys: { type: object, required: [p256dh, auth], properties: { p256dh: { type: string }, auth: { type: string } } }
+                content_encoding: { type: string, enum: [aes128gcm, aesgcm] }
+      responses:
+        '201': { description: Saved }
+        '422': { $ref: '#/components/responses/ValidationError' }
+    delete:
+      summary: Remove this browser's subscription (body {endpoint}).
+      security: [{ deviceToken: [] }]
+      responses:
+        '200': { description: Removed }
 components:
   securitySchemes:
     deviceToken:
@@ -765,6 +903,18 @@ components:
           description: Present on 422 only, field => list of messages.
           type: object
           additionalProperties: { type: array, items: { type: string } }
+    FaceIdCredential:
+      type: object
+      properties:
+        id: { type: integer }
+        name: { type: [string, 'null'] }
+        status: { type: string, enum: [pending, approved, revoked] }
+        device: { type: ['object', 'null'], properties: { id: { type: integer }, name: { type: [string, 'null'] } } }
+        created_at: { type: string, format: date-time }
+        approved_at: { type: [string, 'null'], format: date-time }
+        revoked_at: { type: [string, 'null'], format: date-time }
+        revoke_reason: { type: [string, 'null'], enum: [superseded, replaced, rejected, revoked, null] }
+        last_used_at: { type: [string, 'null'], format: date-time }
     DayStatus:
       type: string
       enum: [working, remote, day_off, holiday, leave, non_working]

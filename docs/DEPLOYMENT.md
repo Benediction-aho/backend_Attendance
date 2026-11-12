@@ -28,7 +28,8 @@ Values live in the host's secret settings, never in Git.
 - Mail: `MAIL_MAILER` (=resend), `MAIL_FROM_ADDRESS`, `MAIL_FROM_NAME`, `RESEND_API_KEY`
 - Storage: `PRIVATE_FILES_DISK` (=s3 online: profile photos and reports, served only through short-lived pre-signed URLs), `FILESYSTEM_DISK`, `AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY`, `AWS_DEFAULT_REGION`, `AWS_BUCKET`, `AWS_ENDPOINT`, `AWS_USE_PATH_STYLE_ENDPOINT` (=true)
 - Monitoring: `SENTRY_DSN`
-- Web Push: `VAPID_SUBJECT`, `VAPID_PUBLIC_KEY`, `VAPID_PRIVATE_KEY`
+- Web Push: `VAPID_SUBJECT`, `VAPID_PUBLIC_KEY`, `VAPID_PRIVATE_KEY`, optional `WEBPUSH_ALLOWED_HOST_SUFFIXES` (see 2.4)
+- Face ID: `WEBAUTHN_RP_ID`, `WEBAUTHN_RP_NAME`, `WEBAUTHN_ORIGINS` (see 2.3)
 - Frontend (Vercel): `VITE_API_URL` (later also `VITE_SENTRY_DSN`, `VITE_VAPID_PUBLIC_KEY`)
 
 ### 2.1 Database roles (security report P1-07) — owner-run setup, once per environment
@@ -59,6 +60,22 @@ Local development uses one role for both (tests cover the non-owner case with th
 Everyone in the office signs in from one public IP. The per-IP limit (`ip_login_failures_limit`, default 60 per
 `ip_login_window_minutes` = 15) only counts sign-in attempts from unknown devices and unknown emails; known devices
 (a phone that already signed in) are never refused by it. Raise it in Settings if many new phones are enrolled at once.
+
+### 2.3 Face ID (WebAuthn passkeys) – RP ID
+- `WEBAUTHN_RP_ID` **must be the final domain of the PWA** (e.g. `attendance.example.com`, no scheme, no port). Passkeys are
+  bound to the RP ID by the phone: if it changes after go-live, every employee must register Face ID again (and every new
+  registration after the first one needs an admin approval). The test environment uses its own domain (its passkeys do not work in production).
+- `WEBAUTHN_ORIGINS`: exact origin(s) of the PWA, comma-separated (`https://attendance.example.com`). HTTPS is mandatory except `http://localhost`.
+- The API only stores public keys; no biometric data is ever received.
+- Kill switch: setting `faceid_required_for_checkin` (super admin configuration page). Off = check-in without Face ID (emergency only, logged as a setting change).
+
+### 2.4 Web Push (VAPID)
+- Generate the key pair once per environment: `php artisan attendance:vapid-keys`, then store `VAPID_PRIVATE_KEY` in the host secrets
+  only; `VAPID_PUBLIC_KEY` goes to the API and to the frontend (`VITE_VAPID_PUBLIC_KEY`, also readable at `GET /api/push/public-key`).
+  Changing the keys invalidates all subscriptions (users re-subscribe automatically at next sign-in).
+- `VAPID_SUBJECT`: `mailto:` address of the operator.
+- Pushes are sent by the **worker** (queue). Without keys, pushes are skipped; in-app notifications are always stored.
+- The worker must reach the push services over HTTPS (fcm.googleapis.com, *.push.apple.com, updates.push.services.mozilla.com, *.notify.windows.com).
 
 ### First super admin (once, after the first deployment)
 There is no public setup page. From a shell in the `app` container: `php artisan attendance:create-super-admin --email=… --first-name=… --last-name=…`
