@@ -52,7 +52,7 @@ bash tests/load/parallel_checkin.sh http://localhost:8181/api <first-200-tokens.
 | P3-01 | Self-selected remote days unbounded, effective immediately | Medium | Fixed (re-tested 2026-11-12) |
 | P3-02 | Reminder retry duplicates / stuck `running` run | Low | Fixed (re-tested 2026-11-12) |
 | P3-03 | Intent not bound to device | Low | Fixed (re-tested 2026-11-12) |
-| P3-04 | Face ID not enforced yet (phase 4) | Info | Open (phase 4) |
+| P3-04 | Face ID not enforced yet (phase 4) | Info | Fixed (re-tested 2026-11-12, phase 4) |
 | P3-05 | Client-declared accuracy | Info | Accepted risk |
 | P3-06 | `checked-in` middleware unused yet | Info | Re-test phase 5 |
 | P3-08 | Slow live run taken over after staleness window | Info | Accepted (per-recipient claims / idempotent updates) |
@@ -127,3 +127,7 @@ New observations (Info, no action required):
 Regression runs: `phase3_attendance.sh` 67/67 PASS (three assertions updated to the fixed P3-01 behaviour, plus one new one), `phase3_clock.php` 20/20 PASS, `phase3_fixes.php` 14/14 PASS, `parallel_checkin.sh` 200 users: 200 intents 201, 200 confirms 201 + 200 duplicate confirms 200, 0 errors, 0 duplicate attendance rows. Note: re-running the HTTP script needs the load users' attendances/schedules reset and `php artisan cache:clear` (rate limiter), otherwise 409/429 appear.
 
 Still no Critical or High finding open. P3-04 (Face ID, phase 4) and P3-06 (`checked-in` middleware, phase 5) remain scheduled for re-test.
+
+## Re-test of P3-04 (2026-11-12, phase 4)
+
+**P3-04 – Fixed.** `faceid_required_for_checkin` now defaults to `true`. Over HTTP (`tests/security/phase4_faceid_push.php`): `gps`, `mission` and `remote` intents without an approved credential on the device → 403 `faceid_not_registered` / `faceid_pending_approval` / `faceid_other_device`; confirmation without assertion → 422 `faceid_failed`; replayed, foreign-challenge, other-intent, revoked-credential, no-UV, wrong-origin, counter-regression and other-device assertions → 422. Admin on-behalf check-in still works without Face ID and still requires a reason and `checkin_for_employee`. Details in `phase-4-security.md`.
