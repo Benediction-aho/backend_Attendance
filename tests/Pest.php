@@ -45,3 +45,5 @@ function exhaustLogins(object $test, string $email, string $deviceId = 'device-t
         Carbon::setTestNow(Carbon::now()->addMinutes(21));
     }
 }
+
+require_once __DIR__.'/Support/attendance.php';

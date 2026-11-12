@@ -3,6 +3,7 @@
 use App\Enums\LogLevel;
 use App\Enums\LogType;
 use App\Exceptions\ApiExceptionRenderer;
+use App\Http\Middleware\EnsureCheckedInToday;
 use App\Http\Middleware\SecurityHeaders;
 use App\Http\Middleware\TrustProxies;
 use App\Models\User;
@@ -26,6 +27,7 @@ return Application::configure(basePath: dirname(__DIR__))
         $middleware->prepend(SecurityHeaders::class);
         $middleware->replace(Illuminate\Http\Middleware\TrustProxies::class, TrustProxies::class);
         $middleware->throttleApi();
+        $middleware->alias(['checked-in' => EnsureCheckedInToday::class]);
         // API only: guests are never redirected to a "login" route, they get a JSON 401 (P1-04).
         $middleware->redirectGuestsTo(fn () => null);
     })

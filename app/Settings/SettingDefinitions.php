@@ -9,7 +9,7 @@ namespace App\Settings;
 final class SettingDefinitions
 {
     /**
-     * @return array<string, array{type: string, default: mixed, rules: list<string>, group: string, label: string, editable?: bool}>
+     * @return array<string, array{type: string, default: mixed, rules: list<string>, item_rules?: list<string>, group: string, label: string, editable?: bool}>
      */
     public static function all(): array
     {
@@ -25,6 +25,11 @@ final class SettingDefinitions
             'auto_checkout_time' => ['type' => 'time', 'default' => '00:00', 'rules' => ['date_format:H:i'], 'group' => 'attendance', 'label' => 'Automatic check-out (day reset)'],
             'track_work_hours' => ['type' => 'bool', 'default' => false, 'rules' => ['boolean'], 'group' => 'attendance', 'label' => 'Track working hours'],
             'early_checkout_reason_required' => ['type' => 'bool', 'default' => true, 'rules' => ['boolean'], 'group' => 'attendance', 'label' => 'Reason required for early check-out'],
+            'checkin_max_accuracy_m' => ['type' => 'int', 'default' => 50, 'rules' => ['integer', 'min:5', 'max:1000'], 'group' => 'attendance', 'label' => 'Check-in refused when GPS accuracy is worse than (m)'],
+            'checkin_intent_ttl_seconds' => ['type' => 'int', 'default' => 120, 'rules' => ['integer', 'min:30', 'max:900'], 'group' => 'attendance', 'label' => 'Time to confirm a check-in after the position check (seconds)'],
+            'faceid_required_for_checkin' => ['type' => 'bool', 'default' => false, 'rules' => ['boolean'], 'group' => 'attendance', 'label' => 'Enforce the Face ID assertion when confirming a check-in (enabled with phase 4)'],
+            'working_days' => ['type' => 'int_list', 'default' => [1, 2, 3, 4, 5], 'rules' => ['array', 'max:7'], 'item_rules' => ['integer', 'distinct', 'between:1,7'], 'group' => 'attendance', 'label' => 'Working days (1 = Monday … 7 = Sunday)'],
+            'checkin_attempts_per_minute' => ['type' => 'int', 'default' => 20, 'rules' => ['integer', 'min:3', 'max:600'], 'group' => 'attendance', 'label' => 'Check-in / check-out requests per minute per user'],
             'max_days_off_per_week' => ['type' => 'int', 'default' => 2, 'rules' => ['integer', 'min:0', 'max:6'], 'group' => 'attendance', 'label' => 'Maximum days off per week'],
 
             // Reports

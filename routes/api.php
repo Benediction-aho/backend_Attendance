@@ -3,6 +3,11 @@
 use App\Http\Controllers\Admin\ActivityLogController;
 use App\Http\Controllers\Admin\SettingsController;
 use App\Http\Controllers\Admin\UserController;
+use App\Http\Controllers\Attendance\AdminAttendanceController;
+use App\Http\Controllers\Attendance\AttendanceController;
+use App\Http\Controllers\Attendance\HolidayController;
+use App\Http\Controllers\Attendance\LeaveController;
+use App\Http\Controllers\Attendance\WorkScheduleController;
 use App\Http\Controllers\Auth\AuthController;
 use App\Http\Controllers\ClientErrorController;
 use App\Http\Controllers\FileController;
@@ -11,6 +16,7 @@ use App\Http\Controllers\MeController;
 use App\Http\Controllers\NotificationController;
 use App\Http\Controllers\ProfileController;
 use App\Http\Middleware\EnsureAccountUsable;
+use App\Http\Middleware\EnsureEmployee;
 use Illuminate\Support\Facades\Route;
 
 Route::get('/health', HealthController::class)->name('health');
@@ -43,7 +49,39 @@ Route::middleware(['auth:sanctum', EnsureAccountUsable::class])->group(function 
     Route::post('/notifications/read-all', [NotificationController::class, 'readAll'])->name('notifications.read-all');
     Route::post('/notifications/{id}/read', [NotificationController::class, 'read'])->whereUuid('id')->name('notifications.read');
 
+    Route::get('/holidays', [HolidayController::class, 'index'])->name('holidays.index');
+
+    // Attendance (employees only). Never behind EnsureCheckedInToday: these routes are how one checks in.
+    Route::middleware(EnsureEmployee::class)->group(function () {
+        Route::get('/attendance/today', [AttendanceController::class, 'today'])->name('attendance.today');
+        Route::get('/attendance/history', [AttendanceController::class, 'history'])->name('attendance.history');
+        Route::middleware('throttle:attendance')->group(function () {
+            Route::post('/attendance/check-in/intent', [AttendanceController::class, 'intent'])->name('attendance.check-in.intent');
+            Route::post('/attendance/check-in/confirm', [AttendanceController::class, 'confirm'])->name('attendance.check-in.confirm');
+            Route::post('/attendance/check-out', [AttendanceController::class, 'checkOut'])->name('attendance.check-out');
+        });
+        Route::get('/me/work-schedule', [WorkScheduleController::class, 'mine'])->name('me.work-schedule.show');
+        Route::post('/me/work-schedule', [WorkScheduleController::class, 'storeMine'])->name('me.work-schedule.store');
+        Route::get('/me/leaves', [LeaveController::class, 'mine'])->name('me.leaves.index');
+    });
+
     Route::prefix('admin')->group(function () {
+        // Attendance administration (tier checked in each action).
+        Route::get('/attendance/day', [AdminAttendanceController::class, 'day'])->name('admin.attendance.day');
+        Route::get('/attendance/missions', [AdminAttendanceController::class, 'missions'])->name('admin.attendance.missions');
+        Route::post('/attendance/{attendance}/mission/approve', [AdminAttendanceController::class, 'approveMission'])->whereNumber('attendance')->name('admin.attendance.mission.approve');
+        Route::post('/attendance/{attendance}/mission/reject', [AdminAttendanceController::class, 'rejectMission'])->whereNumber('attendance')->name('admin.attendance.mission.reject');
+        Route::get('/attendance/attempts', [AdminAttendanceController::class, 'attempts'])->name('admin.attendance.attempts');
+        Route::get('/users/{user}/attendance', [AdminAttendanceController::class, 'userHistory'])->name('admin.users.attendance');
+        Route::post('/users/{user}/check-in', [AdminAttendanceController::class, 'checkInOnBehalf'])->middleware('throttle:attendance')->name('admin.users.check-in');
+        Route::get('/users/{user}/work-schedule', [WorkScheduleController::class, 'show'])->name('admin.users.work-schedule.show');
+        Route::put('/users/{user}/work-schedule', [WorkScheduleController::class, 'update'])->name('admin.users.work-schedule.update');
+        Route::get('/leaves', [LeaveController::class, 'index'])->name('admin.leaves.index');
+        Route::post('/users/{user}/leaves', [LeaveController::class, 'store'])->name('admin.users.leaves.store');
+        Route::delete('/leaves/{leave}', [LeaveController::class, 'destroy'])->whereNumber('leave')->name('admin.leaves.destroy');
+        Route::post('/holidays', [HolidayController::class, 'store'])->name('admin.holidays.store');
+        Route::delete('/holidays/{holiday}', [HolidayController::class, 'destroy'])->whereNumber('holiday')->name('admin.holidays.destroy');
+
         Route::get('/activity-logs', [ActivityLogController::class, 'index'])->middleware('can:view-logs')->name('admin.activity-logs.index');
 
         // Authorization per action in UserPolicy (role + permission tier).

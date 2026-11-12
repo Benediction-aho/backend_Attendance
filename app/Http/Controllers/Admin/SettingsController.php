@@ -42,7 +42,7 @@ class SettingsController
                     // Only active admins and super admins may receive the monthly report (P1-09).
                     ? ['integer', 'distinct', Rule::exists('users', 'id')->whereIn('role', [Role::Admin->value, Role::SuperAdmin->value])
                         ->where('status', UserStatus::Active->value)->whereNull('deleted_at')]
-                    : ['integer', 'min:1', 'max:1440'];
+                    : ($definition['item_rules'] ?? ['integer', 'min:1', 'max:1440']);
             }
         }
         $data = $request->validate($rules);

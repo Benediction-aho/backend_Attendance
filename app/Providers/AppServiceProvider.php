@@ -2,6 +2,8 @@
 
 namespace App\Providers;
 
+use App\Domain\Attendance\CheckinAssertionVerifier;
+use App\Domain\Attendance\UnavailableAssertionVerifier;
 use App\Enums\Permission;
 use App\Models\User;
 use App\Settings\SettingsService;
@@ -24,6 +26,7 @@ class AppServiceProvider extends ServiceProvider
     {
         // Scoped: fresh per request / queued job, so long-running workers never keep stale values.
         $this->app->scoped(SettingsService::class);
+        $this->app->bind(CheckinAssertionVerifier::class, UnavailableAssertionVerifier::class);
     }
 
     /**
@@ -41,6 +44,8 @@ class AppServiceProvider extends ServiceProvider
             return Limit::perMinute(app(SettingsService::class)->int('api_requests_per_minute'))
                 ->by($user instanceof User ? 'user:'.$user->id : 'ip:'.$request->ip());
         });
+        RateLimiter::for('attendance', fn (Request $request) => Limit::perMinute(app(SettingsService::class)->int('checkin_attempts_per_minute'))
+            ->by('attendance:'.($request->user('sanctum')?->getAuthIdentifier() ?? $request->ip())));
         RateLimiter::for('client-errors', fn (Request $request) => Limit::perMinute(10)->by('client-errors:'.($request->user('sanctum')?->getAuthIdentifier() ?? $request->ip())));
         // Sliding device sessions (FIABILITE B3): a token unused for longer than the idle period stops working.
         // Checked before Sanctum refreshes last_used_at.
@@ -60,6 +65,12 @@ class AppServiceProvider extends ServiceProvider
 
         Gate::define('super-admin', fn (User $user) => $user->isSuperAdmin());
         Gate::define('view-logs', fn (User $user) => $user->hasPermission(Permission::ViewLogs));
+        // Attendance views (any attendance-related tier); field-level filtering in AttendancePresenter.
+        Gate::define('view-attendance', fn (User $user) => $user->isSuperAdmin() || collect([
+            Permission::ViewLateness, Permission::ViewActivities, Permission::ViewPerformance, Permission::ApproveMissionCheckins,
+            Permission::CheckInForEmployee, Permission::ManageLeaves, Permission::ManageWorkSchedules,
+        ])->contains(fn (Permission $p) => $user->hasPermission($p)));
+        Gate::define('manage-holidays', fn (User $user) => $user->hasPermission(Permission::ManageLeaves));
         Gate::define('permission', fn (User $user, string $permission) => $user->hasPermission(Permission::from($permission)));
     }
 }
