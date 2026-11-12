@@ -45,9 +45,15 @@ final class SettingDefinitions
             'weekly_reminder_time' => ['type' => 'time', 'default' => '16:30', 'rules' => ['date_format:H:i'], 'group' => 'reports', 'label' => 'Weekly report reminder time'],
             'monthly_report_day' => ['type' => 'int', 'default' => 26, 'rules' => ['integer', 'between:1,28'], 'group' => 'reports', 'label' => 'Monthly report day of month'],
             'monthly_report_time' => ['type' => 'time', 'default' => '19:00', 'rules' => ['date_format:H:i'], 'group' => 'reports', 'label' => 'Monthly report sending time'],
-            'monthly_report_recipient_ids' => ['type' => 'int_list', 'default' => [], 'rules' => ['array'], 'group' => 'reports', 'label' => 'Additional monthly report recipients (admin ids)'],
+            'monthly_report_recipient_ids' => ['type' => 'int_list', 'default' => [], 'rules' => ['array', 'max:50'], 'item_rules' => ['integer', 'distinct', 'min:1'], 'group' => 'reports', 'label' => 'Additional monthly report recipients (admin ids)'],
             'report_pdf_max_mb' => ['type' => 'int', 'default' => 10, 'rules' => ['integer', 'min:1', 'max:50'], 'group' => 'reports', 'label' => 'Maximum PDF report size (MB)'],
             'email_attachments_max_mb' => ['type' => 'int', 'default' => 30, 'rules' => ['integer', 'min:1', 'max:40'], 'group' => 'reports', 'label' => 'Maximum email attachments size (MB)'],
+            'weekly_report_max_versions' => ['type' => 'int', 'default' => 10, 'rules' => ['integer', 'min:1', 'max:50'], 'group' => 'reports', 'label' => 'Maximum PDF versions an employee can upload for one week'],
+            'weekly_absent_friday_grace' => ['type' => 'bool', 'default' => true, 'rules' => ['boolean'], 'group' => 'reports', 'label' => 'An employee expected on the report day but without check-in may also submit on the next working day without being late'],
+            'report_catchup_days' => ['type' => 'int', 'default' => 7, 'rules' => ['integer', 'min:1', 'max:31'], 'group' => 'reports', 'label' => 'A missed report run is caught up for this many days (older ones are skipped)'],
+            'tasks_max_per_day' => ['type' => 'int', 'default' => 100, 'rules' => ['integer', 'min:1', 'max:1000'], 'group' => 'reports', 'label' => 'Maximum tasks per employee per day'],
+            'clients_max_per_day' => ['type' => 'int', 'default' => 200, 'rules' => ['integer', 'min:1', 'max:2000'], 'group' => 'reports', 'label' => 'Maximum client entries per employee per day'],
+            'client_quantity_max' => ['type' => 'int', 'default' => 999, 'rules' => ['integer', 'min:1', 'max:100000'], 'group' => 'reports', 'label' => 'Maximum quantity of one client entry'],
 
             // System
             'timezone' => ['type' => 'string', 'default' => 'Africa/Accra', 'rules' => ['timezone'], 'group' => 'system', 'label' => 'Time zone', 'editable' => false],

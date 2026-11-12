@@ -17,6 +17,10 @@ use App\Http\Controllers\MeController;
 use App\Http\Controllers\NotificationController;
 use App\Http\Controllers\ProfileController;
 use App\Http\Controllers\PushSubscriptionController;
+use App\Http\Controllers\Reports\AdminReportController;
+use App\Http\Controllers\Reports\ClientController;
+use App\Http\Controllers\Reports\ReportController;
+use App\Http\Controllers\Reports\TaskController;
 use App\Http\Middleware\EnsureAccountUsable;
 use App\Http\Middleware\EnsureEmployee;
 use Illuminate\Support\Facades\Route;
@@ -71,6 +75,24 @@ Route::middleware(['auth:sanctum', EnsureAccountUsable::class])->group(function 
         Route::post('/me/work-schedule', [WorkScheduleController::class, 'storeMine'])->name('me.work-schedule.store');
         Route::get('/me/leaves', [LeaveController::class, 'mine'])->name('me.leaves.index');
 
+        // Tasks, clients and reports (phase 5). Reading is always allowed; every write needs today's
+        // check-in on expected days (checked-in, P3-06).
+        Route::get('/me/tasks', [TaskController::class, 'index'])->name('me.tasks.index');
+        Route::get('/me/clients', [ClientController::class, 'index'])->name('me.clients.index');
+        Route::get('/clients/services', [ClientController::class, 'suggestions'])->name('clients.services');
+        Route::get('/me/reports/daily', [ReportController::class, 'daily'])->name('me.reports.daily');
+        Route::get('/me/reports/weekly', [ReportController::class, 'weekly'])->name('me.reports.weekly');
+        Route::get('/me/reports/weekly/submission', [ReportController::class, 'submissionStatus'])->name('me.reports.weekly.submission');
+        Route::middleware(['checked-in', 'throttle:attendance'])->group(function () {
+            Route::post('/me/tasks', [TaskController::class, 'store'])->name('me.tasks.store');
+            Route::patch('/me/tasks/{task}', [TaskController::class, 'update'])->whereNumber('task')->name('me.tasks.update');
+            Route::delete('/me/tasks/{task}', [TaskController::class, 'destroy'])->whereNumber('task')->name('me.tasks.destroy');
+            Route::post('/me/clients', [ClientController::class, 'store'])->name('me.clients.store');
+            Route::patch('/me/clients/{client}', [ClientController::class, 'update'])->whereNumber('client')->name('me.clients.update');
+            Route::delete('/me/clients/{client}', [ClientController::class, 'destroy'])->whereNumber('client')->name('me.clients.destroy');
+            Route::post('/me/reports/weekly/submission', [ReportController::class, 'submit'])->name('me.reports.weekly.submit');
+        });
+
         // Face ID (WebAuthn passkeys).
         Route::get('/me/faceid', [FaceIdController::class, 'mine'])->name('me.faceid.show');
         Route::middleware('throttle:attendance')->group(function () {
@@ -95,6 +117,12 @@ Route::middleware(['auth:sanctum', EnsureAccountUsable::class])->group(function 
         Route::delete('/leaves/{leave}', [LeaveController::class, 'destroy'])->whereNumber('leave')->name('admin.leaves.destroy');
         Route::post('/holidays', [HolidayController::class, 'store'])->name('admin.holidays.store');
         Route::delete('/holidays/{holiday}', [HolidayController::class, 'destroy'])->whereNumber('holiday')->name('admin.holidays.destroy');
+
+        // Reports (tier checked in each action).
+        Route::get('/reports/daily', [AdminReportController::class, 'daily'])->name('admin.reports.daily');
+        Route::get('/reports/weekly', [AdminReportController::class, 'weekly'])->name('admin.reports.weekly');
+        Route::get('/reports/weekly/submissions/{submission}', [AdminReportController::class, 'submission'])->whereNumber('submission')->name('admin.reports.weekly.submission');
+        Route::get('/users/{user}/reports/weekly', [AdminReportController::class, 'userWeekly'])->name('admin.users.reports.weekly');
 
         Route::get('/faceid/credentials', [FaceIdController::class, 'index'])->name('admin.faceid.index');
         Route::post('/faceid/credentials/{credential}/approve', [FaceIdController::class, 'approve'])->whereNumber('credential')->name('admin.faceid.approve');
