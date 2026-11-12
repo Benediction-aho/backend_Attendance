@@ -23,6 +23,9 @@ class LoginAttempt extends Model
 
     public const SCOPE_UNKNOWN = 'unknown_device';
 
+    /** Current-password checks of a signed-in user (password change, email change). */
+    public const SCOPE_REAUTH = 'reauth';
+
     protected $fillable = ['account_key', 'user_id', 'scope', 'bucket_key', 'failures', 'series', 'blocked_until', 'locked_at', 'last_failed_at'];
 
     protected function casts(): array

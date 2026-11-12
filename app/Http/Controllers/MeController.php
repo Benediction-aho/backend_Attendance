@@ -9,6 +9,7 @@ use App\Mail\SecurityAlertMail;
 use App\Models\User;
 use App\Rules\StrongPassword;
 use App\Services\ActivityLogger;
+use App\Services\Auth\CurrentPasswordGuard;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Carbon;
@@ -23,7 +24,7 @@ class MeController
     }
 
     /** Replace the identification code (or current password) with a personal password. */
-    public function password(Request $request, ActivityLogger $logger): JsonResponse
+    public function password(Request $request, ActivityLogger $logger, CurrentPasswordGuard $guard): JsonResponse
     {
         /** @var User $user */
         $user = $request->user();
@@ -36,11 +37,10 @@ class MeController
             'new_password' => ['required', 'string', 'max:200', 'confirmed', new StrongPassword],
         ]);
 
-        if ($user->password === null || ! Hash::check($data['current_password'], $user->password)) {
-            $logger->security('auth.password_change_failed', 'Password change refused: wrong current code', LogLevel::Warning, $user, $user);
-            throw new ApiError(422, 'The current code or password is incorrect.', 'wrong_password');
-        }
-        if (Hash::check($data['new_password'], $user->password)) {
+        $guard->verify($user, $data['current_password'], 'auth.password_change_failed', 'Password change');
+        /** @var string $current */
+        $current = $user->password;
+        if (Hash::check($data['new_password'], $current)) {
             throw new ApiError(422, 'The new password must be different from the current one.', 'same_password');
         }
 
