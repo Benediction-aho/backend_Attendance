@@ -10,6 +10,7 @@ use App\Http\Controllers\Attendance\LeaveController;
 use App\Http\Controllers\Attendance\WorkScheduleController;
 use App\Http\Controllers\Auth\AuthController;
 use App\Http\Controllers\ClientErrorController;
+use App\Http\Controllers\FaceIdController;
 use App\Http\Controllers\FileController;
 use App\Http\Controllers\HealthController;
 use App\Http\Controllers\MeController;
@@ -63,6 +64,13 @@ Route::middleware(['auth:sanctum', EnsureAccountUsable::class])->group(function 
         Route::get('/me/work-schedule', [WorkScheduleController::class, 'mine'])->name('me.work-schedule.show');
         Route::post('/me/work-schedule', [WorkScheduleController::class, 'storeMine'])->name('me.work-schedule.store');
         Route::get('/me/leaves', [LeaveController::class, 'mine'])->name('me.leaves.index');
+
+        // Face ID (WebAuthn passkeys).
+        Route::get('/me/faceid', [FaceIdController::class, 'mine'])->name('me.faceid.show');
+        Route::middleware('throttle:attendance')->group(function () {
+            Route::post('/me/faceid/register/options', [FaceIdController::class, 'registrationOptions'])->name('me.faceid.register.options');
+            Route::post('/me/faceid/register', [FaceIdController::class, 'register'])->name('me.faceid.register');
+        });
     });
 
     Route::prefix('admin')->group(function () {
@@ -81,6 +89,11 @@ Route::middleware(['auth:sanctum', EnsureAccountUsable::class])->group(function 
         Route::delete('/leaves/{leave}', [LeaveController::class, 'destroy'])->whereNumber('leave')->name('admin.leaves.destroy');
         Route::post('/holidays', [HolidayController::class, 'store'])->name('admin.holidays.store');
         Route::delete('/holidays/{holiday}', [HolidayController::class, 'destroy'])->whereNumber('holiday')->name('admin.holidays.destroy');
+
+        Route::get('/faceid/credentials', [FaceIdController::class, 'index'])->name('admin.faceid.index');
+        Route::post('/faceid/credentials/{credential}/approve', [FaceIdController::class, 'approve'])->whereNumber('credential')->name('admin.faceid.approve');
+        Route::post('/faceid/credentials/{credential}/reject', [FaceIdController::class, 'reject'])->whereNumber('credential')->name('admin.faceid.reject');
+        Route::post('/faceid/credentials/{credential}/revoke', [FaceIdController::class, 'revoke'])->whereNumber('credential')->name('admin.faceid.revoke');
 
         Route::get('/activity-logs', [ActivityLogController::class, 'index'])->middleware('can:view-logs')->name('admin.activity-logs.index');
 

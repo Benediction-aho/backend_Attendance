@@ -126,23 +126,32 @@ class AttendanceService
         }
 
         $faceIdRequired = $this->settings->bool('faceid_required_for_checkin', $now);
-        $verified = false;
+        $verified = null;
         if ($assertion !== null) {
             $verified = $this->verifier->verify($user, $intent, $assertion);
         }
-        if ($faceIdRequired && ! $verified) {
+        if ($faceIdRequired && $verified === null) {
+            // A double submit of an already accepted confirmation returns the existing attendance (no error).
+            if (CheckinIntent::query()->whereKey($intent->id)->whereNotNull('consumed_at')->exists() && ($existing = $this->forDate($user, $date)) !== null) {
+                return [$existing, false];
+            }
             $this->logger->security('attendance.faceid_failed', 'Check-in refused: Face ID verification failed', LogLevel::Warning, $user);
             throw new ApiError(422, 'Face ID verification failed. Please try again.', 'faceid_failed');
         }
 
         // Claim and insert in one transaction: a parallel double submit waits on the intent row lock,
         // then sees it consumed and the attendance committed (READ COMMITTED re-evaluation).
+        // The Face ID challenge is consumed in the same transaction (single use, bound to this intent).
         $result = DB::transaction(function () use ($intent, $user, $date, $now, $verified) {
             $claimed = CheckinIntent::query()->whereKey($intent->id)->whereNull('consumed_at')
                 ->where('expires_at', '>', $now)->whereDate('work_date', $date)
                 ->update(['consumed_at' => $now]);
             if ($claimed !== 1) {
                 return null;
+            }
+            if ($verified !== null && ! $this->verifier->markUsed($verified)) {
+                // Unreachable in practice (the challenge belongs to this intent only); rolls the claim back.
+                throw new ApiError(422, 'Face ID verification failed. Please try again.', 'faceid_failed');
             }
 
             return $this->insert($user, $date, $now, [
@@ -151,7 +160,8 @@ class AttendanceService
                 'check_in_lng' => $intent->lng,
                 'check_in_accuracy_m' => $intent->accuracy_m,
                 'check_in_distance_m' => $intent->distance_m,
-                'faceid_verified' => $verified,
+                'faceid_verified' => $verified !== null,
+                'webauthn_credential_id' => $verified?->credentialId,
                 'reason' => $intent->reason,
                 'mission_status' => $intent->type === Attendance::TYPE_MISSION ? 'pending' : null,
             ]);

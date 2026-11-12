@@ -1,10 +1,8 @@
 <?php
 
-use App\Domain\Attendance\CheckinAssertionVerifier;
 use App\Enums\Permission;
 use App\Models\Attendance;
 use App\Models\CheckinAttempt;
-use App\Models\CheckinIntent;
 use App\Models\Holiday;
 use App\Models\Leave;
 use App\Models\User;
@@ -17,6 +15,7 @@ use Illuminate\Support\Facades\Notification;
 use Laravel\Sanctum\Sanctum;
 
 beforeEach(function () {
+    withoutFaceId(); // Phase 3 rules; Face ID is covered in tests/Feature/FaceId.
     Notification::fake();
     at('2026-11-16 07:55');
 });
@@ -210,32 +209,7 @@ describe('intents', function () {
         expect(Attendance::query()->count())->toBe(0);
     });
 
-    it('requires a verified Face ID assertion when enforced', function () {
-        app(SettingsService::class)->set(['faceid_required_for_checkin' => true]);
-        $user = User::factory()->create();
-        Sanctum::actingAs($user);
-        $intent = $this->postJson('/api/attendance/check-in/intent', ['type' => 'gps', 'latitude' => OFFICE_LAT, 'longitude' => OFFICE_LNG, 'accuracy' => 5])
-            ->assertJsonPath('faceid_required', true);
-        $this->postJson('/api/attendance/check-in/confirm', ['intent_id' => $intent->json('intent_id')])->assertStatus(422)->assertJsonPath('code', 'faceid_failed');
-        $this->postJson('/api/attendance/check-in/confirm', ['intent_id' => $intent->json('intent_id'), 'assertion' => ['id' => 'x']])->assertStatus(422);
-        expect(Attendance::query()->count())->toBe(0)->and(CheckinIntent::query()->sole()->consumed_at)->toBeNull();
-    });
-
-    it('accepts a check-in confirmed with a verified assertion (verifier bound in phase 4)', function () {
-        app(SettingsService::class)->set(['faceid_required_for_checkin' => true]);
-        app()->bind(CheckinAssertionVerifier::class, fn () => new class implements CheckinAssertionVerifier
-        {
-            public function verify(User $user, CheckinIntent $intent, array $assertion): bool
-            {
-                return ($assertion['ok'] ?? false) === true;
-            }
-        });
-        $user = User::factory()->create();
-        Sanctum::actingAs($user);
-        $id = $this->postJson('/api/attendance/check-in/intent', ['type' => 'gps', 'latitude' => OFFICE_LAT, 'longitude' => OFFICE_LNG, 'accuracy' => 5])->json('intent_id');
-        $this->postJson('/api/attendance/check-in/confirm', ['intent_id' => $id, 'assertion' => ['ok' => true]])->assertCreated()
-            ->assertJsonPath('data.faceid_verified', true);
-    });
+    // Face ID enforcement (phase 4) is covered in tests/Feature/FaceId/FaceIdTest.php.
 });
 
 describe('remote and mission', function () {

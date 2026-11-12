@@ -6,6 +6,7 @@ use App\Domain\Attendance\AttendancePresenter;
 use App\Domain\Attendance\AttendanceService;
 use App\Domain\Attendance\DayStatus;
 use App\Domain\Attendance\WorkCalendar;
+use App\Domain\FaceId\WebAuthnService;
 use App\Exceptions\ApiError;
 use App\Models\Attendance;
 use App\Models\User;
@@ -22,6 +23,7 @@ class AttendanceController
         private readonly WorkCalendar $calendar,
         private readonly SettingsService $settings,
         private readonly AttendancePresenter $presenter,
+        private readonly WebAuthnService $webauthn,
     ) {}
 
     /** Today's status, with the server time so the PWA can synchronise its clock. */
@@ -62,6 +64,8 @@ class AttendanceController
                 'early_checkout_reason_required' => $this->settings->bool('early_checkout_reason_required'),
                 'faceid_required' => $this->settings->bool('faceid_required_for_checkin'),
             ],
+            // ready | not_registered | pending_approval | other_device (for this session's device).
+            'faceid_state' => $this->webauthn->state($user, $this->deviceId($request)),
         ]);
     }
 
@@ -77,18 +81,23 @@ class AttendanceController
         ]);
         $user = $this->user($request);
         $position = $this->position($data);
-        $deviceId = $request->attributes->get('device_id');
+        $deviceId = $this->deviceId($request);
+        $faceIdRequired = $this->settings->bool('faceid_required_for_checkin');
+        if ($faceIdRequired) {
+            $this->ensureFaceIdReady($this->webauthn->state($user, $deviceId));
+        }
 
-        $intent = $this->service->createIntent($user, $data['type'], $position, $data['type'] === Attendance::TYPE_MISSION ? ($data['reason'] ?? null) : null, is_int($deviceId) ? $deviceId : null, $request->ip());
+        $intent = $this->service->createIntent($user, $data['type'], $position, $data['type'] === Attendance::TYPE_MISSION ? ($data['reason'] ?? null) : null, $deviceId, $request->ip());
+        $faceIdOptions = $this->webauthn->checkinOptions($user, $intent);
 
         return response()->json([
             'intent_id' => $intent->id,
             'type' => $intent->type,
             'expires_at' => $intent->expires_at->toIso8601String(),
             'distance_m' => $intent->distance_m !== null ? round((float) $intent->distance_m, 1) : null,
-            'faceid_required' => $this->settings->bool('faceid_required_for_checkin'),
-            // Phase 4: WebAuthn request options (challenge) are returned here.
-            'faceid_options' => null,
+            'faceid_required' => $faceIdRequired,
+            // WebAuthn request options for navigator.credentials.get() (challenge bound to this intent).
+            'faceid_options' => $faceIdOptions,
         ], 201);
     }
 
@@ -99,8 +108,7 @@ class AttendanceController
             'intent_id' => ['required', 'uuid'],
             'assertion' => ['nullable', 'array'],
         ]);
-        $deviceId = $request->attributes->get('device_id');
-        [$attendance, $created] = $this->service->confirm($this->user($request), $data['intent_id'], $data['assertion'] ?? null, is_int($deviceId) ? $deviceId : null);
+        [$attendance, $created] = $this->service->confirm($this->user($request), $data['intent_id'], $data['assertion'] ?? null, $this->deviceId($request));
 
         return response()->json(['data' => $this->presenter->forEmployee($attendance), 'created' => $created], $created ? 201 : 200);
     }
@@ -147,6 +155,23 @@ class AttendanceController
         }
 
         return ['lat' => (float) $data['latitude'], 'lng' => (float) $data['longitude'], 'accuracy' => (float) ($data['accuracy'] ?? 0)];
+    }
+
+    private function ensureFaceIdReady(string $state): void
+    {
+        match ($state) {
+            'ready' => null,
+            'pending_approval' => throw new ApiError(403, 'Your new Face ID device is waiting for approval by an administrator.', 'faceid_pending_approval'),
+            'other_device' => throw new ApiError(403, 'Face ID is registered on another device. Register this device and ask an administrator to approve it.', 'faceid_other_device'),
+            default => throw new ApiError(403, 'Please register Face ID on this device before checking in.', 'faceid_not_registered'),
+        };
+    }
+
+    private function deviceId(Request $request): ?int
+    {
+        $deviceId = $request->attributes->get('device_id');
+
+        return is_int($deviceId) ? $deviceId : null;
     }
 
     private function user(Request $request): User

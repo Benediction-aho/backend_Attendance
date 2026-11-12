@@ -3,7 +3,7 @@
 namespace App\Providers;
 
 use App\Domain\Attendance\CheckinAssertionVerifier;
-use App\Domain\Attendance\UnavailableAssertionVerifier;
+use App\Domain\FaceId\WebAuthnAssertionVerifier;
 use App\Enums\Permission;
 use App\Models\User;
 use App\Settings\SettingsService;
@@ -26,7 +26,7 @@ class AppServiceProvider extends ServiceProvider
     {
         // Scoped: fresh per request / queued job, so long-running workers never keep stale values.
         $this->app->scoped(SettingsService::class);
-        $this->app->bind(CheckinAssertionVerifier::class, UnavailableAssertionVerifier::class);
+        $this->app->bind(CheckinAssertionVerifier::class, WebAuthnAssertionVerifier::class);
     }
 
     /**

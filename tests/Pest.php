@@ -47,3 +47,4 @@ function exhaustLogins(object $test, string $email, string $deviceId = 'device-t
 }
 
 require_once __DIR__.'/Support/attendance.php';
+require_once __DIR__.'/Support/webauthn.php';

@@ -12,7 +12,7 @@ it('returns the SPECS defaults when nothing is stored', function () {
     expect($this->settings->int('checkin_radius_m'))->toBe(50)
         ->and($this->settings->string('late_after'))->toBe('08:10')
         ->and($this->settings->string('checkin_reminder_time'))->toBe('08:05')
-        ->and($this->settings->bool('faceid_required'))->toBeTrue()
+        ->and($this->settings->bool('faceid_required_for_checkin'))->toBeTrue()
         ->and($this->settings->get('office_latitude'))->toBe(5.595223)
         ->and($this->settings->intList('lockout_block_minutes'))->toBe([10, 20])
         ->and($this->settings->int('lockout_failures_per_series'))->toBe(5)
@@ -53,7 +53,7 @@ it('rejects unknown keys', function () {
 })->throws(InvalidArgumentException::class);
 
 it('has a default for every business value listed in SPECS section 3', function () {
-    foreach (['office_latitude', 'office_longitude', 'checkin_radius_m', 'max_days_off_per_week', 'report_pdf_max_mb', 'email_attachments_max_mb', 'log_retention_months', 'late_after', 'checkin_reminder_time', 'faceid_required', 'end_of_day_time', 'auto_checkout_time', 'track_work_hours', 'monthly_report_time', 'weekly_reminder_time', 'early_checkout_reason_required', 'daily_report_time', 'weekly_window_day', 'weekly_window_start', 'weekly_window_end', 'monthly_report_day', 'monthly_report_recipient_ids', 'timezone'] as $key) {
+    foreach (['office_latitude', 'office_longitude', 'checkin_radius_m', 'max_days_off_per_week', 'report_pdf_max_mb', 'email_attachments_max_mb', 'log_retention_months', 'late_after', 'checkin_reminder_time', 'faceid_required_for_checkin', 'end_of_day_time', 'auto_checkout_time', 'track_work_hours', 'monthly_report_time', 'weekly_reminder_time', 'early_checkout_reason_required', 'daily_report_time', 'weekly_window_day', 'weekly_window_start', 'weekly_window_end', 'monthly_report_day', 'monthly_report_recipient_ids', 'timezone'] as $key) {
         expect(SettingDefinitions::has($key))->toBeTrue("missing $key");
     }
 });

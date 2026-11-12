@@ -20,6 +20,7 @@ use Illuminate\Support\Carbon;
  * @property string|null $check_in_accuracy_m
  * @property string|null $check_in_distance_m
  * @property bool $faceid_verified
+ * @property int|null $webauthn_credential_id
  * @property bool $is_late
  * @property string $late_after
  * @property string|null $reason

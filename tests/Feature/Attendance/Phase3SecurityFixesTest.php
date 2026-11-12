@@ -19,6 +19,7 @@ use Illuminate\Support\Facades\Queue;
 use Laravel\Sanctum\Sanctum;
 
 beforeEach(function () {
+    withoutFaceId(); // Phase 3 rules; Face ID is covered in tests/Feature/FaceId.
     Notification::fake();
     at('2026-11-16 08:00');
 });
