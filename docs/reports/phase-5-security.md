@@ -91,3 +91,34 @@ Regression tests: `tests/Feature/Reports/Phase5FixesTest.php` (10 tests); `tests
 - **P5-06** – Accepted: labels are plain text, the frontend renders them as text.
 - **P5-07** – Only the first version received after the close is forwarded; later replacements are visible in the application only.
 - **P5-08** – `docker/php.ini` 20M / 22M; `report_pdf_max_mb` max 20.
+
+## Re-test after fixes (backend-security-tester, 2026-11-12)
+
+Local production-mode server (`APP_ENV=production APP_DEBUG=false`, DB `attendance_sec5`, log mailer), commit `2a3d327`. Full suite 390/390 green, `tests/security/Phase5SecurityTest.php` 23/23 green. PDF samples: `python3 -I tests/security/phase5_pdf_samples.py` (writes clean / fp / objstm / hex / uri PDFs in the current directory).
+
+| ID | Status | Evidence |
+|---|---|---|
+| P5-01 | **Fixed** | JSON NUL / BEL, form `\x01`, query `a%00b`, NUL in a JSON key, JSON body sent as `text/plain` → 422 `invalid_characters`. Tab/LF/CR accepted. |
+| P5-02 | **Fixed** (decision from SPECS 7) | P5-02 / P5-02b green. |
+| P5-03 | **Fixed** | `/files/*`: `Content-Disposition: attachment; filename="report.pdf"`, `Content-Type: application/pdf`, CSP `default-src 'none'; sandbox`, nosniff, `no-store`; tampered signature → 404. Hex-escaped `/Java#53cript` → 422 `pdf_active_content`. |
+| P5-04 | **Fixed** | Covered by Phase5FixesTest / Phase5SecurityTest (green). |
+| P5-05 | **Fixed** | Covered by Phase5FixesTest (size math, `delivered_at`, link-only fallback). |
+| P5-06 | Accepted | Labels are plain text. |
+| P5-07 | **Fixed** | Covered by tests (green). |
+| P5-08 | **Fixed** | `docker/php.ini` 20M/22M; setting `report_pdf_max_mb` max 20. |
+
+Regression checks on the control-character middleware (no regression found): emoji with skin tone, accents, CJK, RTL override (U+202E) accepted and returned intact; WebAuthn base64url JSON (`/me/faceid/register`) reaches normal validation; multipart PDF uploads unaffected (files are not inspected). Invalid UTF-8 → 422.
+
+### New findings
+
+**P5-09 – PDF active-content filter rejects legitimate PDFs (false positives)** – Medium – `WeeklyReportService::hasActiveContent`
+The regex runs over the raw bytes, including binary compressed streams (Flate text, JPEG images). Any binary sequence `/JS` followed by a non-alphanumeric byte (or `/Launch`, etc.) triggers it, and the `#xx` decoding is also applied inside binary data. Measured: 1 in 40 random 2 MB buffers is flagged (~1.2 % per MB), so a 10 MB scanned/iPhone PDF has roughly a 10 % chance of being refused with `pdf_active_content`, and the employee cannot fix it by re-exporting. Reproduce: `fp.pdf` from the sample script (a valid PDF whose DCT image stream contains `/JS `) → 422 `pdf_active_content`; `clean.pdf` → 201.
+Fix: skip the content between `stream` and `endstream` when scanning (scan only the object dictionaries), or parse with a PDF library; apply `#xx` decoding only to name tokens.
+
+**P5-10 – Filter bypass via compressed object streams and non-listed actions** – Low (documented limitation) – same file
+`objstm.pdf` (OpenAction → object 5 stored in a Flate `/ObjStm` with `/S/JavaScript/JS(...)`) and `uri.pdf` (`/OpenAction /URI`, `/AcroForm /XFA`) pass the filter and reach storage. Impact is limited because files are served as attachment with a sandbox CSP and forwarded only as attachments. Fix (optional): inflate `/ObjStm` streams before scanning, or flatten/re-render PDFs server-side (e.g. qpdf/Ghostscript); consider adding `/XFA`, `/SubmitForm`, `/ImportData`.
+
+**P5-11 – C1 controls and lone NUL in query not rejected** – Info – `RejectControlCharacters`
+U+0080–U+009F (e.g. U+0085 NEL) are accepted and stored; `?x=%00` alone passes because TrimStrings/ConvertEmptyStringsToNull turn it into null first (harmless). Optional: add `\x{80}-\x{9F}` with the `/u` flag.
+
+No Critical/High finding open for phase 5.
