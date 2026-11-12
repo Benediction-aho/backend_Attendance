@@ -14,6 +14,7 @@ Updated by the agents at the end of every work session.
 - **P5-07** only the first version received after the close is forwarded (in-app + email); later replacements of the same employee-week are not re-sent – visible in the application (current version + history). Max 1 forward per employee-week.
 - **P5-08** `docker/php.ini` `upload_max_filesize = 20M`, `post_max_size = 22M`; `report_pdf_max_mb` capped at 20 (default 10).
 - P5-06 (suggestions shared free text): accepted, frontend renders as text (as P3-07). Q23 grace: owner question unchanged.
+- **Round 2 (P5-09/10/11)**: structural PDF scanner `PdfActiveContentScanner` (stream data skipped → no false positives on images; Flate `/ObjStm` inflated; also rejects `/XFA`, `/SubmitForm`, `/ImportData`, `/OpenAction`/`/AA` → `/URI`/`/Launch`); C1 controls U+0080–U+009F → 422 `invalid_characters`. 402/402 tests. Ready for **backend-security-tester** re-test of P5-09..11.
 - Contract changes (additive): 422 `invalid_characters` on any route, 422 `pdf_active_content` on the weekly upload; downloads are attachments; `week.clients` absent for `view_reports`-only admins. Ready for **backend-security-tester** re-test.
 
 ### Phase 5 backend – what exists (2026-11-12)

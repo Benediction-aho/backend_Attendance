@@ -41,12 +41,17 @@ describe('P5-01 control characters', function () {
         }
         $this->postJson('/api/me/clients', ['name' => 'n', 'service' => 's', 'quantity' => 1, "k\u{0000}" => 'x'])->assertStatus(422);
         $this->getJson('/api/clients/services?q=a%00b')->assertStatus(422);
+        // P5-11: C1 controls (U+0080-U+009F) are rejected too, in bodies and queries.
+        foreach (["a\u{0085}b", "a\u{009B}31m", "\u{0080}"] as $bad) {
+            $this->postJson('/api/me/tasks', ['title' => $bad])->assertStatus(422)->assertJsonPath('code', 'invalid_characters');
+        }
+        $this->getJson('/api/clients/services?q=a%C2%85b')->assertStatus(422);
         expect(Task::query()->count())->toBe(0)->and(Client::query()->count())->toBe(0);
     });
 
     it('accepts tab and newlines and stores exactly what it returns', function () {
         Sanctum::actingAs($this->u);
-        $r = $this->postJson('/api/me/tasks', ['title' => "Line\tone\nline two"])->assertStatus(201);
+        $r = $this->postJson('/api/me/tasks', ['title' => "Line\tone\r\nline two \u{00A0}\u{00E9}\u{20AC}"])->assertStatus(201);
         expect(Task::query()->findOrFail($r->json('data.id'))->title)->toBe($r->json('data.title'));
     });
 });

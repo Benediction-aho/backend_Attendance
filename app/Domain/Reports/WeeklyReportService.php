@@ -50,17 +50,10 @@ class WeeklyReportService
         return str_starts_with($head, '%PDF-');
     }
 
-    /**
-     * P5-03: PDFs carrying scripts, launch actions or embedded files are refused (staff open them in desktop
-     * readers from the email attachments). Name tokens written with #xx escapes are decoded first.
-     * Content hidden inside compressed object streams is not inspected (defence in depth only).
-     */
+    /** P5-03 / P5-09 / P5-10: structural active-content scan (see PdfActiveContentScanner). */
     public static function hasActiveContent(UploadedFile $file): bool
     {
-        $bytes = (string) @file_get_contents((string) $file->getRealPath());
-        $bytes = (string) preg_replace_callback('/#([0-9A-Fa-f]{2})/', fn ($m) => chr((int) hexdec($m[1])), $bytes);
-
-        return preg_match('~/(JavaScript|JS|Launch|EmbeddedFiles?|RichMedia)(?![A-Za-z0-9])~', $bytes) === 1;
+        return PdfActiveContentScanner::hasActiveContent((string) @file_get_contents((string) $file->getRealPath()));
     }
 
     public function store(User $user, UploadedFile $file): WeeklyReportSubmission

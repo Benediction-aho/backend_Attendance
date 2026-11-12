@@ -122,3 +122,11 @@ Fix: skip the content between `stream` and `endstream` when scanning (scan only 
 U+0080–U+009F (e.g. U+0085 NEL) are accepted and stored; `?x=%00` alone passes because TrimStrings/ConvertEmptyStringsToNull turn it into null first (harmless). Optional: add `\x{80}-\x{9F}` with the `/u` flag.
 
 No Critical/High finding open for phase 5.
+
+## Fixes applied – round 2 (attendance-backend, 2026-11-12)
+
+Regression tests: `tests/Unit/PdfActiveContentScannerTest.php` (12 tests), C1 cases added to `tests/Feature/Reports/Phase5FixesTest.php`. Full suite 402/402, phpstan clean. `phase5_pdf_samples.py`: clean/fp → accepted; objstm/hex/uri → rejected.
+
+- **P5-09** – New `App\Domain\Reports\PdfActiveContentScanner`: scans only the object structure (bytes between `stream` and `endstream` skipped); `#xx` decoding applied to name tokens only. `fp.pdf` and 5 random 4 MB image PDFs are accepted.
+- **P5-10** – `/Type /ObjStm` + `/FlateDecode` streams are inflated (bounded to 20 MB total) and their objects indexed and scanned. Also rejected: `/XFA`, `/SubmitForm`, `/ImportData`, and `/OpenAction` or `/AA` resolving (inline or by reference, up to 3 levels) to `/S /URI` or `/S /Launch`. Plain `/Link` hyperlinks stay allowed. Remaining limitations (documented in the class): other filters / predictors on object streams not inflated, encrypted PDFs not decrypted, malformed files repaired by readers may hide content. Main defence remains attachment-only delivery + sandbox CSP + nosniff.
+- **P5-11** – `RejectControlCharacters` now also rejects C1 controls U+0080–U+009F (`/u` pattern; a non-UTF-8 string is rejected as well). Tab/LF/CR, NBSP, accents, symbols unaffected. Lone `?x=%00` still becomes null via TrimStrings (harmless, accepted).
