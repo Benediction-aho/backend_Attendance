@@ -3,6 +3,7 @@
 use App\Models\Device;
 use App\Models\User;
 use Illuminate\Foundation\Testing\RefreshDatabase;
+use Illuminate\Support\Carbon;
 use Tests\TestCase;
 
 pest()->extend(TestCase::class)
@@ -30,4 +31,17 @@ function deviceToken(User $user, string $deviceId = 'device-test-0000000001'): s
 function loginPayload(string $email, string $password, string $deviceId = 'device-test-0000000001'): array
 {
     return ['email' => $email, 'password' => $password, 'device_id' => $deviceId, 'device_name' => 'Test phone'];
+}
+
+/**
+ * Fails sign-in through the three series (5 / 5 / 5), waiting out each block with the test clock.
+ */
+function exhaustLogins(object $test, string $email, string $deviceId = 'device-test-0000000001', int $series = 3): void
+{
+    for ($s = 0; $s < $series; $s++) {
+        for ($i = 0; $i < 5; $i++) {
+            $test->postJson('/api/auth/login', loginPayload($email, 'wrong-secret-'.$i, $deviceId));
+        }
+        Carbon::setTestNow(Carbon::now()->addMinutes(21));
+    }
 }
