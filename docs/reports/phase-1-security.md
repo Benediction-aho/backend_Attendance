@@ -110,20 +110,25 @@ No Critical or High finding. 3 Medium, 6 Low, 5 Info.
 
 | ID | Title | Severity | Status |
 |---|---|---|---|
-| P1-01 | Lockout / IP limit / sign-up throttle race (check-then-act) | Medium | Open |
-| P1-02 | Login timing oracle (double bcrypt on dummy path) | Medium | Open |
-| P1-03 | Current-password checks not rate limited | Medium | Open |
-| P1-04 | Unauthenticated request without `Accept` → 500 + log flooding | Low | Open |
-| P1-05 | Super admin OTP quota exhaustion / code cancellation | Low | Open |
-| P1-06 | Email change enumeration and email flooding | Low | Open |
-| P1-07 | Append-only log bypass by the app DB role (TRUNCATE, session flag, owner) | Low | Open |
-| P1-08 | Append-only trigger breaks `ON DELETE SET NULL` | Low | Open |
-| P1-09 | Monthly report recipients: any user accepted, list cannot be emptied | Low | Open |
-| P1-10 | Per-IP limit blocks the shared office IP | Info | – |
-| P1-11 | `view_logs` admins see super admin events | Info | Owner decision |
-| P1-12 | Whole-account lock never triggered by external attacker (Q2) | Info | Owner decision |
-| P1-13 | Photos not re-encoded (EXIF/polyglot) | Info | – |
-| P1-14 | Sign-up timing difference | Info | – |
+| P1-01 | Lockout / IP limit / sign-up throttle race (check-then-act) | Medium | Fixed (residual: see P1-18) |
+| P1-02 | Login timing oracle (double bcrypt on dummy path) | Medium | Fixed |
+| P1-03 | Current-password checks not rate limited | Medium | Fixed (see P1-19) |
+| P1-04 | Unauthenticated request without `Accept` → 500 + log flooding | Low | Fixed |
+| P1-05 | Super admin OTP quota exhaustion / code cancellation | Low | Partially fixed (see P1-16, P1-17) |
+| P1-06 | Email change enumeration and email flooding | Low | Fixed |
+| P1-07 | Append-only log bypass by the app DB role (TRUNCATE, session flag, owner) | Low | Still open (see P1-15) |
+| P1-08 | Append-only trigger breaks `ON DELETE SET NULL` | Low | Fixed |
+| P1-09 | Monthly report recipients: any user accepted, list cannot be emptied | Low | Fixed |
+| P1-10 | Per-IP limit blocks the shared office IP | Info | Fixed |
+| P1-11 | `view_logs` admins see super admin events | Info | Fixed |
+| P1-12 | Whole-account lock never triggered by external attacker (Q2) | Info | Owner decision (unchanged) |
+| P1-13 | Photos not re-encoded (EXIF/polyglot) | Info | Fixed |
+| P1-14 | Sign-up timing difference | Info | Accepted |
+| P1-15 | Runtime DB role can erase the whole log through `purge_activity_logs(cutoff)` | Low | Open (new) |
+| P1-16 | Super admin sign-in can still be denied with 3 source IPs (max active codes) | Low | Open (new) |
+| P1-17 | Other valid super admin codes survive a successful sign-in | Low | Open (new) |
+| P1-18 | `RateLimiter::hit` on the database cache store loses hits when a key is created under burst | Low | Open (new) |
+| P1-19 | Re-auth block signs out the owner's other sessions that try during the block | Info | Open (new) |
 
 ## Passed checks
 **Phase 0 re-test:** P0-02, P0-03 and P0-04 are fixed (see `phase-0-security.md`).
@@ -188,3 +193,74 @@ No Critical or High finding. 3 Medium, 6 Low, 5 Info.
 | P1-13 | `ImageSanitizer`: GD decode + re-encode (EXIF orientation applied), resized to `photo_max_dimension_px` (1024). | `ProfileTest`: EXIF text and appended PHP gone, 2000×1500 → 1024×768 |
 | P1-14 | Accepted (Info): 5 requests/hour/IP and queued mail online make the gap impractical. | – |
 
+
+## Re-test (backend-security-tester, 2026-11-12, commit `4e1341f`)
+
+Environment: local only. `php -S 127.0.0.1:8181` (`PHP_CLI_SERVER_WORKERS=16`, run from `public/`), `APP_ENV=production APP_DEBUG=false QUEUE_CONNECTION=sync MAIL_MAILER=log`; local database `attendance` (test accounts reset in place, ids 1/2/3/4/5/6 = sa1/adm0/admfull/emp1/emp2/sa2). Source IPs other than 127.0.0.1 were simulated with `curl --interface 127.0.0.x`. Note: `php artisan serve` on this host started only **one** worker even with `PHP_CLI_SERVER_WORKERS=16` (all bcrypt checks serialised, p50 15 s); always measure with `php -S` directly.
+
+Result: **no Critical/High/Medium finding open.** 11 of the 13 re-tested findings are fixed. P1-07 is still open through a new path (P1-15). P1-05 is only partly fixed (P1-16, P1-17). There are 4 new Low findings and 1 new Info finding.
+
+### Re-test of P1-01 … P1-13
+| ID | Result | Evidence |
+|---|---|---|
+| P1-01 | **Fixed** | `race_login.sh emp2@test.local 60` → 4 × 401 + 56 × 429 (5 secrets checked, series 1, 10 min). After fast-forward: 40 parallel → 4 × 401, series 2, **20 min**. Then 4 × 401, series 3 → locked (423). No stage skipped. `burst.sh /auth/login` (200 unknown emails) → exactly 60 × 401 / 140 × 429 (limit 60). `burst.sh /auth/register` 100 parallel → 5 × 202, 5 accounts (4 runs of 60 → 5 each time). 40 parallel wrong `current_password` → 4 × 422 + 1 sign-out; the rest got 429/401. Residual: P1-18. |
+| P1-02 | **Fixed** | `timing_login.sh`: employee known 0.241 s / unknown 0.239 s; super admin without code 0.240 s / unknown 0.253 s. OTP request known 0.240 s / unknown 0.231 s. |
+| P1-03 | **Fixed** | `POST /me/email` with 5 wrong passwords → 4 × 422, then `401 reauth_limit`, token revoked, `auth.reauth_limit` (critical), alert email. During the block, the correct password from another session → 429 (see P1-19). |
+| P1-04 | **Fixed** | `curl /api/me`, `/api/admin/users`, bad token, `Accept: text/html` → JSON 401. No `server.error` row. |
+| P1-05 | **Partly fixed** | A stranger on another IP no longer uses up the owner's quota or cancels the owner's code. The owner's own re-request still works while 2 stranger codes are active. Still possible: P1-16. 100 parallel requests from one IP → only 1 code remains valid (same-IP cancel). |
+| P1-06 | **Fixed** | Existing address (also `SA1@…` with a space) → the same 202, nothing sent. 3 requests/hour, then 429 (unavailable addresses count the same way, so the counter cannot be used to enumerate). `victim@` got 1 email for 5 requests. |
+| P1-07 | **Still open** | As `attendance_app_test` (grants from the migration applied in a rolled-back transaction): DELETE → permission denied, the flag + DELETE → permission denied, TRUNCATE → permission denied (and refused by the trigger even for the owner), DROP TRIGGER → must be owner, CREATE TABLE → denied. **But** `SELECT purge_activity_logs('infinity')` deleted all 477 rows: see P1-15. |
+| P1-08 | **Fixed** | `DELETE FROM devices …` and `DELETE FROM users WHERE id=14` succeed, and the log rows keep their ids. No FK on `activity_logs`. |
+| P1-09 | **Fixed** | `[4]` (employee), `[7]` (deleted), `[99999]`, `[5,5]` → 422. `[2]`, `[1,3]`, `[]` → 200. Phase 6 must still re-check recipients when sending (a recipient can be demoted later). |
+| P1-10 | **Fixed** | After 60 failures from unknown emails: a known device with the correct password → 200, a known device with a wrong password → 401 (not IP-limited), a new device → 429 `ip_limited`. |
+| P1-11 | **Fixed** | `admfull` (`view_logs`): 0 entries for user 1/6 with `user_id`, `q` and `per_page=200` filters. A super admin sees them. |
+| P1-12 | Unchanged | Owner decision Q2. |
+| P1-13 | **Fixed** | 2000×1500 PNG → 1024 px. PNG + appended PHP → served without the payload. 20000×20000 decompression bomb → 422 (dimension rule). 8000×8000 → re-encoded in under 128 MB. |
+
+Authorization matrix (`authz_matrix.sh`): **68/68 passed** again. Multiple super admin codes: each is single use (replay → 401).
+
+### P1-15 – The runtime DB role can erase the whole activity log through `purge_activity_logs(cutoff)` — **Low**
+- File: `database/migrations/2026_11_13_100000_harden_activity_logs.php`.
+- Cause: the `SECURITY DEFINER` function takes any cutoff from the caller, and `DB_APP_ROLE` gets `EXECUTE` on it.
+- Repro (local, as the owner `attendance`):
+  ```sql
+  BEGIN;
+  GRANT USAGE ON SCHEMA public TO attendance_app_test;
+  GRANT SELECT, INSERT, UPDATE, DELETE ON ALL TABLES IN SCHEMA public TO attendance_app_test;
+  REVOKE UPDATE, DELETE, TRUNCATE ON activity_logs FROM attendance_app_test;
+  GRANT EXECUTE ON FUNCTION purge_activity_logs(timestamptz) TO attendance_app_test;
+  SET ROLE attendance_app_test;
+  SELECT purge_activity_logs('infinity');   -- 477
+  RESET ROLE; SELECT count(*) FROM activity_logs;  -- 0
+  ROLLBACK;
+  ```
+- Expected: the runtime role cannot delete recent entries. The goal of P1-07 (an attacker with SQL as the app cannot erase their traces) is not met.
+- Fix: enforce a floor inside the function, e.g. `cutoff := LEAST(cutoff, now() - interval '1 month')` (the minimum of `log_retention_months`). Do not read the floor from `settings`, because the runtime role can UPDATE that table. Better: do not grant EXECUTE to the runtime role, and run the purge command on the `pgsql_owner` connection. Add a test as `attendance_app_test`: `purge_activity_logs(now())` must not delete entries younger than the floor.
+
+### P1-16 – Super admin sign-in can still be denied by a stranger with 3 source IPs — **Low**
+- File: `app/Services/Auth/SuperAdminCodeService.php` (`request`, `otp_max_active_codes`).
+- Repro: `curl --interface 127.0.0.2|3|4 -X POST /api/auth/super-admin/code -d '{"email":"sa2@test.local"}'`, then the owner from 127.0.0.9 → 202, but no code is created and no email is sent (`auth.login_code_throttled`). This repeats every `otp_ttl_minutes` (10 min) with 3 requests. IPv6 /64 or proxies make 3 IPs free.
+- Expected: a stranger cannot prevent the owner from receiving a code.
+- Fix: when the cap is reached, invalidate the oldest code from another IP instead of refusing the new one. Or keep a reserved slot per (account, IP), or count the cap per IP. Alert the super admin when codes are requested from several IPs.
+
+### P1-17 – Other valid super admin codes survive a successful sign-in — **Low**
+- Repro: 3 codes from 3 IPs. Sign in with code 1 → 200. Code 2 → 200, code 3 → 200 (until expiry).
+- Expected: once the owner has signed in, the other outstanding codes are no longer useful and should be invalidated (smaller window if a mailbox or a forwarded email leaks).
+- Fix: in the successful OTP path, set `used_at` on every active `super_admin_login` code of the user.
+
+### P1-18 – `RateLimiter::hit` on the database cache store loses hits when a key is created under burst — **Low**
+- Files: `app/Services/AtomicLimiter.php`. Laravel `RateLimiter::increment` + `DatabaseStore::add/increment`.
+- Repro: `burst.sh /auth/super-admin/code '{"email":"sa2@test.local"}' 100` with the cache emptied, 7 runs → 7, 5, 5, 5, 5, 6, 5 codes created (limit 5/hour per account+IP). Sign-up and the IP limit stayed exact in my runs, but they use the same code path.
+- Cause: when the key does not exist yet, concurrent requests get `add() = false` (the row is being inserted by another transaction), then `increment()` returns `false` because it cannot see the row yet. `(int) false = 0 ≤ max`, so the request passes **without being counted**.
+- Fix: in `AtomicLimiter::hit`, treat `hits < 1` as over the limit (or retry once). Or use an atomic SQL upsert (`INSERT … ON CONFLICT (key) DO UPDATE SET value = value + 1 RETURNING value`) or Redis `INCR`. Add a test that simulates `increment()` returning false.
+
+### P1-19 – Re-auth block signs out the owner's other sessions — **Info**
+- File: `app/Services/Auth/CurrentPasswordGuard.php` (`signOut` on the `refused` path).
+- Repro: a stolen session enters 5 wrong current passwords (it is signed out, which is correct). During the following 10 minutes, the real owner, on their own phone, changes their password with the **correct** current password → `429 login_blocked` and that session is also deleted (`GET /me` → 401). It is only a nuisance (the owner can sign in again), but it blocks the owner from changing their password exactly when they need to after an intrusion.
+- Suggestion: on the `refused` path, return 429 without deleting the token (it is not the session that made the wrong guesses). Or key the re-auth bucket per token/device instead of per user. An unlock by an admin already clears the bucket.
+
+### Passed in the re-test (no regression)
+- Lockout 5/5/5 under concurrency with exact 10 / 20 min / lock stages. Known devices are exempt from the per-IP limit, but their own device bucket still counts. Successful sign-ins give back the IP reservation.
+- OTP brute force through `/auth/login` (40 parallel) → 4 × 401 + block. Multiple codes: lookup by HMAC, single use, no timing difference.
+- Production mode: no stack traces, `/.env` → 404, no `X-Powered-By`.
+- Photo re-encoding and the dimension limit hold against decompression bombs.
