@@ -130,3 +130,37 @@ Regression tests: `tests/Unit/PdfActiveContentScannerTest.php` (12 tests), C1 ca
 - **P5-09** – New `App\Domain\Reports\PdfActiveContentScanner`: scans only the object structure (bytes between `stream` and `endstream` skipped); `#xx` decoding applied to name tokens only. `fp.pdf` and 5 random 4 MB image PDFs are accepted.
 - **P5-10** – `/Type /ObjStm` + `/FlateDecode` streams are inflated (bounded to 20 MB total) and their objects indexed and scanned. Also rejected: `/XFA`, `/SubmitForm`, `/ImportData`, and `/OpenAction` or `/AA` resolving (inline or by reference, up to 3 levels) to `/S /URI` or `/S /Launch`. Plain `/Link` hyperlinks stay allowed. Remaining limitations (documented in the class): other filters / predictors on object streams not inflated, encrypted PDFs not decrypted, malformed files repaired by readers may hide content. Main defence remains attachment-only delivery + sandbox CSP + nosniff.
 - **P5-11** – `RejectControlCharacters` now also rejects C1 controls U+0080–U+009F (`/u` pattern; a non-UTF-8 string is rejected as well). Tab/LF/CR, NBSP, accents, symbols unaffected. Lone `?x=%00` still becomes null via TrimStrings (harmless, accepted).
+
+## Re-test – round 2 (backend-security-tester, 2026-11-12)
+
+Setup: local production-mode server on `attendance_sec5` (`APP_DEBUG=false`, `MAIL_MAILER=log`, upload limit raised to 20 MB through a scratch `PHP_INI_SCAN_DIR`). All uploads go to `POST /api/me/reports/weekly/submission`. The window is closed right now, so `window_not_open` means the file **passed** the active-content scan (the scan runs first), and `pdf_active_content` means it was rejected. Samples: `tests/security/phase5_pdf_samples.py` and the new `tests/security/phase5_pdf_bypass_r2.py OUTDIR`.
+
+| Sample | Result | Expected |
+|---|---|---|
+| clean, fp, link (`/Link` + `/URI` hyperlink) | accepted | accepted |
+| 5 × 4 MB random DCT images + 5 × 3 MB random Flate streams | **10/10 accepted** (no false positives) | accepted |
+| objstm (Flate), hex names, uri/XFA, `/Names/JavaScript`, incremental update adding JS, broken/missing xref | rejected | rejected |
+| objstm with PNG predictor (filter rows 0) | rejected | rejected |
+| `objstm_hex.pdf` (ObjStm `/ASCIIHexDecode`) | **accepted** | rejected |
+| `objstm_a85flate.pdf` (ObjStm `[/ASCII85Decode /FlateDecode]`) | **accepted** | rejected |
+| `string_stream.pdf` / `string_stream2.pdf` (literal string `(en stream\n)` in the Catalog, followed by `/OpenAction<</S/JavaScript/JS(...)>>`) | **accepted** | rejected |
+| `chain5.pdf` / `chain_next.pdf` (OpenAction → 4–5 levels of references / `/Next` → `/S /URI`) | **accepted** | rejected |
+
+- **P5-09 – Fixed.** No false positives on 10 large random-binary PDFs or on the earlier `fp.pdf`.
+- **P5-10 – Partly fixed; still open as P5-12 / P5-13 (see below).** Flate object streams, hex names, incremental updates and broken xref are now caught.
+- **P5-11 – Fixed.** U+0080, U+0085 (mid-string) and U+009F return `invalid_characters`. Accents, €, em dash, emoji, CJK, tab/LF pass through (tab/LF become spaces; NBSP becomes a normal space; a trailing U+0085 gets trimmed by TrimStrings, which is harmless). Invalid UTF-8 JSON is rejected with 422.
+
+**P5-12 – Scanner hides dictionary content after the word `stream` inside a string literal** – Medium – `PdfActiveContentScanner::collect`
+Reproduce: `python3 tests/security/phase5_pdf_bypass_r2.py /tmp/x` and upload `/tmp/x/string_stream.pdf`. The Catalog is `<</Type/Catalog/Pages 2 0 R/Lang (en stream\n) /OpenAction<</S/JavaScript/JS(app.alert(1))>>>>`. The regex `(?<![A-Za-z])stream\r?\n` matches inside the string, so everything up to the next `endstream` (or to the end of the file, if there is none) is skipped as "stream data". A reader parses the string correctly and runs the OpenAction JavaScript. This needs no compression and no file repair, which makes it the easiest bypass.
+Fix: treat `stream` as a stream keyword only when it directly follows the `>>` that closes an object dictionary (e.g. `>>\s*stream\r?\n` inside an `N G obj`). Better still, use the dictionary's `/Length` to skip the data, and fall back to `endstream` only when `/Length` is an indirect reference or invalid. Alternatively, strip literal and hex strings, with balanced parentheses and escapes, before looking for stream keywords. Fail closed if any `stream` keyword is not preceded by `>>`.
+
+**P5-13 – Object streams with non-Flate filters, and reference chains deeper than 3** – Low – same file
+`objstm_hex.pdf` and `objstm_a85flate.pdf` hide `/JS` inside an ObjStm encoded with ASCIIHex or ASCII85 (+Flate). `chain5.pdf` and `chain_next.pdf` reach `/S /URI` at depth 4–5. Fix: fail closed. Reject any `/Type /ObjStm` whose filter list is not exactly `/FlateDecode`, or decode ASCIIHex/ASCII85 too (both are trivial). Reject PDFs with any unsupported or undecodable ObjStm. Follow references with a visited set instead of a fixed depth, bounded by object count rather than depth, and follow `/Next` too.
+
+| ID | Severity | Status |
+|---|---|---|
+| P5-09 | Medium | Fixed |
+| P5-10 | Low | Partly fixed → P5-12, P5-13 |
+| P5-11 | Info | Fixed |
+| P5-12 | Medium | Open |
+| P5-13 | Low | Open |
