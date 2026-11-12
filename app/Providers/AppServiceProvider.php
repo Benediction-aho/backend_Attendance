@@ -7,9 +7,12 @@ use App\Models\User;
 use App\Settings\SettingsService;
 use Illuminate\Cache\RateLimiting\Limit;
 use Illuminate\Http\Request;
+use Illuminate\Support\Carbon;
 use Illuminate\Support\Facades\Gate;
 use Illuminate\Support\Facades\RateLimiter;
 use Illuminate\Support\ServiceProvider;
+use Laravel\Sanctum\PersonalAccessToken;
+use Laravel\Sanctum\Sanctum;
 
 class AppServiceProvider extends ServiceProvider
 {
@@ -37,6 +40,22 @@ class AppServiceProvider extends ServiceProvider
         RateLimiter::for('signup', fn (Request $request) => Limit::perHour(app(SettingsService::class)->int('signup_requests_per_hour'))
             ->by('signup:'.$request->ip())
             ->response(fn () => response()->json(['message' => 'Too many requests. Please try again later.'], 429)));
+
+        // Sliding device sessions (FIABILITE B3): a token unused for longer than the idle period stops working.
+        // Checked before Sanctum refreshes last_used_at.
+        Sanctum::authenticateAccessTokensUsing(function (PersonalAccessToken $token, bool $isValid): bool {
+            if (! $isValid) {
+                return false;
+            }
+            $lastUsed = $token->last_used_at ?? $token->created_at;
+            if ($lastUsed !== null && $lastUsed->lt(Carbon::now()->subDays(app(SettingsService::class)->int('session_idle_days')))) {
+                $token->delete();
+
+                return false;
+            }
+
+            return true;
+        });
 
         Gate::define('super-admin', fn (User $user) => $user->isSuperAdmin());
         Gate::define('permission', fn (User $user, string $permission) => $user->hasPermission(Permission::from($permission)));
