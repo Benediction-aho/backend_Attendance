@@ -41,6 +41,7 @@ class AppServiceProvider extends ServiceProvider
             return Limit::perMinute(app(SettingsService::class)->int('api_requests_per_minute'))
                 ->by($user instanceof User ? 'user:'.$user->id : 'ip:'.$request->ip());
         });
+        RateLimiter::for('client-errors', fn (Request $request) => Limit::perMinute(10)->by('client-errors:'.($request->user('sanctum')?->getAuthIdentifier() ?? $request->ip())));
         RateLimiter::for('signup', fn (Request $request) => Limit::perHour(app(SettingsService::class)->int('signup_requests_per_hour'))
             ->by('signup:'.$request->ip())
             ->response(fn () => response()->json(['message' => 'Too many requests. Please try again later.'], 429)));
@@ -62,6 +63,7 @@ class AppServiceProvider extends ServiceProvider
         });
 
         Gate::define('super-admin', fn (User $user) => $user->isSuperAdmin());
+        Gate::define('view-logs', fn (User $user) => $user->hasPermission(Permission::ViewLogs));
         Gate::define('permission', fn (User $user, string $permission) => $user->hasPermission(Permission::from($permission)));
     }
 }

@@ -1,8 +1,10 @@
 <?php
 
+use App\Http\Controllers\Admin\ActivityLogController;
 use App\Http\Controllers\Admin\SettingsController;
 use App\Http\Controllers\Admin\UserController;
 use App\Http\Controllers\Auth\AuthController;
+use App\Http\Controllers\ClientErrorController;
 use App\Http\Controllers\FileController;
 use App\Http\Controllers\HealthController;
 use App\Http\Controllers\MeController;
@@ -35,11 +37,15 @@ Route::middleware(['auth:sanctum', EnsureAccountUsable::class])->group(function 
     Route::delete('/me/photo', [ProfileController::class, 'deletePhoto'])->name('me.photo.destroy');
     Route::post('/me/email', [ProfileController::class, 'requestEmailChange'])->name('me.email');
 
+    Route::post('/client-errors', [ClientErrorController::class, 'store'])->middleware('throttle:client-errors')->name('client-errors.store');
+
     Route::get('/notifications', [NotificationController::class, 'index'])->name('notifications.index');
     Route::post('/notifications/read-all', [NotificationController::class, 'readAll'])->name('notifications.read-all');
     Route::post('/notifications/{id}/read', [NotificationController::class, 'read'])->whereUuid('id')->name('notifications.read');
 
     Route::prefix('admin')->group(function () {
+        Route::get('/activity-logs', [ActivityLogController::class, 'index'])->middleware('can:view-logs')->name('admin.activity-logs.index');
+
         // Authorization per action in UserPolicy (role + permission tier).
         Route::get('/permissions', [UserController::class, 'permissionCatalog'])->middleware('can:super-admin')->name('admin.permissions.index');
         Route::get('/users', [UserController::class, 'index'])->name('admin.users.index');

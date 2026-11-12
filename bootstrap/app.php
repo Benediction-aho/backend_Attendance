@@ -1,12 +1,20 @@
 <?php
 
+use App\Enums\LogLevel;
+use App\Enums\LogType;
 use App\Exceptions\ApiExceptionRenderer;
 use App\Http\Middleware\SecurityHeaders;
 use App\Http\Middleware\TrustProxies;
+use App\Models\User;
+use App\Services\ActivityLogger;
+use Illuminate\Auth\Access\AuthorizationException;
+use Illuminate\Auth\AuthenticationException;
 use Illuminate\Foundation\Application;
 use Illuminate\Foundation\Configuration\Exceptions;
 use Illuminate\Foundation\Configuration\Middleware;
 use Illuminate\Http\Request;
+use Illuminate\Validation\ValidationException;
+use Symfony\Component\HttpKernel\Exception\HttpExceptionInterface;
 
 return Application::configure(basePath: dirname(__DIR__))
     ->withRouting(
@@ -22,5 +30,24 @@ return Application::configure(basePath: dirname(__DIR__))
     ->withExceptions(function (Exceptions $exceptions): void {
         // API-only: every error is JSON, never an HTML page.
         $exceptions->shouldRenderJsonWhen(fn (Request $request) => true);
+        // Server errors are also recorded in the activity log, attached to the signed-in account (SPECS 9 bis).
+        $exceptions->report(function (Throwable $e) {
+            if ($e instanceof HttpExceptionInterface || $e instanceof ValidationException || $e instanceof AuthenticationException || $e instanceof AuthorizationException) {
+                return;
+            }
+            try {
+                $user = request()->user('sanctum');
+                app(ActivityLogger::class)->log(
+                    'server.error',
+                    'Server error: '.class_basename($e),
+                    LogType::Error,
+                    LogLevel::Error,
+                    $user instanceof User ? $user : null,
+                    context: ['exception' => $e::class, 'path' => request()->path()],
+                );
+            } catch (Throwable) {
+                // never let logging break error handling
+            }
+        });
         $exceptions->render(fn (Throwable $e, Request $request) => (new ApiExceptionRenderer)($e, $request));
     })->create();

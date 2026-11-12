@@ -7,6 +7,7 @@ use App\Enums\LogType;
 use App\Models\ActivityLog;
 use App\Models\User;
 use Illuminate\Http\Request;
+use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Str;
 use Throwable;
 
@@ -47,7 +48,8 @@ class ActivityLogger
                 'user_agent' => $request !== null ? Str::limit((string) $request->userAgent(), 500, '') : null,
             ]);
         } catch (Throwable $e) {
-            report($e);
+            // Not report(): that would try to write the activity log again.
+            Log::error('Activity log write failed', ['exception' => $e::class]);
 
             return null;
         }
