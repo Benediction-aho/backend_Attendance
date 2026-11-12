@@ -2,7 +2,7 @@
 openapi: 3.1.0
 info:
   title: Assistance Ghana Attendance API
-  version: 0.4.1
+  version: 0.5.0
   description: |
     Authentication: **Bearer device tokens only** (Sanctum personal access tokens, one per device).
     The API sets no cookie and has no CSRF/session endpoint. After login the client receives
@@ -834,6 +834,163 @@ paths:
       security: [{ deviceToken: [] }]
       responses:
         '200': { description: Removed }
+  /me/tasks:
+    get:
+      summary: Own tasks of a work date (default today, server time). Employees only; reading never needs the check-in.
+      security: [{ deviceToken: [] }]
+      parameters:
+        - { name: date, in: query, schema: { type: string, format: date } }
+      responses:
+        '200': { description: 'work_date, data: Task[]' }
+        '403': { description: employees_only }
+    post:
+      summary: Add a task for today (planned, or done at once with done=true). Needs today's check-in (403 checkin_required). The work date and completion time are set by the server.
+      security: [{ deviceToken: [] }]
+      requestBody:
+        content:
+          application/json:
+            schema: { type: object, required: [title], properties: { title: { type: string, maxLength: 500 }, done: { type: boolean } } }
+      responses:
+        '201': { description: 'data: Task' }
+        '403': { description: checkin_required | employees_only }
+        '422': { description: 'title_required | too_many_tasks (setting tasks_max_per_day) | validation' }
+  /me/tasks/{id}:
+    patch:
+      summary: Edit own task at any time (title, done true/false). done=true sets completed_at to the server time; false clears it. Recomputes an already generated daily report.
+      security: [{ deviceToken: [] }]
+      requestBody:
+        content:
+          application/json:
+            schema: { type: object, properties: { title: { type: string, maxLength: 500 }, done: { type: boolean } } }
+      responses:
+        '200': { description: 'data: Task' }
+        '403': { description: checkin_required }
+        '404': { description: not found or another user's task }
+    delete:
+      summary: Delete own task.
+      security: [{ deviceToken: [] }]
+      responses:
+        '204': { description: deleted }
+        '404': { description: not found }
+  /me/clients:
+    get:
+      summary: Own clients of a work date (default today) + services grouped by normalized key.
+      security: [{ deviceToken: [] }]
+      parameters:
+        - { name: date, in: query, schema: { type: string, format: date } }
+      responses:
+        '200': { description: 'work_date, data: Client[], services: ServiceTotal[]' }
+    post:
+      summary: Add a client won today. Needs today's check-in.
+      security: [{ deviceToken: [] }]
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [name, service, quantity]
+              properties:
+                name: { type: string, maxLength: 200 }
+                service: { type: string, maxLength: 200, description: 'Free text; extra spaces collapsed; grouped case-insensitively (service_key)' }
+                quantity: { type: integer, minimum: 1, description: 'max = setting client_quantity_max (999)' }
+      responses:
+        '201': { description: 'data: Client' }
+        '403': { description: checkin_required | employees_only }
+        '422': { description: 'name_required | service_required | too_many_clients | validation' }
+  /me/clients/{id}:
+    patch:
+      summary: Edit own client entry at any time (name, service, quantity).
+      security: [{ deviceToken: [] }]
+      responses:
+        '200': { description: 'data: Client' }
+        '404': { description: not found }
+    delete:
+      summary: Delete own client entry.
+      security: [{ deviceToken: [] }]
+      responses:
+        '204': { description: deleted }
+  /clients/services:
+    get:
+      summary: Service suggestions (services already entered by anyone, one spelling per key, most used first, max 20). Employees only.
+      security: [{ deviceToken: [] }]
+      parameters:
+        - { name: q, in: query, schema: { type: string, maxLength: 100 } }
+      responses:
+        '200': { description: 'data: [{service, service_key}]' }
+  /me/reports/daily:
+    get:
+      summary: Own daily report (live data) – tasks, counts, clients, services; generated_at once the 17:00 job ran.
+      security: [{ deviceToken: [] }]
+      parameters:
+        - { name: date, in: query, schema: { type: string, format: date } }
+      responses:
+        '200': { description: 'data: {work_date, tasks[], tasks_planned, tasks_done, clients[], clients_count, services: ServiceTotal[], generated_at}' }
+  /me/reports/weekly:
+    get:
+      summary: Own weekly summary Monday → Friday of the week containing `date` (default today), with the clients recap.
+      security: [{ deviceToken: [] }]
+      parameters:
+        - { name: date, in: query, schema: { type: string, format: date } }
+      responses:
+        '200': { description: 'data: {week_start, week_end, days[{work_date, tasks_planned, tasks_done, clients_count, services}], tasks_planned, tasks_done, clients_count, clients[{work_date, name, service, quantity}], services}' }
+  /me/reports/weekly/submission:
+    get:
+      summary: Weekly PDF status – week an upload now belongs to, window, personal deadline (grace when absent on the report day), versions.
+      security: [{ deviceToken: [] }]
+      responses:
+        '200': { description: 'data: {can_submit, week_start, window_date, opens_at, closes_at, deadline, is_late_now, expected, max_size_mb, current: WeeklySubmission|null, versions: WeeklySubmission[]}' }
+    post:
+      summary: |
+        Upload (or replace) the weekly PDF (multipart field `file`). PDF only (magic bytes), max report_pdf_max_mb (10 MB).
+        Accepted from the report day's window opening (Friday 16:00); before that, only for the previous week if it has no report yet.
+        After the deadline the version is flagged is_late; anything received after Friday 17:00 is forwarded to the authorized staff at once.
+        Each upload is a new version; previous files are kept. Needs today's check-in on expected days.
+      security: [{ deviceToken: [] }]
+      requestBody:
+        content:
+          multipart/form-data:
+            schema: { type: object, required: [file], properties: { file: { type: string, format: binary } } }
+      responses:
+        '201': { description: 'data: WeeklySubmission' }
+        '403': { description: checkin_required | employees_only }
+        '422': { description: 'invalid_pdf | window_not_open (opens_at) | too_many_versions | validation (size)' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+  /admin/reports/daily:
+    get:
+      summary: Daily reports of active employees (or one user_id). Tier view_reports; `tasks` only with view_tasks, `clients` only with view_clients.
+      security: [{ deviceToken: [] }]
+      parameters:
+        - { name: date, in: query, schema: { type: string, format: date } }
+        - { name: user_id, in: query, schema: { type: integer } }
+      responses:
+        '200': { description: 'work_date, data: [{user, day_status, generated_at, tasks_planned, tasks_done, clients_count, services, tasks?, clients?}]' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+  /admin/users/{id}/reports/weekly:
+    get:
+      summary: Weekly summary of an employee. Tier view_reports (`clients` recap only with view_clients).
+      security: [{ deviceToken: [] }]
+      parameters:
+        - { name: date, in: query, schema: { type: string, format: date } }
+      responses:
+        '200': { description: 'user, data (same as /me/reports/weekly)' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+  /admin/reports/weekly:
+    get:
+      summary: Weekly PDF window of the week containing `date` – expected employees, who sent, current PDFs. Tier view_reports or receive_weekly_reports.
+      security: [{ deviceToken: [] }]
+      parameters:
+        - { name: date, in: query, schema: { type: string, format: date } }
+      responses:
+        '200': { description: 'week_start, window_date, opens_at, closes_at, expected_count, received_count, data: [{user, expected, submission: WeeklySubmission|null}]' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+  /admin/reports/weekly/submissions/{id}:
+    get:
+      summary: One weekly PDF with all versions (temporary file URLs) and the employee's clients of the week. Tier view_reports or receive_weekly_reports. Linked from the notifications/emails.
+      security: [{ deviceToken: [] }]
+      responses:
+        '200': { description: 'data: WeeklySubmission + user + versions[] + week {clients_count, services, clients}' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { description: not found }
 components:
   securitySchemes:
     deviceToken:
@@ -859,6 +1016,47 @@ components:
       description: Rate limited or temporarily blocked. `retry_after_seconds` may be present.
       content: { application/json: { schema: { $ref: '#/components/schemas/Error' } } }
   schemas:
+    Task:
+      type: object
+      properties:
+        id: { type: integer }
+        work_date: { type: string, format: date }
+        title: { type: string }
+        status: { type: string, enum: [planned, done] }
+        completed_at: { type: [string, 'null'], format: date-time }
+        created_at: { type: string, format: date-time }
+        updated_at: { type: string, format: date-time }
+    Client:
+      type: object
+      properties:
+        id: { type: integer }
+        work_date: { type: string, format: date }
+        name: { type: string }
+        service: { type: string }
+        service_key: { type: string }
+        quantity: { type: integer }
+        created_at: { type: string, format: date-time }
+        updated_at: { type: string, format: date-time }
+    ServiceTotal:
+      type: object
+      properties:
+        service: { type: string, description: most used spelling }
+        service_key: { type: string }
+        quantity: { type: integer }
+    WeeklySubmission:
+      type: object
+      properties:
+        id: { type: integer }
+        week_start: { type: string, format: date }
+        window_date: { type: string, format: date }
+        version: { type: integer }
+        is_current: { type: boolean }
+        file_name: { type: string }
+        size_bytes: { type: integer }
+        submitted_at: { type: string, format: date-time }
+        is_late: { type: boolean }
+        forwarded_at: { type: [string, 'null'], format: date-time }
+        file_url: { type: string, description: 'temporary URL (file_url_ttl_minutes)' }
     User:
       description: Fields depend on the caller. Personal fields only for the user and account managers; admin fields only for administrators; must_change_password only for oneself.
       type: object

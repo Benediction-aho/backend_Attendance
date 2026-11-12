@@ -3,7 +3,27 @@
 Updated by the agents at the end of every work session.
 
 ## Current phase
-**Phase 4 – PWA, Face ID, notifications: backend done – ready for backend-security-tester** (focus below). Phase 3 backend: fixes re-tested, no Critical/High open (P3-04 is addressed by phase 4).
+**Phase 5 – Tasks, clients and reports: backend done – ready for backend-security-tester** (focus below). Phase 4 backend: no open finding.
+
+### Phase 5 backend – what exists (2026-11-12)
+- **Schema** (reversible migration `2026_11_19_100000_create_reports_tables`): `tasks` (planned/done, `completed_at` = server time, CHECK done ⇔ completed_at), `clients` (name, free-text `service` with collapsed spaces, `service_key` = lower-case normalized grouping key, quantity ≥ 1), `daily_reports` (unique user/date snapshot, services JSON, `recomputed_at`), `weekly_report_submissions` (versions, unique `(user, week, version)`, partial unique "one current", sha256, `is_late`, `forwarded_at`), `monthly_reports` (unique month, private PDF path), `report_deliveries` (unique kind/ref/user per-recipient record).
+- **Tasks / clients** (`/me/tasks`, `/me/clients`, employees only): reading never needs the check-in; every write is behind `checked-in` (P3-06) + `throttle:attendance`. Created for today's server work date; editable/deletable at any time (other users' rows → 404). Caps: `tasks_max_per_day` (100), `clients_max_per_day` (200), `client_quantity_max` (999). Service suggestions `GET /clients/services?q=` (all employees' services, one spelling per key, most used first; LIKE wildcards escaped).
+- **Daily report** (`reports:daily`, every minute, run key per date, catch-up `report_catchup_days` = 7): at `daily_report_time` (17:00) a snapshot per active employee expected that day (from the account creation date) or with data; any later edit recomputes an existing snapshot. API views are always computed from live data.
+- **Weekly summary** Monday → Friday with clients recap (`/me/reports/weekly`, admin `/admin/users/{id}/reports/weekly`).
+- **Weekly PDF** (`/me/reports/weekly/submission` GET status / POST multipart `file`): PDF magic bytes (client type ignored), max `report_pdf_max_mb`, private disk, server-generated path, versions kept (max `weekly_report_max_versions` = 10), row lock per user. Window: report day `weekly_window_day` (Friday) `weekly_window_start` → `weekly_window_end`. Before the window opens an upload goes to the previous week only if that week has no report yet (and the account existed then), else 422 `window_not_open`. Late = after the personal deadline; deadline = Friday 17:00, or – when absent on Friday (not expected: leave/day off/holiday; or, setting `weekly_absent_friday_grace`, expected but no check-in) – 17:00 (window end time) of the next expected day. Anything received after the Friday close is forwarded at once (`ForwardWeeklySubmission` job: in-app + email, per-recipient records).
+- **Reminder** `reports:weekly-reminder` at `weekly_reminder_time` (16:30) to expected employees without a submission (in-app + push), once per Friday, caught up until 17:00 only, per-recipient `reminder_deliveries`.
+- **Close** `reports:weekly-close` at 17:00: "N of M received" + names missing, in-app + email to super admins and `receive_weekly_reports` admins (even if nobody sent); each employee's clients of the week in the email; PDFs attached while the total ≤ `email_attachments_max_mb` (30), otherwise the email points to the reports in the application (sign-in required – no bearer links in emails). Catch-up 7 days, never twice.
+- **Monthly** `reports:monthly` on `monthly_report_day` (26) at `monthly_report_time` (19:00): period 26th previous month → 26th current month inclusive; DomPDF view `resources/views/pdf/monthly.blade.php` reproducing the template in English (blue "ASSISTANCE GHANA" / orange "by GIMA Services", title, 4 columns, late count red, "02"/"-", one service per line "02 Residence Permit", footer); file `Rapport_de_performance_<Mois>_<Année>.pdf` (French month of sending, no accents: Fevrier, Aout, Decembre); stored privately; emailed (attachment) only to active super admins + active admins listed in `monthly_report_recipient_ids`; in-app notice `monthly_report_emailed`. Not visible in the app. Catch-up 7 days, per-recipient records.
+- **Admin views**: `GET /admin/reports/daily` (view_reports; task titles with view_tasks, client names with view_clients), `GET /admin/reports/weekly` and `GET /admin/reports/weekly/submissions/{id}` (view_reports **or** receive_weekly_reports; authorization before lookup; temporary signed URLs).
+- **Notification kinds** (in-app + push copy): `weekly_report_reminder` (path `/reports/weekly`), `weekly_close` (`/admin/reports/weekly?date=`), `weekly_forward` (`/admin/reports/weekly/submissions/{id}`), `monthly_report_emailed`.
+- **Libraries**: `barryvdh/laravel-dompdf` 3.1 (DomPDF), dev `smalot/pdfparser` (PDF text checks in tests).
+- **Tests** (`tests/Feature/Reports`, frozen clock): 16:59:59 / 17:00 / 17:00:01 boundaries, 15:59:59 window, 16:29:59 / 16:30 / 17:00 reminder, 18:59:59 / 19:00 monthly, catch-up and "never twice", failed recipient retry, grace (leave, no check-in, setting off), versions cap, abuse (HTML renamed .pdf, MZ header, empty, oversize, path traversal name, tampered/expired URL), tiers per endpoint, PDF text content parsed. **Pest 380 green, Larastan 0 errors, Pint clean, migration rollback/migrate OK.**
+
+### For attendance-frontend (phase 5)
+Contract `docs/api/openapi.yaml` 0.5.0 (additive). Writes return 403 `checkin_required` before the check-in; send nothing time-related (work date and completion time are server-side). Use `GET /clients/services?q=` for the service autocomplete. Weekly upload: show `GET /me/reports/weekly/submission` (`can_submit`, `opens_at`, `deadline`, `is_late_now`, versions); `window_not_open` carries `opens_at`. Admin screens: notification paths above.
+
+### For backend-security-tester (phase 5 focus)
+Upload abuse (polyglot PDF/HTML, huge files, many versions, parallel uploads → version numbers), IDOR on tasks/clients/submissions, tier checks on the 4 admin endpoints and field filtering, signed file URLs, scheduler idempotency (parallel `reports:*` runs, failed recipient retry), monthly recipients (non-admin ids in the setting), late forwarding duplication, suggestion endpoint (LIKE injection, data exposure).
 
 ### Phase 4 security fixes + frontend requests (2026-11-12)
 - P4-01/02/03 (Low) fixed with regression tests – see `docs/reports/phase-4-security.md` "Fixes applied". Phase 4 backend: no open Critical/High/Medium/Low finding.
@@ -157,6 +177,13 @@ Phase 3 business questions (safe default implemented, configurable where possibl
 - **Q17 – Office GPS coordinates and holiday list** (owner input, PLAN §8): defaults 5.595223, -0.216703 in use; please provide the coordinates measured on site and the holiday list.
 - Note: `faceid_required` and `faceid_required_for_checkin` merged in phase 4 (one setting, default on).
 
+Phase 5 business questions (safe default implemented, configurable where possible):
+- **Q23 – "Absent on Friday"**: grace (submit on the next working day without being late) is given when the employee was not expected on Friday (leave, day off, holiday) and, by default, also when expected but without check-in (`weekly_absent_friday_grace`). The grace ends at the window end time (17:00) of the next expected day. Confirm both.
+- **Q24 – Weekly report recipients**: notifications/emails go to super admins + admins holding `receive_weekly_reports`; viewing in the dashboard is allowed with `view_reports` or `receive_weekly_reports`. Confirm.
+- **Q25 – Links instead of attachments (> 30 MB)**: the email points to each report in the application (sign-in required) rather than to bearer download links. Confirm.
+- **Q26 – Monthly PDF**: monthly "Clients" = number of client entries; "Client services" = sum of quantities per service; rows = active employees/interns + anyone with lateness or clients in the period, sorted by last name; French month names without accents in the file name (Fevrier, Aout, Decembre). Lateness counts every late check-in (rejected missions included, see Q15). Confirm.
+- **Q27 – Upload before the window**: a report cannot be sent before Friday 16:00 (except a missing report of the previous week). Should early uploads (e.g. Thursday) be allowed?
+
 Phase 4 business questions (safe default implemented, configurable):
 - **Q19 – First Face ID registration**: approved automatically (setting `faceid_first_device_auto_approve`); every later device (new phone, Face ID reset, revoked by the super admin) needs an `approve_faceid_devices` admin. Should the very first registration also be approved by an admin?
 - **Q20 – Push for every notification**: SPECS 8 lists push only for the 08:05 reminder and the Friday 16:30 reminder; the backend now pushes a copy of every in-app notification (setting `push_enabled` on/off for all). Confirm, or list the kinds that must stay in-app only.
@@ -182,6 +209,7 @@ Phase 1 business questions (safe default implemented, configurable where possibl
 _Not given yet._
 
 ## Log
+- 2026-11-12 – Phase 5 backend: tasks, clients (service suggestions), daily report 17:00, weekly summary, weekly PDF upload (window, versions, late forwarding, 16:30 reminder, 17:00 close), monthly PDF of the 26th (DomPDF, template in English). 380 tests green. Ready for backend-security-tester.
 - 2026-11-12 – Phase 4 backend: Face ID (WebAuthn passkeys: registration, admin approval of new devices, revoke, assertion bound to the check-in intent, required by default), Web Push (VAPID subscriptions, queued delivery, expired cleanup, push copy of every in-app notification). 326 tests green. Ready for backend-security-tester.
 - 2026-11-12 – Phase 2 UX backend fixes UX2-01, 02, 07, 08, 17, 18 (UX2-11 kept). 335 tests green.
 - 2026-11-12 – Phase 3 security fixes P3-01 (remote-days cap, next-day effect, admin notification), P3-02 (per-recipient reminder records, stale run takeover for all jobs), P3-03 (intent bound to device), P3-07 (escaping tests). 275 tests green. Ready for re-test.
