@@ -27,7 +27,8 @@ describe('work schedule (days off / remote days)', function () {
         Sanctum::actingAs($user);
         $this->getJson('/api/me/work-schedule')->assertOk()->assertJsonPath('selected', false)->assertJsonPath('max_days_off_per_week', 2);
         $this->postJson('/api/me/work-schedule', ['days_off' => [3], 'remote_days' => [5]])->assertCreated()
-            ->assertJsonPath('locked', true)->assertJsonPath('current.days_off', [3])->assertJsonPath('current.remote_days', [5]);
+            ->assertJsonPath('locked', true)->assertJsonPath('current', null)
+            ->assertJsonPath('upcoming.0.effective_from', '2026-11-17')->assertJsonPath('upcoming.0.days_off', [3])->assertJsonPath('upcoming.0.remote_days', [5]);
         $this->postJson('/api/me/work-schedule', ['days_off' => [2], 'remote_days' => []])->assertStatus(409)->assertJsonPath('code', 'schedule_locked');
         expect(WorkSchedule::query()->sole()->days_off)->toBe([3]);
     });

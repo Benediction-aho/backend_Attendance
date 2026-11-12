@@ -99,7 +99,8 @@ class AttendanceController
             'intent_id' => ['required', 'uuid'],
             'assertion' => ['nullable', 'array'],
         ]);
-        [$attendance, $created] = $this->service->confirm($this->user($request), $data['intent_id'], $data['assertion'] ?? null);
+        $deviceId = $request->attributes->get('device_id');
+        [$attendance, $created] = $this->service->confirm($this->user($request), $data['intent_id'], $data['assertion'] ?? null, is_int($deviceId) ? $deviceId : null);
 
         return response()->json(['data' => $this->presenter->forEmployee($attendance), 'created' => $created], $created ? 201 : 200);
     }

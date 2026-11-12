@@ -10,11 +10,14 @@ use App\Enums\Role;
 use App\Exceptions\ApiError;
 use App\Models\User;
 use App\Models\WorkSchedule;
+use App\Notifications\StaffAlert;
 use App\Services\ActivityLogger;
 use App\Settings\SettingsService;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
+use Illuminate\Support\Carbon;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Notification;
 
 /**
  * Days off and remote days per contract (SPECS 6 bis): the employee selects them once; afterwards only
@@ -42,19 +45,33 @@ class WorkScheduleController
         $user = $request->user();
         [$daysOff, $remote] = $this->validated($request);
 
-        $today = $this->calendar->workDate();
+        // P3-01: a self-selection takes effect from the next work date, never the same day.
+        $from = Carbon::parse($this->calendar->workDate())->addDay()->toDateString();
         // The lock prevents two parallel first selections; the existence check makes the choice one-time.
-        DB::transaction(function () use ($user, $daysOff, $remote, $today) {
+        DB::transaction(function () use ($user, $daysOff, $remote, $from) {
             User::query()->whereKey($user->id)->lockForUpdate()->first();
             if (WorkSchedule::query()->where('user_id', $user->id)->exists()) {
                 throw new ApiError(409, 'Your days off and remote days are already set. Ask an administrator to change them.', 'schedule_locked');
             }
             WorkSchedule::query()->create([
-                'user_id' => $user->id, 'effective_from' => $today, 'days_off' => $daysOff, 'remote_days' => $remote,
+                'user_id' => $user->id, 'effective_from' => $from, 'days_off' => $daysOff, 'remote_days' => $remote,
                 'set_by' => $user->id, 'set_by_employee' => true,
             ]);
         });
-        $this->logger->log('schedule.selected', 'Days off and remote days selected', LogType::Action, LogLevel::Info, $user, $user, ['days_off' => $daysOff, 'remote_days' => $remote]);
+        $this->logger->log('schedule.selected', 'Days off and remote days selected', LogType::Action, LogLevel::Info, $user, $user, ['days_off' => $daysOff, 'remote_days' => $remote, 'effective_from' => $from]);
+        $recipients = User::query()->holdingPermission(Permission::ManageWorkSchedules)->get();
+        if ($recipients->isNotEmpty()) {
+            $names = [1 => 'Mon', 2 => 'Tue', 3 => 'Wed', 4 => 'Thu', 5 => 'Fri', 6 => 'Sat', 7 => 'Sun'];
+            $fmt = fn (array $days) => $days === [] ? 'none' : implode(', ', array_map(fn (int $d) => $names[$d], $days));
+            Notification::send($recipients, new StaffAlert(
+                'schedule_selected',
+                'Work schedule selected',
+                "{$user->fullName()} selected days off: {$fmt($daysOff)}; remote days: {$fmt($remote)} (from {$from}).",
+                ['user_id' => $user->id],
+                true,
+                '/admin/users/'.$user->id,
+            ));
+        }
 
         return response()->json($this->payload($user), 201);
     }
@@ -90,13 +107,15 @@ class WorkScheduleController
     {
         $working = $this->settings->intList('working_days');
         $max = $this->settings->int('max_days_off_per_week');
+        $maxRemote = $this->settings->int('max_remote_days_per_week');
         $data = $request->validate([
             'days_off' => ['present', 'array', 'max:'.$max],
             'days_off.*' => ['integer', 'distinct', 'in:'.implode(',', $working)],
-            'remote_days' => ['present', 'array', 'max:7'],
+            'remote_days' => ['present', 'array', 'max:'.$maxRemote],
             'remote_days.*' => ['integer', 'distinct', 'in:'.implode(',', $working)],
         ], [
             'days_off.max' => "You can choose at most {$max} days off per week.",
+            'remote_days.max' => "You can choose at most {$maxRemote} remote days per week.",
         ]);
         $daysOff = array_values(array_map('intval', $data['days_off']));
         $remote = array_values(array_map('intval', $data['remote_days']));
@@ -134,6 +153,7 @@ class WorkScheduleController
             'selected' => WorkSchedule::query()->where('user_id', $user->id)->exists(),
             'locked' => WorkSchedule::query()->where('user_id', $user->id)->exists(),
             'max_days_off_per_week' => $this->settings->int('max_days_off_per_week'),
+            'max_remote_days_per_week' => $this->settings->int('max_remote_days_per_week'),
             'working_days' => $this->settings->intList('working_days'),
             'current' => $current !== null ? $this->row($current) : null,
             'upcoming' => $upcoming->map(fn (WorkSchedule $s) => $this->row($s))->values(),

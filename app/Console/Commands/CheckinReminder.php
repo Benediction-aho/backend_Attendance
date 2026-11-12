@@ -15,6 +15,10 @@ use App\Services\ActivityLogger;
 use App\Services\ScheduledRunner;
 use App\Settings\SettingsService;
 use Illuminate\Console\Command;
+use Illuminate\Support\Carbon;
+use Illuminate\Support\Facades\DB;
+use RuntimeException;
+use Throwable;
 
 /**
  * Fixed-time check-in reminder (SPECS 6, default 08:05) to employees expected today without a check-in.
@@ -40,7 +44,8 @@ class CheckinReminder extends Command
         }
 
         $sent = 0;
-        $ran = $runner->once('checkin_reminder', 'checkin_reminder:'.$date, $reminderAt, function () use ($calendar, $settings, $date, $now, &$sent) {
+        $failed = 0;
+        $ran = $runner->once('checkin_reminder', 'checkin_reminder:'.$date, $reminderAt, function () use ($calendar, $settings, $date, $now, &$sent, &$failed) {
             $lateAfter = $settings->string('late_after', $now);
             $checkedIn = Attendance::query()->whereDate('work_date', $date)->pluck('user_id')->all();
             $employees = User::query()->where('role', Role::Employee->value)->where('status', UserStatus::Active->value)
@@ -49,9 +54,27 @@ class CheckinReminder extends Command
                 if (! $calendar->dayStatus($employee, $date)->isExpected()) {
                     continue;
                 }
-                $employee->notifyNow(new ReminderNotification($date, $lateAfter));
-                SendWebPush::dispatch($employee->id, 'checkin_reminder', ['work_date' => $date]);
-                $sent++;
+                // Claim the recipient first (unique kind/user/date): a retried run skips those already reminded.
+                $claimed = DB::table('reminder_deliveries')->insertOrIgnore([
+                    'kind' => 'checkin_reminder', 'user_id' => $employee->id, 'work_date' => $date, 'sent_at' => Carbon::now(),
+                ]);
+                if ($claimed !== 1) {
+                    continue;
+                }
+                try {
+                    $employee->notifyNow(new ReminderNotification($date, $lateAfter));
+                    SendWebPush::dispatch($employee->id, 'checkin_reminder', ['work_date' => $date]);
+                    $sent++;
+                } catch (Throwable $e) {
+                    // One failing address must not stop the others; release the claim so the retry resends it.
+                    DB::table('reminder_deliveries')->where('kind', 'checkin_reminder')->where('user_id', $employee->id)->whereDate('work_date', $date)->delete();
+                    $failed++;
+                    report($e);
+                }
+            }
+            if ($failed > 0) {
+                // Marks the run failed: the next tick retries only the employees not reminded yet.
+                throw new RuntimeException("Check-in reminder failed for {$failed} employee(s)");
             }
         });
         if ($ran) {

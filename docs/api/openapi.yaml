@@ -555,9 +555,9 @@ paths:
       summary: Own days off / remote days (employees). `locked` once selected.
       security: [{ deviceToken: [] }]
       responses:
-        '200': { description: '{ selected, locked, max_days_off_per_week, working_days, current: WorkSchedule|null, upcoming: WorkSchedule[] }' }
+        '200': { description: '{ selected, locked, max_days_off_per_week, max_remote_days_per_week, working_days, current: WorkSchedule|null, upcoming: WorkSchedule[] }' }
     post:
-      summary: One-time selection by the employee (ISO weekdays 1 = Monday … 7 = Sunday, only working days). 409 schedule_locked afterwards.
+      summary: One-time selection by the employee (ISO weekdays 1 = Monday … 7 = Sunday, only working days, at most max_days_off_per_week / max_remote_days_per_week). Takes effect from the next day (returned under `upcoming`, `current` unchanged today); manage_work_schedules admins are notified. 409 schedule_locked afterwards.
       security: [{ deviceToken: [] }]
       requestBody:
         required: true

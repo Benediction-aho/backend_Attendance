@@ -31,6 +31,7 @@ final class SettingDefinitions
             'working_days' => ['type' => 'int_list', 'default' => [1, 2, 3, 4, 5], 'rules' => ['array', 'max:7'], 'item_rules' => ['integer', 'distinct', 'between:1,7'], 'group' => 'attendance', 'label' => 'Working days (1 = Monday … 7 = Sunday)'],
             'checkin_attempts_per_minute' => ['type' => 'int', 'default' => 20, 'rules' => ['integer', 'min:3', 'max:600'], 'group' => 'attendance', 'label' => 'Check-in / check-out requests per minute per user'],
             'max_days_off_per_week' => ['type' => 'int', 'default' => 2, 'rules' => ['integer', 'min:0', 'max:6'], 'group' => 'attendance', 'label' => 'Maximum days off per week'],
+            'max_remote_days_per_week' => ['type' => 'int', 'default' => 2, 'rules' => ['integer', 'min:0', 'max:7'], 'group' => 'attendance', 'label' => 'Maximum remote days per week'],
 
             // Reports
             'daily_report_time' => ['type' => 'time', 'default' => '17:00', 'rules' => ['date_format:H:i'], 'group' => 'reports', 'label' => 'Daily report generation time'],
@@ -46,6 +47,7 @@ final class SettingDefinitions
 
             // System
             'timezone' => ['type' => 'string', 'default' => 'Africa/Accra', 'rules' => ['timezone'], 'group' => 'system', 'label' => 'Time zone', 'editable' => false],
+            'scheduled_run_stale_minutes' => ['type' => 'int', 'default' => 15, 'rules' => ['integer', 'min:1', 'max:1440'], 'group' => 'system', 'label' => 'A scheduled task still running after this many minutes is considered crashed and retried'],
             'log_retention_months' => ['type' => 'int', 'default' => 12, 'rules' => ['integer', 'min:12', 'max:120'], 'group' => 'system', 'label' => 'Log retention (months)'],
             'photo_max_kb' => ['type' => 'int', 'default' => 5120, 'rules' => ['integer', 'min:100', 'max:20480'], 'group' => 'system', 'label' => 'Maximum profile photo size (KB)'],
             'photo_max_dimension_px' => ['type' => 'int', 'default' => 1024, 'rules' => ['integer', 'min:128', 'max:4096'], 'group' => 'system', 'label' => 'Profile photos are resized to at most this width/height (px)'],

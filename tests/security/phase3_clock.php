@@ -1,4 +1,5 @@
 <?php
+
 // Phase 3 frozen-clock checks (lateness, work date, intent across midnight, early check-out,
 // auto check-out and reminder idempotency / catch-up). LOCAL ONLY. Everything runs inside a DB
 // transaction that is rolled back at the end. Mail goes to the log mailer.
@@ -7,22 +8,36 @@ use App\Domain\Attendance\AttendanceService;
 use App\Exceptions\ApiError;
 use App\Models\Attendance;
 use App\Models\User;
+use Illuminate\Contracts\Console\Kernel;
 use Illuminate\Support\Carbon;
 use Illuminate\Support\Facades\Artisan;
 use Illuminate\Support\Facades\DB;
 
 require __DIR__.'/../../vendor/autoload.php';
 $app = require __DIR__.'/../../bootstrap/app.php';
-$app->make(Illuminate\Contracts\Console\Kernel::class)->bootstrap();
-if (app()->environment('production')) { fwrite(STDERR, "refused\n"); exit(1); }
+$app->make(Kernel::class)->bootstrap();
+if (app()->environment('production')) {
+    fwrite(STDERR, "refused\n");
+    exit(1);
+}
 config(['mail.default' => 'log', 'queue.default' => 'sync']);
 
 $tz = 'Africa/Accra';
 $at = fn (string $s) => Carbon::setTestNow(Carbon::parse($s, $tz));
 $svc = fn () => app(AttendanceService::class);
 $users = User::query()->where('email', 'like', 'load-02%@loadtest.invalid')->orderBy('id')->take(12)->get()->values();
-$ok = function (string $name, bool $cond, string $info = '') { echo ($cond ? 'PASS ' : 'FAIL ')."$name $info\n"; };
-$code = function (callable $f) { try { $f(); return 'ok'; } catch (ApiError $e) { return $e->getMessage(); } };
+$ok = function (string $name, bool $cond, string $info = '') {
+    echo ($cond ? 'PASS ' : 'FAIL ')."$name $info\n";
+};
+$code = function (callable $f) {
+    try {
+        $f();
+
+        return 'ok';
+    } catch (ApiError $e) {
+        return $e->getMessage();
+    }
+};
 $gps = ['lat' => 5.595223, 'lng' => -0.216703, 'accuracy' => 5.0];
 
 DB::beginTransaction();
@@ -84,7 +99,8 @@ try {
     $ok('reminder-before-time-noop', DB::table('notifications')->where('type', 'like', '%CheckinReminder%')->count() === $n0);
     // users[5] checked in, users[6] day off on Wednesday (admin schedule), users[7] on leave
     $at('2026-11-18 07:30:00');
-    $i = $svc()->createIntent($users[5], 'gps', $gps, null, null, null); $svc()->confirm($users[5], $i->id, null);
+    $i = $svc()->createIntent($users[5], 'gps', $gps, null, null, null);
+    $svc()->confirm($users[5], $i->id, null);
     DB::table('work_schedules')->where('user_id', $users[6]->id)->delete();
     DB::table('work_schedules')->insert(['user_id' => $users[6]->id, 'effective_from' => '2026-11-01', 'days_off' => '[3]', 'remote_days' => '[]', 'set_by' => $users[6]->id, 'set_by_employee' => true, 'created_at' => now(), 'updated_at' => now()]);
     DB::table('leaves')->insert(['user_id' => $users[7]->id, 'start_date' => '2026-11-18', 'end_date' => '2026-11-18', 'created_by' => $users[7]->id, 'created_at' => now(), 'updated_at' => now()]);
@@ -96,7 +112,7 @@ try {
     Artisan::call('attendance:checkin-reminder');
     $n2 = DB::table('notifications')->where('type', 'like', '%CheckinReminder%')->count();
     $who = DB::table('notifications')->where('type', 'like', '%CheckinReminder%')->pluck('notifiable_id')->all();
-    $ok('reminder-catch-up-sent', $n1 > $n0, "sent=".($n1 - $n0));
+    $ok('reminder-catch-up-sent', $n1 > $n0, 'sent='.($n1 - $n0));
     $ok('reminder-run-twice-no-dup', $n2 === $n1);
     $ok('reminder-not-to-checked-in', ! in_array($users[5]->id, $who));
     $ok('reminder-not-to-day-off', ! in_array($users[6]->id, $who));

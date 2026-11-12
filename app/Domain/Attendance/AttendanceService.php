@@ -113,14 +113,15 @@ class AttendanceService
      * @param  array<string, mixed>|null  $assertion
      * @return array{0: Attendance, 1: bool}
      */
-    public function confirm(User $user, string $intentId, ?array $assertion): array
+    public function confirm(User $user, string $intentId, ?array $assertion, ?int $deviceId = null): array
     {
         $now = $this->calendar->now();
         $date = $this->calendar->workDate($now);
 
         /** @var CheckinIntent|null $intent */
         $intent = CheckinIntent::query()->whereKey($intentId)->where('user_id', $user->id)->first();
-        if ($intent === null) {
+        // P3-03: the position check and the confirmation must come from the same device session.
+        if ($intent === null || ($intent->device_id !== null ? (int) $intent->device_id : null) !== $deviceId) {
             throw new ApiError(422, 'This check-in request is no longer valid. Please start again.', 'intent_invalid');
         }
 

@@ -3,7 +3,14 @@
 Updated by the agents at the end of every work session.
 
 ## Current phase
-**Phase 3 – Attendance (manual), backend: done – ready for backend-security-tester** (report expected in `docs/reports/phase-3-security.md`).
+**Phase 3 – Attendance (manual), backend: security fixes P3-01, P3-02, P3-03, P3-07 applied – ready for re-test by backend-security-tester** (`docs/reports/phase-3-security.md`, "Fixes applied").
+
+### Phase 3 security fixes (2026-11-12)
+- P3-01: new setting `max_remote_days_per_week` (default 2, see Q18); employee self-selection takes effect from the next day (never the same day) and notifies every `manage_work_schedules` holder (in-app + email, queued). **Contract change for attendance-frontend**: after `POST /me/work-schedule` the choice is in `upcoming[0]`, `current` stays as before today; `max_remote_days_per_week` added to `GET /me/work-schedule`.
+- P3-02: `reminder_deliveries` table (unique kind/user/date): a retried reminder run skips employees already reminded; one failing send no longer stops the others (run marked failed, retried for the remaining ones only). `ScheduledRunner` takes over a `running` row older than `scheduled_run_stale_minutes` (new setting, default 15) for every scheduled job.
+- P3-03: confirmation refused (`422 intent_invalid`) when the token's device differs from the device that created the intent.
+- P3-07: email templates use Blade escaping; regression tests with HTML payloads (mission reason, alert title/body).
+- Pest 275 green, Larastan 0 errors, Pint clean, migrations reversible.
 Phase 1 backend: all findings closed (final check P1-15 … P1-20 done). Phase 0: P0-01 waits for the owner.
 
 ### Phase 3 backend – what exists
@@ -104,6 +111,7 @@ Phase 3 business questions (safe default implemented, configurable where possibl
 - **Q14 – Tiers**: early check-out notifications and refused attempts go to `view_lateness` holders; holidays are managed by super admins and `manage_leaves` admins. Confirm or name other tiers.
 - **Q15 – Rejected mission check-in**: the attendance stays (marked `rejected`, employee notified); it is not deleted and the employee keeps access for the day. What should a rejection mean for reports (absence?)
 - **Q16 – Lateness time**: the time of the confirmation (after Face ID) is used, not the time of the position check (a few seconds earlier). Confirm.
+- **Q18 – Remote days per week (P3-01)**: an employee can self-select at most `max_remote_days_per_week` remote days (default 2); the choice applies from the next day and admins with `manage_work_schedules` are notified. Confirm the number (contract-dependent?) and whether remote days chosen by the employee should need admin validation.
 - **Q17 – Office GPS coordinates and holiday list** (owner input, PLAN §8): defaults 5.595223, -0.216703 in use; please provide the coordinates measured on site and the holiday list.
 - Note: the existing `faceid_required` setting (SPECS §3, default on) and the new `faceid_required_for_checkin` (default off until phase 4) overlap; phase 4 will merge them.
 
@@ -126,6 +134,7 @@ Phase 1 business questions (safe default implemented, configurable where possibl
 _Not given yet._
 
 ## Log
+- 2026-11-12 – Phase 3 security fixes P3-01 (remote-days cap, next-day effect, admin notification), P3-02 (per-recipient reminder records, stale run takeover for all jobs), P3-03 (intent bound to device), P3-07 (escaping tests). 275 tests green. Ready for re-test.
 - 2026-11-12 – Phase 3 backend: attendance schema, two-step check-in (GPS perimeter + accuracy, mission, remote, admin fallback), check-out with distance and early-leave reason, schedules/holidays/leaves, admin views per tier, check-in gate, auto check-out and 08:05 reminder jobs, load test (200 parallel: 0 error, 0 duplicate). 264 tests green. Ready for backend-security-tester.
 - 2026-11-12 – P1-15 (purge floor 12 months + no EXECUTE for runtime role, purge on owner connection), P1-16 (known device evicts oldest unknown code, critical log), P1-17 (other codes cancelled on sign-in), P1-18 (atomic upsert limiter table), P1-19 accepted. 188 tests green, PHPStan clean.
 - 2026-11-12 – Phase 1 security fixes: P1-01 … P1-09, P1-10, P1-11, P1-13 fixed with regression tests (182 tests green); SPECS §4 aligned (super admin one-time code); ready for re-test.

@@ -49,13 +49,13 @@ bash tests/load/parallel_checkin.sh http://localhost:8181/api <first-200-tokens.
 
 | ID | Title | Severity | Status |
 |---|---|---|---|
-| P3-01 | Self-selected remote days unbounded, effective immediately | Medium | Open |
-| P3-02 | Reminder retry duplicates / stuck `running` run | Low | Open |
-| P3-03 | Intent not bound to device | Low | Open |
+| P3-01 | Self-selected remote days unbounded, effective immediately | Medium | Fixed (to re-test) |
+| P3-02 | Reminder retry duplicates / stuck `running` run | Low | Fixed (to re-test) |
+| P3-03 | Intent not bound to device | Low | Fixed (to re-test) |
 | P3-04 | Face ID not enforced yet (phase 4) | Info | Open (phase 4) |
 | P3-05 | Client-declared accuracy | Info | Accepted risk |
 | P3-06 | `checked-in` middleware unused yet | Info | Re-test phase 5 |
-| P3-07 | Raw free text must be escaped by clients | Info | Frontend |
+| P3-07 | Raw free text must be escaped by clients | Info | Backend emails verified; frontend to check |
 
 No Critical or High finding.
 
@@ -94,3 +94,14 @@ Concurrency
 
 Logs
 - `storage/logs/laravel.log` contains no bearer token, intent id or coordinates after the run; server log has no errors.
+
+## Fixes applied (attendance-backend, 2026-11-12)
+
+Regression tests: `tests/Feature/Attendance/Phase3SecurityFixesTest.php` (+ updated `AdminAttendanceTest`).
+
+- **P3-01**: setting `max_remote_days_per_week` (default 2, 0–7; owner question Q18) validated like `max_days_off_per_week` (`remote_days.max`). `POST /me/work-schedule` now stores `effective_from` = next day: the same-day remote check-in is refused (`not_remote_day`). Every `manage_work_schedules` holder receives a `schedule_selected` StaffAlert (database + email, queued). Days off still capped by `max_days_off_per_week`.
+- **P3-02**: new table `reminder_deliveries` (unique `kind, user_id, work_date`, reversible migration). The reminder claims each recipient with `INSERT … ON CONFLICT DO NOTHING` before sending; a send exception releases that claim, is reported, and the loop continues; the run is then marked failed so the next tick retries only the remaining recipients. `ScheduledRunner::once` now also reclaims (atomic conditional UPDATE) a `running` row older than the new setting `scheduled_run_stale_minutes` (default 15, 1–1440) – applies to all jobs (reminder, auto check-out, log purge).
+- **P3-03**: `AttendanceService::confirm` compares the intent's `device_id` with the device of the confirming token; mismatch → 422 `intent_invalid`, nothing written.
+- **P3-07**: email templates (`resources/views/emails/simple*.blade.php`) only use `{{ }}`; tests render `StaffAlertMail` from a mission check-in with `<img src=x onerror=…><script>` and with HTML in title/body and assert the output is escaped. In-app notification JSON keeps raw text (frontend must render it as text).
+
+Checks: Pest 275 passed, Larastan 0 errors, Pint clean, rollback/migrate OK.

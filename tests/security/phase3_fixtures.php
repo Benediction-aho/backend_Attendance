@@ -1,4 +1,5 @@
 <?php
+
 // Phase 3 security fixtures. LOCAL ONLY (refuses APP_ENV=production in .env).
 // Usage: php tests/security/phase3_fixtures.php > $SCRATCH/p3.json
 // Creates admins with given permission sets + a super admin, each with a device-bound token.
@@ -7,13 +8,17 @@ use App\Enums\UserStatus;
 use App\Models\Device;
 use App\Models\PermissionRecord;
 use App\Models\User;
+use Illuminate\Contracts\Console\Kernel;
 use Illuminate\Support\Facades\Hash;
 use Illuminate\Support\Str;
 
 require __DIR__.'/../../vendor/autoload.php';
 $app = require __DIR__.'/../../bootstrap/app.php';
-$app->make(Illuminate\Contracts\Console\Kernel::class)->bootstrap();
-if (app()->environment('production')) { fwrite(STDERR, "refused\n"); exit(1); }
+$app->make(Kernel::class)->bootstrap();
+if (app()->environment('production')) {
+    fwrite(STDERR, "refused\n");
+    exit(1);
+}
 
 $defs = [
     'sa' => [Role::SuperAdmin, []],
