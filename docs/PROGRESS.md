@@ -18,7 +18,7 @@ The legacy Node/Mongo code was removed from the development branch. It remains o
 - Security baseline: `App\Http\Middleware\SecurityHeaders` (removes `X-Powered-By`/`Server`, adds nosniff, DENY, no-referrer, CSP, HSTS on HTTPS, `no-store` on API), session cookie `sid`, cache prefix `att-cache-`, every error rendered as generic JSON by `App\Exceptions\ApiExceptionRenderer` (details only when `APP_DEBUG=true`), no web routes (all unknown paths = JSON 404), Laravel's `/up` page removed, `TRUSTED_PROXIES` env.
 - `GET /api/health` → `{"status":"ok"}`.
 - API contract: `docs/api/openapi.yaml` (repository only, not served).
-- Tests: Pest on PostgreSQL (`attendance_test`), 15 tests green; Larastan level 8 clean; Pint clean.
+- Tests: Pest on PostgreSQL (`attendance_test`), 14 tests green (44 assertions); Larastan level 8 clean; Pint clean.
 - Docker: multi-stage FrankenPHP image (classic mode), roles app/worker/scheduler, `docker-compose.yml` (app, worker, scheduler, Postgres 16). See `docs/DOCKER.md`. The image was **not built in this environment** (no Docker daemon); the first CI/deploy build must confirm it.
 - CI: `.github/workflows/backend-ci.yml` (Postgres service, composer install, pint --test, phpstan, pest, migrate + rollback).
 
