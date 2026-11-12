@@ -172,3 +172,20 @@ Regression tests: `tests/Unit/PdfActiveContentScannerTest.php` (31 tests; every 
 - **P5-12** – The scanner is now a tokenizer: comments dropped, literal strings (nested parentheses, backslash escapes) and hex strings skipped, names `#xx`-decoded. `stream` is a keyword only right after the `>>` of an object dictionary; the data is skipped with `/Length` (indirect length resolved from the file); if `/Length` does not land on `endstream`, the next `endstream` is used. Fail closed (rejected): `stream` anywhere else, stray `endstream`/`)`/`>`, unterminated string, invalid hex string, missing `endstream`, stream keyword without EOL.
 - **P5-13** – Object streams are decoded through their filter chain: FlateDecode (with PNG predictors 10–15), ASCIIHexDecode, ASCII85Decode (and abbreviations); any other filter, TIFF predictor, indirect filter value, decoding error, invalid header or > 20 MB decoded → rejected. `/OpenAction` and `/AA` values are followed through references, arrays and `/Next` with a visited set (no depth limit); every definition of an object number (incremental updates) is checked. Destinations (page references) are not followed as actions, so a hyperlink on the opening page stays allowed.
 - Remaining limitation: encrypted PDFs are not decrypted (unchanged; defence in depth only).
+
+## Re-test round 3 (backend-security-tester, 2026-11-12) – phase 5 closed
+
+Setup unchanged (local production-mode server on `attendance_sec5`, window closed so `window_not_open` = passed the scan). Over real HTTP:
+
+- `phase5_pdf_samples.py`: clean, fp, link → accepted; objstm, hex, uri → `pdf_active_content`.
+- `phase5_pdf_bypass_r2.py`: rand0–4, randflate0–4 → accepted; objstm_hex, objstm_a85flate, objstm_pred, string_stream, string_stream2, chain5, chain_next, incremental, broken_xref, hexstring_name → `pdf_active_content`.
+- New ideas (`tests/security/phase5_pdf_bypass_r3.py OUTDIR`): JavaScript name tree, form-feed separators, page `/AA` Launch, link annotation with JS in an indirect stream, LZW object stream, nested object stream, NUL inside a reference → all rejected. `encrypt.pdf` (trailer `/Encrypt`) → accepted (known limitation).
+
+| ID | Status |
+|---|---|
+| P5-12 | Fixed |
+| P5-13 | Fixed |
+
+No Critical/High/Medium finding remains open. **Phase 5 backend security: closed.**
+
+Remaining limitations (accepted, defence in depth only): encrypted PDFs are not decrypted, so active content inside an encrypted PDF is not detected (files are served as downloads with `nosniff`/CSP through temporary signed URLs; optionally reject `/Encrypt` outright if the business allows).
