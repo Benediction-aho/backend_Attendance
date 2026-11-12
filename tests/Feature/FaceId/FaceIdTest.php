@@ -25,6 +25,16 @@ function switchUser(object $test): void
 }
 
 describe('registration', function () {
+    it('alerts the account owner (email + in-app) on every Face ID registration (P4-02)', function () {
+        $user = User::factory()->create();
+        registerFaceId($this, deviceToken($user));
+        switchUser($this);
+        registerFaceId($this, deviceToken($user, 'device-test-0000000002'));
+        Notification::assertSentToTimes($user, StaffAlert::class, 2);
+        Notification::assertSentTo($user, StaffAlert::class, fn (StaffAlert $n, array $via) => $n->kind === 'faceid_device_registered'
+            && in_array('mail', $via, true) && in_array('database', $via, true) && str_contains($n->body, "If it wasn't you, contact your admin"));
+    });
+
     it('requires authentication and is reserved to employees', function () {
         $this->postJson('/api/me/faceid/register/options')->assertUnauthorized();
         $this->getJson('/api/me/faceid')->assertUnauthorized();
@@ -134,6 +144,15 @@ describe('admin review', function () {
         $this->newAuth = registerFaceId($this, $this->newToken);
         switchUser($this);
         $this->pending = WebauthnCredential::query()->where('status', 'pending')->sole();
+    });
+
+    it('shows approvers the registration detail of the device (P4-02)', function () {
+        Sanctum::actingAs(User::factory()->admin(Permission::ApproveFaceIdDevices)->create());
+        $r = $this->getJson('/api/admin/faceid/credentials')->assertOk();
+        expect($r->json('data.0.registration.device_id'))->toBe($this->pending->device_id)
+            ->and($r->json('data.0.registration.ip'))->toBe('127.0.0.1')
+            ->and($r->json('data.0.registration.registered_at'))->not->toBeNull()
+            ->and($r->json('data.0.registration'))->toHaveKeys(['platform', 'browser', 'user_agent']);
     });
 
     it('lists pending devices only for approvers, employees only for admins', function () {

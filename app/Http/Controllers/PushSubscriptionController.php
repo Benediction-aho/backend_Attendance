@@ -40,25 +40,39 @@ class PushSubscriptionController
         $deviceId = $request->attributes->get('device_id');
         $hash = PushSubscription::hashEndpoint($data['endpoint']);
 
-        DB::transaction(function () use ($user, $deviceId, $hash, $data) {
-            // Upsert on the endpoint: a browser endpoint belongs to whoever is signed in on that browser now.
-            PushSubscription::query()->upsert([[
-                'user_id' => $user->id,
-                'device_id' => is_int($deviceId) ? $deviceId : null,
-                'endpoint_hash' => $hash,
-                'endpoint' => $data['endpoint'],
-                'public_key' => $data['keys']['p256dh'],
-                'auth_token' => $data['keys']['auth'],
-                'content_encoding' => $data['content_encoding'] ?? 'aes128gcm',
-                'created_at' => now(),
-                'updated_at' => now(),
-            ]], ['endpoint_hash'], ['user_id', 'device_id', 'endpoint', 'public_key', 'auth_token', 'content_encoding', 'updated_at']);
+        $device = is_int($deviceId) ? $deviceId : null;
+        $bound = DB::transaction(function () use ($user, $device, $hash, $data) {
+            // Upsert on the endpoint. An endpoint owned by another user is only re-bound when the request
+            // comes from the same device session (shared browser); otherwise it is refused (P4-01).
+            $now = now();
+            $rows = DB::select(
+                'INSERT INTO push_subscriptions (user_id, device_id, endpoint_hash, endpoint, public_key, auth_token, content_encoding, created_at, updated_at)
+                 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                 ON CONFLICT (endpoint_hash) DO UPDATE SET user_id = excluded.user_id, device_id = excluded.device_id,
+                   endpoint = excluded.endpoint, public_key = excluded.public_key, auth_token = excluded.auth_token,
+                   content_encoding = excluded.content_encoding, updated_at = excluded.updated_at
+                 WHERE push_subscriptions.user_id = excluded.user_id
+                    OR (excluded.device_id IS NOT NULL AND EXISTS (
+                         SELECT 1 FROM devices old_d JOIN devices new_d ON new_d.identifier_hash = old_d.identifier_hash
+                         WHERE old_d.id = push_subscriptions.device_id AND new_d.id = excluded.device_id))
+                 RETURNING id',
+                [$user->id, $device, $hash, $data['endpoint'], $data['keys']['p256dh'], $data['keys']['auth'], $data['content_encoding'] ?? 'aes128gcm', $now, $now],
+            );
+            if ($rows === []) {
+                return false;
+            }
 
             // Keep only the most recent subscriptions of the user.
             $max = $this->settings->int('push_max_subscriptions_per_user');
             $keep = PushSubscription::query()->where('user_id', $user->id)->orderByDesc('updated_at')->orderByDesc('id')->limit($max)->pluck('id');
             PushSubscription::query()->where('user_id', $user->id)->whereNotIn('id', $keep)->delete();
+
+            return true;
         });
+        if (! $bound) {
+            $this->logger->security('push.subscribe_conflict', 'Push subscription refused: endpoint owned by another account', LogLevel::Warning, $user, $user);
+            throw new ApiError(409, 'This push subscription is already in use.', 'push_endpoint_conflict');
+        }
         $this->logger->security('push.subscribed', 'Push notifications enabled on a device', LogLevel::Info, $user, $user);
 
         return response()->json(['message' => 'Push notifications enabled.'], 201);

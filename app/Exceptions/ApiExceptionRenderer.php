@@ -2,6 +2,7 @@
 
 namespace App\Exceptions;
 
+use App\Services\Auth\SessionRevoker;
 use Illuminate\Auth\Access\AuthorizationException;
 use Illuminate\Auth\AuthenticationException;
 use Illuminate\Http\Exceptions\HttpResponseException;
@@ -71,6 +72,9 @@ class ApiExceptionRenderer
         $headers = $e instanceof HttpExceptionInterface ? $e->getHeaders() : [];
 
         $body = ['message' => self::MESSAGES[$status] ?? ($status >= 500 ? self::MESSAGES[500] : self::MESSAGES[400])];
+        if ($e instanceof AuthenticationException && SessionRevoker::wasRevoked($request->bearerToken())) {
+            $body['code'] = 'account_blocked';
+        }
 
         if (config('app.debug') === true) {
             $body['debug'] = [

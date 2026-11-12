@@ -3,6 +3,7 @@
 namespace App\Http\Middleware;
 
 use App\Models\User;
+use App\Services\Auth\SessionRevoker;
 use Closure;
 use Illuminate\Http\Request;
 use Symfony\Component\HttpFoundation\Response;
@@ -25,9 +26,9 @@ class EnsureAccountUsable
         }
 
         if (! $user->isActive()) {
-            $user->tokens()->delete();
+            SessionRevoker::revokeForAccountState($user, $user->status->value);
 
-            return $this->unauthenticated();
+            return response()->json(['message' => 'Unauthenticated.', 'code' => 'account_blocked'], 401);
         }
 
         $token = $user->currentAccessToken();

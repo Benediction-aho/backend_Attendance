@@ -5,6 +5,7 @@
 // Usage: php tests/security/phase3_fixes.php   (needs attendance:load-fixtures --count=230)
 use App\Models\User;
 use App\Services\ScheduledRunner;
+use App\Settings\SettingsService;
 use Illuminate\Contracts\Console\Kernel;
 use Illuminate\Notifications\Events\NotificationSending;
 use Illuminate\Support\Carbon;
@@ -86,26 +87,34 @@ try {
             'started_at' => now()]);
         $hits = 0;
         $at('2026-11-27 10:14:00');
-        $runner->once($task, $key, now(), function () use (&$hits) { $hits++; });
+        $runner->once($task, $key, now(), function () use (&$hits) {
+            $hits++;
+        });
         $at('2026-11-27 10:16:00');
-        $runner->once($task, $key, now(), function () use (&$hits) { $hits++; });
-        $runner->once($task, $key, now(), function () use (&$hits) { $hits++; });
+        $runner->once($task, $key, now(), function () use (&$hits) {
+            $hits++;
+        });
+        $runner->once($task, $key, now(), function () use (&$hits) {
+            $hits++;
+        });
         $ok("stale-takeover-$task", $hits === 1, "hits=$hits");
     }
     // Stale setting honoured
     DB::table('settings')->insert(['key' => 'scheduled_run_stale_minutes', 'value' => json_encode(60), 'effective_from' => '2026-01-01', 'created_at' => now()]);
-    app(\App\Settings\SettingsService::class)->flush();
+    app(SettingsService::class)->flush();
     $runner = app(ScheduledRunner::class);
     $key = 'auto_checkout:retest-setting';
     $at('2026-11-27 10:00:00');
     DB::table('scheduled_runs')->insert(['task' => 'auto_checkout', 'run_key' => $key, 'status' => 'running', 'scheduled_for' => now(), 'started_at' => now()]);
     $hits = 0;
     $at('2026-11-27 10:30:00');
-    $runner->once('auto_checkout', $key, now(), function () use (&$hits) { $hits++; });
+    $runner->once('auto_checkout', $key, now(), function () use (&$hits) {
+        $hits++;
+    });
     $ok('stale-setting-60-respected', $hits === 0, "hits=$hits");
 } catch (Throwable $e) {
     echo 'ERROR '.$e::class.': '.$e->getMessage()."\n";
 } finally {
     DB::rollBack();
-    app(\App\Settings\SettingsService::class)->flush();
+    app(SettingsService::class)->flush();
 }

@@ -58,7 +58,7 @@ class FaceIdController
             'name' => ['nullable', 'string', 'max:100'],
         ]);
         $user = $this->user($request);
-        $credential = $this->webauthn->register($user, $this->requireDevice($request), $data['challenge_id'], $data['credential'], $data['name'] ?? null);
+        $credential = $this->webauthn->register($user, $this->requireDevice($request), $data['challenge_id'], $data['credential'], $data['name'] ?? null, $request->ip(), (string) $request->userAgent());
 
         return response()->json(['data' => $this->present($credential), 'state' => $this->webauthn->state($user, $this->deviceId($request))], 201);
     }
@@ -79,7 +79,7 @@ class FaceIdController
             ->orderByDesc('created_at')->paginate(50);
 
         return response()->json([
-            'data' => collect($page->items())->map(fn (WebauthnCredential $c) => $this->present($c) + [
+            'data' => collect($page->items())->map(fn (WebauthnCredential $c) => $this->present($c) + $this->registrationDetail($c) + [
                 'user' => $c->user !== null ? ['id' => $c->user->id, 'first_name' => $c->user->first_name, 'last_name' => $c->user->last_name] : null,
             ]),
             'meta' => ['current_page' => $page->currentPage(), 'last_page' => $page->lastPage(), 'total' => $page->total()],
@@ -144,6 +144,54 @@ class FaceIdController
             'revoke_reason' => $c->revoke_reason,
             'last_used_at' => $c->last_used_at?->toIso8601String(),
         ];
+    }
+
+    /**
+     * Device detail shown to approvers only (P4-02).
+     *
+     * @return array<string, mixed>
+     */
+    private function registrationDetail(WebauthnCredential $c): array
+    {
+        $ua = $c->registration_user_agent ?? $c->device?->user_agent;
+
+        return ['registration' => [
+            'device_id' => $c->device_id,
+            'registered_at' => $c->created_at->toIso8601String(),
+            'ip' => $c->registration_ip ?? $c->device?->last_ip,
+            'platform' => self::platform($ua),
+            'browser' => self::browser($ua),
+            'user_agent' => $ua,
+            'device_first_seen_at' => $c->device?->first_login_at?->toIso8601String(),
+        ]];
+    }
+
+    private static function platform(?string $ua): ?string
+    {
+        if ($ua === null || $ua === '') {
+            return null;
+        }
+        foreach (['iPhone' => 'iOS', 'iPad' => 'iPadOS', 'Android' => 'Android', 'Windows' => 'Windows', 'Mac OS X' => 'macOS', 'CrOS' => 'ChromeOS', 'Linux' => 'Linux'] as $needle => $name) {
+            if (str_contains($ua, $needle)) {
+                return $name;
+            }
+        }
+
+        return 'Other';
+    }
+
+    private static function browser(?string $ua): ?string
+    {
+        if ($ua === null || $ua === '') {
+            return null;
+        }
+        foreach (['Edg/' => 'Edge', 'SamsungBrowser' => 'Samsung Internet', 'OPR/' => 'Opera', 'Firefox/' => 'Firefox', 'FxiOS' => 'Firefox', 'CriOS' => 'Chrome', 'Chrome/' => 'Chrome', 'Safari/' => 'Safari'] as $needle => $name) {
+            if (str_contains($ua, $needle)) {
+                return $name;
+            }
+        }
+
+        return 'Other';
     }
 
     private function requireDevice(Request $request): int

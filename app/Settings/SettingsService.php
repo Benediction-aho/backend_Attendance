@@ -122,10 +122,51 @@ class SettingsService
                 'value' => $this->get($key),
                 'default' => $definition['default'],
                 'scheduled' => $scheduled,
-            ];
+            ] + self::constraints($key, $definition);
         }
 
         return $out;
+    }
+
+    /**
+     * Bounds and unit for the admin form, read from the validation rules (single source of truth).
+     *
+     * @param  array<string, mixed>  $definition
+     * @return array{min: int|float|null, max: int|float|null, unit: string|null, item_min?: int|float|null, item_max?: int|float|null}
+     */
+    public static function constraints(string $key, array $definition): array
+    {
+        $bound = function (array $rules, string $name): int|float|null {
+            foreach ($rules as $rule) {
+                if (is_string($rule) && str_starts_with($rule, $name.':') && is_numeric($v = substr($rule, strlen($name) + 1))) {
+                    return $v + 0;
+                }
+            }
+
+            return null;
+        };
+        /** @var list<mixed> $rules */
+        $rules = (array) ($definition['rules'] ?? []);
+        $out = ['min' => $bound($rules, 'min'), 'max' => $bound($rules, 'max'), 'unit' => self::unit($key)];
+        if (($definition['type'] ?? null) === 'int_list') {
+            /** @var list<mixed> $items */
+            $items = (array) ($definition['item_rules'] ?? ['integer', 'min:1', 'max:1440']);
+            $out['item_min'] = $bound($items, 'min');
+            $out['item_max'] = $bound($items, 'max');
+        }
+
+        return $out;
+    }
+
+    private static function unit(string $key): ?string
+    {
+        foreach (['_minutes' => 'minutes', '_hours' => 'hours', '_days' => 'days', '_seconds' => 'seconds', '_meters' => 'meters', '_m' => 'meters', '_per_hour' => 'per hour', '_per_minute' => 'per minute', '_length' => 'characters', '_percent' => 'percent'] as $suffix => $unit) {
+            if (str_ends_with($key, $suffix)) {
+                return $unit;
+            }
+        }
+
+        return null;
     }
 
     public function flush(): void

@@ -15,6 +15,7 @@ use App\Models\User;
 use App\Notifications\StaffAlert;
 use App\Services\Auth\IdentificationCodeService;
 use App\Services\Auth\LockoutService;
+use App\Services\Auth\SessionRevoker;
 use Illuminate\Database\QueryException;
 use Illuminate\Support\Carbon;
 use Illuminate\Support\Facades\DB;
@@ -160,7 +161,7 @@ class AccountService
             $this->guard->ensureNotLast($user);
             $user->status = UserStatus::Blocked;
             $user->save();
-            $user->tokens()->delete();
+            SessionRevoker::revokeForAccountState($user, 'blocked');
         });
         $this->logger->security('user.blocked', 'Account blocked', LogLevel::Warning, $user, $by);
     }
@@ -205,7 +206,7 @@ class AccountService
             $this->guard->ensureNotLast($user);
             $user->status = UserStatus::Deleted;
             $user->save();
-            $user->tokens()->delete();
+            SessionRevoker::revokeForAccountState($user, 'deleted');
             $user->delete();
         });
         $this->logger->security('user.deleted', 'Account deleted', LogLevel::Warning, $user, $by);

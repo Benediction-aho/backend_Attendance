@@ -5,6 +5,18 @@ Updated by the agents at the end of every work session.
 ## Current phase
 **Phase 4 – PWA, Face ID, notifications: backend done – ready for backend-security-tester** (focus below). Phase 3 backend: fixes re-tested, no Critical/High open (P3-04 is addressed by phase 4).
 
+### Phase 4 security fixes + frontend requests (2026-11-12)
+- P4-01/02/03 (Low) fixed with regression tests – see `docs/reports/phase-4-security.md` "Fixes applied". Phase 4 backend: no open Critical/High/Medium/Low finding.
+- **Contract changes for attendance-frontend** (`docs/api/openapi.yaml` 0.4.1, all additive):
+  - `POST /push/subscriptions` may answer **409 `push_endpoint_conflict`** (endpoint owned by another account on another device).
+  - `GET /admin/faceid/credentials` items carry `registration {device_id, registered_at, ip, platform, browser, user_agent, device_first_seen_at}`.
+  - New in-app/email notification kind `faceid_device_registered` for the account owner.
+  - `GET /admin/settings`: each setting has `min`, `max`, `unit` (+ `item_min`/`item_max` for int_list), read from validation rules.
+  - `GET /me` (and login user): `password_min_length`.
+  - `invalid_credentials` 401 carries `remaining_attempts` **only on a known device** of the account (unknown devices and unknown emails get the identical body without it – no enumeration).
+  - 401 with **`code: account_blocked`** on the next request after the account was blocked, locked or deleted (token hashes kept 30 days in `revoked_sessions`).
+- UX2-17 (frontend phase-2 UX report) is fixed on the backend (plain-text emails unescaped, test `escapes names only in the HTML part of emails (UX2-17)`); the frontend report can mark it Fixed.
+
 ### Phase 4 backend – what exists (2026-11-12)
 - **Libraries**: `web-auth/webauthn-lib` 5.3 (reference PHP WebAuthn implementation, maintained, framework-agnostic, full W3C ceremony checks: challenge, origin, RP ID hash, UP/UV flags, signature, counter, backup flags; chosen over laragear/webauthn because we need device binding, admin approval and a challenge bound to the check-in intent, which laragear's login-oriented flow does not model). `minishlink/web-push` 9 (standard PHP Web Push, VAPID + aes128gcm). Composer also refreshed a few minor framework/symfony versions.
 - **Schema** (reversible): `webauthn_credentials` (public key only, base64url credential id unique, user handle, sign count, transports, backup flags, device link, status `pending|approved|revoked` with partial unique indexes "one approved / one pending per user", approved_by/at, revoked_by/at/reason), `webauthn_challenges` (uuid, random 32 bytes, purpose `registration|checkin`, user + device, unique `checkin_intent_id`, expiry, consumed_at), `attendances.webauthn_credential_id`, `push_subscriptions` (endpoint hash unique, keys, device link).

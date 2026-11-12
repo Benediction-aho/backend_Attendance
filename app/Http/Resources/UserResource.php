@@ -5,6 +5,7 @@ namespace App\Http\Resources;
 use App\Enums\Role;
 use App\Models\User;
 use App\Services\FileUrls;
+use App\Settings\SettingsService;
 use Illuminate\Http\Request;
 use Illuminate\Http\Resources\Json\JsonResource;
 use Illuminate\Support\Facades\Gate;
@@ -55,6 +56,8 @@ class UserResource extends JsonResource
                 'must_change_password' => $user->must_change_password,
                 'permissions' => $user->permissionKeys(),
                 'last_login_at' => $user->last_login_at?->toIso8601String(),
+                // For the password form (same rule as StrongPassword).
+                'password_min_length' => app(SettingsService::class)->int('password_min_length'),
             ];
         }
 

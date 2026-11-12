@@ -142,6 +142,17 @@ class LockoutService
         return $this->lockedError();
     }
 
+    /**
+     * Failures left before the next block in this bucket. Only exposed for a known device (a device that
+     * already signed in to the account), so it never reveals whether an email exists.
+     */
+    public function remainingAttempts(string $accountKey, string $scope, string $bucketKey): int
+    {
+        $failures = (int) (LoginAttempt::query()->where(['account_key' => $accountKey, 'scope' => $scope, 'bucket_key' => $bucketKey])->value('failures') ?? 0);
+
+        return max(0, $this->settings->int('lockout_failures_per_series') - $failures);
+    }
+
     public function reset(string $accountKey, string $scope, string $bucketKey): void
     {
         LoginAttempt::query()->where(['account_key' => $accountKey, 'scope' => $scope, 'bucket_key' => $bucketKey])->delete();
@@ -179,7 +190,7 @@ class LockoutService
         if ($wholeAccount && $user->status === UserStatus::Active) {
             $user->status = UserStatus::Locked;
             $user->save();
-            $user->tokens()->delete();
+            SessionRevoker::revokeForAccountState($user, 'locked');
             $this->logger->security('auth.account_locked', 'Account locked: failed sign-ins from several devices', LogLevel::Critical, $user);
         }
 

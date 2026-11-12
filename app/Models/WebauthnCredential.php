@@ -19,6 +19,8 @@ use Illuminate\Support\Carbon;
  * @property list<string>|null $transports
  * @property string $attestation_type
  * @property int $sign_count
+ * @property string|null $registration_ip
+ * @property string|null $registration_user_agent
  * @property bool|null $backup_eligible
  * @property bool|null $backup_status
  * @property bool|null $uv_initialized

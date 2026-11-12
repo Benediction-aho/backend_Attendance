@@ -48,6 +48,6 @@ class WebPushTransport implements PushTransport
             'subject' => (string) config('webpush.vapid.subject'),
             'publicKey' => (string) config('webpush.vapid.public_key'),
             'privateKey' => (string) config('webpush.vapid.private_key'),
-        ]], [], 10);
+        ]], [], 10, ['allow_redirects' => false, 'connect_timeout' => 5]);
     }
 }

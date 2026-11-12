@@ -2,12 +2,13 @@
 openapi: 3.1.0
 info:
   title: Assistance Ghana Attendance API
-  version: 0.4.0
+  version: 0.4.1
   description: |
     Authentication: **Bearer device tokens only** (Sanctum personal access tokens, one per device).
     The API sets no cookie and has no CSRF/session endpoint. After login the client receives
     `token` once and sends it as `Authorization: Bearer <token>` on every request. The PWA stores
     the token on the device (IndexedDB/localStorage) and deletes it on logout or on a 401.
+    A 401 with `code: account_blocked` means the session was ended because the account was blocked, locked or deleted.
     Network or 5xx errors must never log the user out; only a 401 does.
 servers:
   - url: http://localhost:8000/api
@@ -95,7 +96,7 @@ paths:
         (16–128 chars, [A-Za-z0-9_-]). One token per device: signing in again on the same device replaces its token.
         Lockout (security.md 1): per known device 5 failures → 429 for 10 min, 5 more → 429 for 20 min, 5 more → 423 locked
         (values from settings). All unknown devices of an account share one bucket. Unknown emails behave exactly like real ones.
-        Error codes: invalid_credentials (401), code_expired (401), account_blocked (403), login_blocked (429, retry_after_seconds),
+        Error codes: invalid_credentials (401; `remaining_attempts` = failures left before the next block, only on a known device of the account – never for unknown devices or unknown emails), code_expired (401), account_blocked (403), login_blocked (429, retry_after_seconds),
         ip_limited (429, only for unknown devices / unknown emails; known devices are never IP-limited), account_locked (423).
         Attempts are reserved before the secret is checked: parallel requests never get more than one series checked.
       requestBody:
@@ -738,7 +739,7 @@ paths:
                   public_key: { type: object, description: 'pass to navigator.credentials.create({ publicKey }) after base64url decoding (PublicKeyCredential.parseCreationOptionsFromJSON)' }
   /me/faceid/register:
     post:
-      summary: Face ID registration step 2. First credential of the account approved; any later one pending until an admin approves.
+      summary: Face ID registration step 2. First credential of the account approved; any later one pending until an admin approves. Every registration sends the account owner an email + in-app alert (kind faceid_device_registered).
       description: |
         422 `challenge_invalid` (expired, used, other user/device: restart), `faceid_failed` (verification failed, no user verification),
         409 `faceid_already_registered`. A new pending request replaces an earlier pending one. Approvers are notified.
@@ -772,7 +773,7 @@ paths:
         - { name: status, in: query, schema: { type: string, enum: [pending, approved, revoked] } }
         - { name: user_id, in: query, schema: { type: integer } }
       responses:
-        '200': { description: 'data: FaceIdCredential + user {id, first_name, last_name}; meta' }
+        '200': { description: 'data: FaceIdCredential + user {id, first_name, last_name} + registration {device_id, registered_at, ip, platform, browser, user_agent, device_first_seen_at}; meta' }
         '403': { $ref: '#/components/responses/Forbidden' }
   /admin/faceid/credentials/{id}/approve:
     post:
@@ -809,7 +810,8 @@ paths:
       summary: Save this browser's push subscription (PushSubscription.toJSON()), linked to this device session. Any role.
       description: |
         Endpoint must be https on a known push service (FCM, Apple, Mozilla, Windows) – 422 `push_endpoint_invalid` otherwise.
-        The same endpoint is moved to the account signed in now. Removed automatically on sign-out and when the push service answers 404/410.
+        The same endpoint is moved to the account signed in now only when it comes from the same physical device (shared browser);
+        an endpoint owned by another account on another device → 409 `push_endpoint_conflict`. Removed automatically on sign-out and when the push service answers 404/410.
         Every in-app notification is also pushed (payload JSON: kind, title, body, path, tag). Re-subscribe after each sign-in.
       security: [{ deviceToken: [] }]
       requestBody:
@@ -825,6 +827,7 @@ paths:
                 content_encoding: { type: string, enum: [aes128gcm, aesgcm] }
       responses:
         '201': { description: Saved }
+        '409': { description: push_endpoint_conflict }
         '422': { $ref: '#/components/responses/ValidationError' }
     delete:
       summary: Remove this browser's subscription (body {endpoint}).
@@ -876,6 +879,7 @@ components:
         birth_date: { type: [string, 'null'], format: date }
         address: { type: [string, 'null'] }
         must_change_password: { type: boolean }
+        password_min_length: { type: integer, description: Only for oneself (GET /me, login). }
         permissions: { type: array, items: { type: string } }
         code_pending: { type: boolean }
         code_expires_at: { type: [string, 'null'], format: date-time }
@@ -893,6 +897,11 @@ components:
         value: {}
         default: {}
         scheduled: { type: array, items: { type: object, properties: { value: {}, effective_from: { type: string, format: date-time } } } }
+        min: { type: [number, 'null'], description: Lower bound (list length for int_list) }
+        max: { type: [number, 'null'], description: Upper bound (list length for int_list) }
+        unit: { type: [string, 'null'], enum: [minutes, hours, days, seconds, meters, per hour, per minute, characters, percent, null] }
+        item_min: { type: [number, 'null'], description: int_list only – bound of each item }
+        item_max: { type: [number, 'null'], description: int_list only – bound of each item }
     Error:
       description: Every error response (no stack trace, generic English message).
       type: object
@@ -901,6 +910,7 @@ components:
         message: { type: string, example: Not found. }
         code: { type: string, description: 'Machine-readable reason when useful (e.g. password_change_required, blocked, locked).' }
         retry_after_seconds: { type: integer }
+        remaining_attempts: { type: integer, description: invalid_credentials on a known device only }
         errors:
           description: Present on 422 only, field => list of messages.
           type: object

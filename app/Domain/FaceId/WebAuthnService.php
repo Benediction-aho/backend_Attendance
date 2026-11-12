@@ -118,7 +118,7 @@ class WebAuthnService
      *
      * @param  array<string, mixed>  $credential  PublicKeyCredential JSON from navigator.credentials.create()
      */
-    public function register(User $user, int $deviceId, string $challengeId, array $credential, ?string $name): WebauthnCredential
+    public function register(User $user, int $deviceId, string $challengeId, array $credential, ?string $name, ?string $ip = null, ?string $userAgent = null): WebauthnCredential
     {
         $now = Carbon::now();
         $challenge = $this->consumeChallenge($challengeId, $user, $deviceId, WebauthnChallenge::REGISTRATION, null, $now);
@@ -161,7 +161,7 @@ class WebAuthnService
         $autoApprove = ! $hasAny && $this->settings->bool('faceid_first_device_auto_approve', $now);
 
         try {
-            $stored = DB::transaction(function () use ($user, $deviceId, $record, $name, $autoApprove, $now) {
+            $stored = DB::transaction(function () use ($user, $deviceId, $record, $name, $autoApprove, $now, $ip, $userAgent) {
                 // A new request replaces an earlier pending one.
                 WebauthnCredential::query()->where('user_id', $user->id)->where('status', WebauthnCredential::PENDING)->update([
                     'status' => WebauthnCredential::REVOKED, 'revoked_at' => $now, 'revoke_reason' => 'superseded', 'updated_at' => $now,
@@ -183,6 +183,8 @@ class WebAuthnService
                     'name' => $name !== null && trim($name) !== '' ? mb_substr(trim($name), 0, 100) : null,
                     'status' => $autoApprove ? WebauthnCredential::APPROVED : WebauthnCredential::PENDING,
                     'approved_at' => $autoApprove ? $now : null,
+                    'registration_ip' => $ip !== null ? mb_substr($ip, 0, 45) : null,
+                    'registration_user_agent' => $userAgent !== null && $userAgent !== '' ? mb_substr($userAgent, 0, 255) : null,
                 ]);
             });
         } catch (UniqueConstraintViolationException) {
@@ -193,6 +195,16 @@ class WebAuthnService
         $this->logger->log('faceid.registered', $autoApprove ? 'Face ID registered (first device, approved)' : 'Face ID registered on a new device (pending approval)', LogType::Security, LogLevel::Info, $user, $user, [
             'credential_id' => $stored->id, 'device_id' => $deviceId, 'status' => $stored->status,
         ]);
+
+        // Security alert to the account owner for every registration (P4-02), first device included.
+        $user->notify(new StaffAlert(
+            'faceid_device_registered',
+            'New device registered for Face ID',
+            'A new device was registered for Face ID on your account. If it wasn\'t you, contact your admin.',
+            ['credential_id' => $stored->id],
+            true,
+            '/attendance',
+        ));
 
         if (! $autoApprove) {
             $recipients = User::query()->holdingPermission(Permission::ApproveFaceIdDevices)->where('id', '!=', $user->id)->get();

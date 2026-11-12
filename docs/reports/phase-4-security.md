@@ -52,9 +52,9 @@ Prerequisites: `php artisan attendance:load-fixtures --count=230`, `php tests/se
 
 | ID | Title | Severity | Status |
 |---|---|---|---|
-| P4-01 | Known push endpoint re-bound to another user | Low | Open |
-| P4-02 | Pending Face ID request superseded silently, owner not alerted | Low | Open |
-| P4-03 | Web Push transport follows redirects | Low | Open |
+| P4-01 | Known push endpoint re-bound to another user | Low | Fixed |
+| P4-02 | Pending Face ID request superseded silently, owner not alerted | Low | Fixed |
+| P4-03 | Web Push transport follows redirects | Low | Fixed |
 | P4-04 | First-device auto-approval trusts first sign-in | Info | Owner decision |
 | P4-05 | Counter 0 passkeys cannot reveal clones | Info | Accepted (inherent) |
 | P4-06 | Admins cannot register Face ID | Info | By design |
@@ -97,3 +97,10 @@ Logs: WebAuthn failures log only the exception class and user id; no challenge, 
 - `phase3_attendance.sh` (run with `faceid_required_for_checkin=false`, since it confirms without assertion; restored to `true` afterwards): 64 PASS, 3 FAIL that are time-of-day artefacts (run at 18:18 Accra, after `end_of_day_time`, so the "early check-out" checks do not apply) – not regressions.
 - `phase3_clock.php` 20/20 PASS (same Face ID switch, it calls the service without assertion). `phase3_fixes.php` 14/14 PASS.
 - Re-running the HTTP scripts needs the load users' attendances/intents/credentials reset and `php artisan cache:clear` (the Face ID script resets its own users 206–229).
+
+## Fixes applied (attendance-backend, 2026-11-12)
+
+- **P4-01 – Fixed.** `POST /push/subscriptions` upserts with `ON CONFLICT (endpoint_hash) DO UPDATE ... WHERE` same user OR same physical device (devices share `identifier_hash`); otherwise nothing is updated and the API answers **409 `push_endpoint_conflict`** (logged `push.subscribe_conflict`). Atomic, no check-then-act. Tests: `tests/Feature/Push/WebPushTest.php` (shared browser moves; other user/other device or no device → 409, row unchanged).
+- **P4-02 – Fixed.** Every Face ID registration (first device included) sends the account owner an email + in-app alert (`faceid_device_registered`: "A new device was registered for Face ID on your account. If it wasn't you, contact your admin."). Credentials now store `registration_ip` and `registration_user_agent`; `GET /admin/faceid/credentials` returns `registration {device_id, registered_at, ip, platform, browser, user_agent, device_first_seen_at}` (approvers only). Tests: `tests/Feature/FaceId/FaceIdTest.php`.
+- **P4-03 – Fixed.** `WebPushTransport` builds the client with `['allow_redirects' => false, 'connect_timeout' => 5]`. Test checks the Guzzle config.
+- P4-04 remains an owner decision (see PROGRESS questions).

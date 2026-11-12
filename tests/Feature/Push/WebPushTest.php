@@ -12,6 +12,7 @@ use App\Services\Push\WebPushTransport;
 use App\Settings\SettingsService;
 use Illuminate\Support\Facades\Queue;
 use Laravel\Sanctum\Sanctum;
+use Minishlink\WebPush\VAPID;
 
 class FakePushTransport implements PushTransport
 {
@@ -73,17 +74,49 @@ describe('subscriptions', function () {
         expect(PushSubscription::query()->count())->toBe(0);
     });
 
-    it('moves an endpoint to the account now signed in on that browser and never lets another user delete it', function () {
+    it('moves an endpoint only between accounts signed in on the same device, never lets another user delete it', function () {
         $alice = User::factory()->create();
         $bob = User::factory()->create();
-        Sanctum::actingAs($alice);
-        $this->postJson('/api/push/subscriptions', subscription())->assertCreated();
+        $this->withToken(deviceToken($alice, 'shared-browser-000000001'))->postJson('/api/push/subscriptions', subscription())->assertCreated();
         app('auth')->forgetGuards();
+        $this->flushHeaders();
         Sanctum::actingAs($bob);
         $this->deleteJson('/api/push/subscriptions', ['endpoint' => FCM])->assertOk();
         expect(PushSubscription::query()->sole()->user_id)->toBe($alice->id);
-        $this->postJson('/api/push/subscriptions', subscription())->assertCreated();
+        app('auth')->forgetGuards();
+        $this->withToken(deviceToken($bob, 'shared-browser-000000001'))->postJson('/api/push/subscriptions', subscription())->assertCreated();
         expect(PushSubscription::query()->sole()->user_id)->toBe($bob->id);
+    });
+
+    it('refuses (409) an endpoint owned by another user from another device (P4-01)', function () {
+        $alice = User::factory()->create();
+        $bob = User::factory()->create();
+        $this->withToken(deviceToken($alice, 'alice-phone-00000000001'))->postJson('/api/push/subscriptions', subscription())->assertCreated();
+        app('auth')->forgetGuards();
+        $this->withToken(deviceToken($bob, 'bob-phone-0000000000001'))->postJson('/api/push/subscriptions', subscription())
+            ->assertStatus(409)->assertJsonPath('code', 'push_endpoint_conflict');
+        app('auth')->forgetGuards();
+        $this->flushHeaders();
+        Sanctum::actingAs($bob);
+        $this->postJson('/api/push/subscriptions', subscription())->assertStatus(409);
+        $sub = PushSubscription::query()->sole();
+        expect($sub->user_id)->toBe($alice->id);
+    });
+
+    it('builds the push client without following redirects (P4-03)', function () {
+        $keys = @VAPID::createVapidKeys();
+        config(['webpush.vapid.subject' => 'mailto:test@example.test', 'webpush.vapid.public_key' => $keys['publicKey'], 'webpush.vapid.private_key' => $keys['privateKey']]);
+        $transport = app(WebPushTransport::class);
+        $m = new ReflectionMethod($transport, 'client');
+        $level = error_reporting(E_ALL & ~E_USER_WARNING & ~E_WARNING & ~E_USER_NOTICE & ~E_NOTICE);
+        try {
+            $client = $m->invoke($transport);
+        } finally {
+            error_reporting($level);
+        }
+        $http = (new ReflectionProperty($client, 'client'))->getValue($client);
+        expect($http->getConfig('allow_redirects'))->toBeFalse()
+            ->and($http->getConfig('connect_timeout'))->toBe(5);
     });
 
     it('refuses endpoints outside the known push services (no SSRF)', function (string $endpoint) {

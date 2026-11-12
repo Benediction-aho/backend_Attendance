@@ -73,7 +73,10 @@ class LoginService
         }
 
         if (! $valid) {
-            throw $this->lockout->failed($accountKey, $scope, $bucket, $user, $outcome) ?? new ApiError(401, self::INVALID, 'invalid_credentials');
+            throw $this->lockout->failed($accountKey, $scope, $bucket, $user, $outcome)
+                ?? new ApiError(401, self::INVALID, 'invalid_credentials', $scope === LoginAttempt::SCOPE_DEVICE
+                    ? ['remaining_attempts' => $this->lockout->remainingAttempts($accountKey, $scope, $bucket)]
+                    : []);
         }
         // A correct secret proves knowledge: the reserved attempt is given back.
         $this->lockout->reset($accountKey, $scope, $bucket);

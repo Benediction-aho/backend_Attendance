@@ -9,13 +9,16 @@
 // Usage: P3=$P3 php tests/security/phase4_faceid_push.php   (uses load users 0206..0229)
 use App\Enums\Role;
 use App\Enums\UserStatus;
+use App\Models\Attendance;
 use App\Models\Device;
 use App\Models\PermissionRecord;
 use App\Models\PushSubscription;
 use App\Models\User;
 use App\Models\WebauthnChallenge;
 use App\Models\WebauthnCredential;
+use App\Settings\SettingsService;
 use Illuminate\Contracts\Console\Kernel;
+use Illuminate\Support\Carbon;
 use Illuminate\Support\Facades\Hash;
 use Illuminate\Support\Facades\Http;
 use Illuminate\Support\Str;
@@ -30,8 +33,8 @@ if (app()->environment('production')) {
 require __DIR__.'/../Support/webauthn.php';
 
 // Raise the per-user attendance limiter for the functional run (restored at the end); the limit itself is checked separately.
-$settings = app(\App\Settings\SettingsService::class);
-$settings->set(['checkin_attempts_per_minute' => 600], null, \Illuminate\Support\Carbon::parse('2000-01-01'));
+$settings = app(SettingsService::class);
+$settings->set(['checkin_attempts_per_minute' => 600], null, Carbon::parse('2000-01-01'));
 $B = getenv('B') ?: 'http://localhost:8181/api';
 $p3 = json_decode((string) file_get_contents((string) getenv('P3')), true);
 $tok = json_decode((string) file_get_contents(base_path('storage/app/private/load-tokens.json')), true);
@@ -91,8 +94,8 @@ $SA = $p3['sa']['token'];
 $NONE = $p3['none']['token'];
 $OB = $p3['onbehalf']['token'];
 WebauthnCredential::query()->whereIn('user_id', array_map($uid, range(206, 229)))->delete();
-\App\Models\Attendance::query()->whereIn("user_id", array_map($uid, range(206, 229)))->delete();
-PushSubscription::query()->whereIn("user_id", array_map($uid, range(206, 229)))->delete();
+Attendance::query()->whereIn('user_id', array_map($uid, range(206, 229)))->delete();
+PushSubscription::query()->whereIn('user_id', array_map($uid, range(206, 229)))->delete();
 User::query()->whereIn('id', [$p3['sa']['id'], $faAdmin->id, $faAdmin2->id])->get()->each(fn ($u) => WebauthnCredential::query()->where('user_id', $u->id)->delete());
 
 echo "== registration abuse\n";
@@ -189,7 +192,7 @@ $storedCount = WebauthnCredential::query()->whereKey($pendingId)->value('sign_co
 echo "  stored sign_count=$storedCount\n";
 $check('replay same assertion/intent (idempotent 200, no 2nd row)', [200, 201], $conf($E206b, $i[1]['intent_id'], $a1b->get($pk, ['counter' => 11])));
 // Counter regression on a fresh day for another user: register 209, valid check-in with counter 50, then counter 3 on another intent.
-\App\Models\Attendance::query()->where('user_id', $uid(206))->delete();
+Attendance::query()->where('user_id', $uid(206))->delete();
 $i2 = $intent($E206b);
 $check('counter regression (3 < 10)', 422, $conf($E206b, $i2[1]['intent_id'], $a1b->get($i2[1]['faceid_options']['public_key'], ['counter' => 3])));
 $check('counter equal (10 = 10)', 422, $conf($E206b, $i2[1]['intent_id'], $a1b->get($i2[1]['faceid_options']['public_key'], ['counter' => 10])));
@@ -275,7 +278,7 @@ foreach ([
     'IDN homograph' => 'https://fcm.googleapis.cοm/x',
     'punycode' => 'https://xn--fcm-googleapis-com.evil/x',
     'fragment trick' => 'https://evil.test#.fcm.googleapis.com',
-    'null byte' => "https://evil.test%00.fcm.googleapis.com/x",
+    'null byte' => 'https://evil.test%00.fcm.googleapis.com/x',
     'percent host' => 'https://evil.test%2efcm.googleapis.com/x',
     'too long' => 'https://fcm.googleapis.com/'.str_repeat('a', 3000),
 ] as $name => $ep) {
@@ -298,7 +301,7 @@ $owner = PushSubscription::query()->where('endpoint_hash', PushSubscription::has
 echo '  re-subscribing a known endpoint moves it to the caller: '.($owner === $uid(220) ? 'YES (see report)' : 'no')."\n";
 $check('push unauthenticated', 401, $api('POST', '/push/subscriptions', null, $sub($victimEp)));
 
-$settings->set(['checkin_attempts_per_minute' => 20], null, \Illuminate\Support\Carbon::parse('2000-01-01'));
+$settings->set(['checkin_attempts_per_minute' => 20], null, Carbon::parse('2000-01-01'));
 $codes = [];
 for ($k = 0; $k < 25; $k++) {
     $codes[] = $api('POST', '/me/faceid/register/options', $E(221))[0];
