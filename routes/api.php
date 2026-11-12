@@ -7,6 +7,7 @@ use App\Http\Controllers\FileController;
 use App\Http\Controllers\HealthController;
 use App\Http\Controllers\MeController;
 use App\Http\Controllers\NotificationController;
+use App\Http\Controllers\ProfileController;
 use App\Http\Middleware\EnsureAccountUsable;
 use Illuminate\Support\Facades\Route;
 
@@ -21,6 +22,7 @@ Route::prefix('auth')->group(function () {
     Route::post('/super-admin/code', [AuthController::class, 'requestSuperAdminCode'])->name('auth.super-admin.code');
     Route::post('/recovery', [AuthController::class, 'requestRecovery'])->name('auth.recovery');
     Route::post('/recovery/confirm', [AuthController::class, 'confirmRecovery'])->name('auth.recovery.confirm');
+    Route::post('/email-change/confirm', [ProfileController::class, 'confirmEmailChange'])->name('auth.email-change.confirm');
 });
 
 Route::middleware(['auth:sanctum', EnsureAccountUsable::class])->group(function () {
@@ -28,6 +30,10 @@ Route::middleware(['auth:sanctum', EnsureAccountUsable::class])->group(function 
 
     Route::get('/me', [MeController::class, 'show'])->name('me.show');
     Route::put('/me/password', [MeController::class, 'password'])->name('me.password');
+    Route::patch('/me', [ProfileController::class, 'update'])->name('me.update');
+    Route::post('/me/photo', [ProfileController::class, 'uploadPhoto'])->name('me.photo.store');
+    Route::delete('/me/photo', [ProfileController::class, 'deletePhoto'])->name('me.photo.destroy');
+    Route::post('/me/email', [ProfileController::class, 'requestEmailChange'])->name('me.email');
 
     Route::get('/notifications', [NotificationController::class, 'index'])->name('notifications.index');
     Route::post('/notifications/read-all', [NotificationController::class, 'readAll'])->name('notifications.read-all');
