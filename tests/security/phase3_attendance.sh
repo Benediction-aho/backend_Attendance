@@ -51,8 +51,10 @@ echo "== remote / mission eligibility"
 check remote-not-remote-day 422 "$(api POST /attendance/check-in/intent "$E3" '{"type":"remote"}')"
 TODAY_ISO=$(php -r 'date_default_timezone_set("Africa/Accra"); echo date("N");')
 ALL=$(php -r 'echo json_encode(array_values(array_diff([1,2,3,4,5],[])));')
-check self-select-all-remote 201 "$(api POST /me/work-schedule "$E3" "{\"days_off\":[],\"remote_days\":$ALL}")"
-check remote-same-day-after-self-select 201 "$(api POST /attendance/check-in/intent "$E3" '{"type":"remote"}')"
+check self-select-all-remote 422 "$(api POST /me/work-schedule "$E3" "{\"days_off\":[],\"remote_days\":$ALL}")"  # P3-01 cap
+TODAY=$(date +%u); OTHER=$(( TODAY % 5 + 1 ))
+check self-select-two-remote-incl-today 201 "$(api POST /me/work-schedule "$E3" "{\"days_off\":[],\"remote_days\":[$TODAY,$OTHER],\"effective_from\":\"2020-01-01\"}")"
+check remote-same-day-after-self-select 422 "$(api POST /attendance/check-in/intent "$E3" '{"type":"remote"}')"  # P3-01 next-day effect
 check reselect-schedule 409 "$(api POST /me/work-schedule "$E3" '{"days_off":[],"remote_days":[]}')"
 check days-off-3 422 "$(api POST /me/work-schedule "$E4" '{"days_off":[1,2,3],"remote_days":[]}')"
 check days-off-sunday 422 "$(api POST /me/work-schedule "$E4" '{"days_off":[7],"remote_days":[]}')"

@@ -49,13 +49,15 @@ bash tests/load/parallel_checkin.sh http://localhost:8181/api <first-200-tokens.
 
 | ID | Title | Severity | Status |
 |---|---|---|---|
-| P3-01 | Self-selected remote days unbounded, effective immediately | Medium | Fixed (to re-test) |
-| P3-02 | Reminder retry duplicates / stuck `running` run | Low | Fixed (to re-test) |
-| P3-03 | Intent not bound to device | Low | Fixed (to re-test) |
+| P3-01 | Self-selected remote days unbounded, effective immediately | Medium | Fixed (re-tested 2026-11-12) |
+| P3-02 | Reminder retry duplicates / stuck `running` run | Low | Fixed (re-tested 2026-11-12) |
+| P3-03 | Intent not bound to device | Low | Fixed (re-tested 2026-11-12) |
 | P3-04 | Face ID not enforced yet (phase 4) | Info | Open (phase 4) |
 | P3-05 | Client-declared accuracy | Info | Accepted risk |
 | P3-06 | `checked-in` middleware unused yet | Info | Re-test phase 5 |
-| P3-07 | Raw free text must be escaped by clients | Info | Backend emails verified; frontend to check |
+| P3-08 | Slow live run taken over after staleness window | Info | Accepted (per-recipient claims / idempotent updates) |
+| P3-09 | Crash between recipient claim and send loses that reminder | Info | Accepted (no duplicate preferred) |
+| P3-07 | Raw free text must be escaped by clients | Info | Fixed on backend (re-tested); frontend must render as text |
 
 No Critical or High finding.
 
@@ -105,3 +107,23 @@ Regression tests: `tests/Feature/Attendance/Phase3SecurityFixesTest.php` (+ upda
 - **P3-07**: email templates (`resources/views/emails/simple*.blade.php`) only use `{{ }}`; tests render `StaffAlertMail` from a mission check-in with `<img src=x onerror=…><script>` and with HTML in title/body and assert the output is escaped. In-app notification JSON keeps raw text (frontend must render it as text).
 
 Checks: Pest 275 passed, Larastan 0 errors, Pint clean, rollback/migrate OK.
+
+
+## Re-test after fixes (backend-security-tester, 2026-11-12)
+
+Server: `APP_ENV=production APP_DEBUG=false QUEUE_CONNECTION=sync MAIL_MAILER=log php artisan serve --port=8181`, branch `claude/upbeat-noether-f7defe` at 9071034.
+
+| ID | Result | Evidence |
+|---|---|---|
+| P3-01 | **Fixed** | HTTP: 3 remote days → 422 `remote_days` "at most 2"; `[4,4,4]` → 422; `[today,other]` + forged `effective_from: 2026-11-01` → 201 with `upcoming.effective_from` = tomorrow (client date ignored); same-day `type: remote` intent → 422 `not_remote_day`; second selection → 409 `schedule_locked`. Setting `max_remote_days_per_week` 8 / -1 / "abc" → 422; admin without `manage_settings` → 403. Each selection produced a `schedule_selected` database notification for the `manage_work_schedules` holders and a "Work schedule selected" email in the mail log. |
+| P3-02 | **Fixed** | `tests/security/phase3_fixes.php` (rolled back, 14/14 PASS): one recipient's send throws mid-run → 228 others reminded, run `failed`, victim's claim released, no in-app row for victim; next tick reminds only the victim (1), run `succeeded`, 0 duplicate recipients, third tick no-op. Reminder run left `running` 5 min → not taken over; 16 min → taken over and sent. Runner-level stale takeover for `auto_checkout`, `purge_logs`, `checkin_reminder`: exactly one execution across three attempts; `scheduled_run_stale_minutes`=60 respected (no takeover at 30 min); 0 / 99999 → 422. |
+| P3-03 | **Fixed** | Same user, tokens on device A, device B and a device-less token: intent created with A; confirm with B → 422 `intent_invalid`; with device-less token → 422; with A → 201. |
+| P3-07 | **Fixed (backend)** | No `{!! !!}` in `resources/views`. `StaffAlert::toMail` rendered with `<script>` / `<img onerror>` in title, body and action path: all output HTML-escaped (`&lt;script&gt;`, `&quot;&gt;`). Mission check-in with an XSS reason over HTTP: stored raw in the in-app notification JSON (mission alert is in-app only, no email) → frontend must render as text. |
+
+New observations (Info, no action required):
+- **P3-08** – A run that is still alive but slower than `scheduled_run_stale_minutes` is taken over by a second process, so two copies run in parallel. Safe today: reminder recipients are claimed individually (unique key) and auto check-out only updates rows without a check-out. Any future scheduled job must stay idempotent per item.
+- **P3-09** – The recipient claim is inserted before sending and outside a transaction: if the process dies between the claim and the send, that employee gets no reminder that day. This is the safer choice (no duplicates) and is documented here so it is not "fixed" the other way.
+
+Regression runs: `phase3_attendance.sh` 67/67 PASS (three assertions updated to the fixed P3-01 behaviour, plus one new one), `phase3_clock.php` 20/20 PASS, `phase3_fixes.php` 14/14 PASS, `parallel_checkin.sh` 200 users: 200 intents 201, 200 confirms 201 + 200 duplicate confirms 200, 0 errors, 0 duplicate attendance rows. Note: re-running the HTTP script needs the load users' attendances/schedules reset and `php artisan cache:clear` (rate limiter), otherwise 409/429 appear.
+
+Still no Critical or High finding open. P3-04 (Face ID, phase 4) and P3-06 (`checked-in` middleware, phase 5) remain scheduled for re-test.
