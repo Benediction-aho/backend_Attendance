@@ -54,7 +54,7 @@ class AdminReportController
         }
         $data = $request->validate(['date' => ['nullable', 'date_format:Y-m-d']]);
         $week = $this->builder->weekly($user, $data['date'] ?? $this->calendar->workDate());
-        if (! $admin->hasPermission(Permission::ViewClients)) {
+        if (! self::canSeeWeeklyClients($admin)) {
             unset($week['clients']);
         }
 
@@ -92,7 +92,7 @@ class AdminReportController
     public function submission(Request $request, string $submission): JsonResponse
     {
         // Authorization before the lookup: no existence oracle for callers without the tier.
-        $this->authorize($request, [Permission::ViewReports, Permission::ReceiveWeeklyReports]);
+        $admin = $this->authorize($request, [Permission::ViewReports, Permission::ReceiveWeeklyReports]);
         $submission = WeeklyReportSubmission::query()->with('user')->find((int) $submission)
             ?? throw new ApiError(404, 'Not found.', 'not_found');
         $versions = WeeklyReportSubmission::query()->with('user')->where('user_id', $submission->user_id)
@@ -101,9 +101,21 @@ class AdminReportController
 
         return response()->json(['data' => $this->weekly->present($submission, true) + [
             'versions' => $versions->map(fn ($v) => $this->weekly->present($v))->values(),
-            // SPECS 7: the report comes with the employee's clients of the week.
-            'week' => ['clients_count' => $week['clients_count'], 'services' => $week['services'], 'clients' => $week['clients']],
+            // SPECS 7: the report comes with the employee's clients of the week (names: P5-02 rule below).
+            'week' => ['clients_count' => $week['clients_count'], 'services' => $week['services']]
+                + (self::canSeeWeeklyClients($admin) ? ['clients' => $week['clients']] : []),
         ]]);
+    }
+
+    /**
+     * P5-02 rule (one place): client names of a week are shown to super admins, view_clients holders and
+     * receive_weekly_reports holders (SPECS 7: the weekly report sent to the recipients is accompanied by
+     * each employee's client list; the same list is in their weekly emails). view_reports alone: counts and
+     * services only. Daily reports keep requiring view_clients.
+     */
+    public static function canSeeWeeklyClients(User $admin): bool
+    {
+        return $admin->hasPermission(Permission::ViewClients) || $admin->hasPermission(Permission::ReceiveWeeklyReports);
     }
 
     /** @param list<Permission> $anyOf */

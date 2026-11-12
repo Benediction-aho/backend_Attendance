@@ -56,14 +56,14 @@ Scripts:
 
 | ID | Title | Severity | Status |
 |---|---|---|---|
-| P5-02 | Client names on submission endpoint without `view_clients` | Medium | Open |
-| P5-05 | 30 MB attachment threshold vs Base64/provider limit, lost delivery | Medium | Open |
-| P5-01 | NUL bytes truncate stored text | Low | Open |
-| P5-04 | On-time report replaced after close not counted | Low | Open |
-| P5-03 | Polyglot PDF accepted (served with CSP none) | Info | Open |
-| P5-06 | Suggestions share other employees' free text | Info | Open |
-| P5-07 | Late versions each re-forwarded | Info | Open |
-| P5-08 | PDF size setting above PHP limits | Info | Open |
+| P5-02 | Client names on submission endpoint without `view_clients` | Medium | Fixed |
+| P5-05 | 30 MB attachment threshold vs Base64/provider limit, lost delivery | Medium | Fixed |
+| P5-01 | NUL bytes truncate stored text | Low | Fixed |
+| P5-04 | On-time report replaced after close not counted | Low | Fixed |
+| P5-03 | Polyglot PDF accepted (served with CSP none) | Info | Fixed (hardened) |
+| P5-06 | Suggestions share other employees' free text | Info | Accepted (rendered as text) |
+| P5-07 | Late versions each re-forwarded | Info | Fixed |
+| P5-08 | PDF size setting above PHP limits | Info | Fixed |
 
 No Critical or High finding.
 
@@ -78,3 +78,16 @@ No Critical or High finding.
 - **Jobs (frozen clock)**: weekly close missed on Friday and run twice on Saturday → one email per active recipient, blocked admin excluded; reminder not sent after the close; monthly missed on the 26th, run twice on the 27th → one email to the super admin + the listed active admin only (employee id and blocked admin id in `monthly_report_recipient_ids` ignored).
 - **Monthly PDF**: period 26 Oct → 26 Nov inclusive (26 Oct counted, 25 Oct excluded); HTML in employee names and services rendered as literal text (`<img src="file:///etc/passwd">`, `<link href=http://127.0.0.1:1/…>` not fetched, no file content); DomPDF `enable_remote` false, `enable_php` false (package defaults; recommend publishing `config/dompdf.php` to pin them and set `enable_javascript` false).
 - **Emails**: `<script>` in client/employee names escaped in the HTML part of `WeeklyReportsMail`.
+
+## Fixes applied (attendance-backend, 2026-11-12)
+
+Regression tests: `tests/Feature/Reports/Phase5FixesTest.php` (10 tests); `tests/security/Phase5SecurityTest.php` 23/23 green.
+
+- **P5-01** – Global middleware `App\Http\Middleware\RejectControlCharacters`: NUL / C0 controls (except tab, LF, CR) / DEL in any query, form or JSON key or value → 422 `invalid_characters`.
+- **P5-02** – Rule decided from SPECS 7 (weekly report accompanied by each employee's client list): client names of a week are visible to super admins, `view_clients` and `receive_weekly_reports` holders; `view_reports` alone gets counts and services only. Single helper `AdminReportController::canSeeWeeklyClients`, applied to the submission endpoint, the user weekly endpoint and the weekly email recipients. The security test `P5-02` was updated to this decision (receiver sees names on both endpoints); `P5-02b` (view_reports only) passes.
+- **P5-03** – `/files/*`: `Content-Disposition: attachment; filename="report.pdf"`, CSP `default-src 'none'; sandbox; …`; S3 pre-signed URLs set `ResponseContentDisposition`; uploads stored with `ContentType: application/pdf`; PDFs with `/JavaScript`, `/JS`, `/Launch`, `/EmbeddedFile(s)`, `/RichMedia` (including `#xx` escapes) → 422 `pdf_active_content`. Limit: compressed object streams are not decoded.
+- **P5-04** – `reports:weekly-close` takes, per employee, the highest version with `submitted_at <= close` (not `is_current`).
+- **P5-05** – Attach only if raw ≤ `email_attachments_max_mb` (default 20, max 28) and `ceil(raw × 4/3 × 1.03) + 1 MB ≤ MAIL_PROVIDER_MAX_MB` (40). New `report_deliveries.delivered_at`, set by `WeeklyReportsMail::send()` only after a successful send; `failed()` (after 3 tries) re-queues the link-only version for the same recipient and delivery.
+- **P5-06** – Accepted: labels are plain text, the frontend renders them as text.
+- **P5-07** – Only the first version received after the close is forwarded; later replacements are visible in the application only.
+- **P5-08** – `docker/php.ini` 20M / 22M; `report_pdf_max_mb` max 20.

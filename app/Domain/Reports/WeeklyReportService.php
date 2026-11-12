@@ -5,6 +5,7 @@ namespace App\Domain\Reports;
 use App\Domain\Attendance\WorkCalendar;
 use App\Enums\LogLevel;
 use App\Exceptions\ApiError;
+use App\Http\Controllers\Reports\AdminReportController;
 use App\Jobs\ForwardWeeklySubmission;
 use App\Mail\WeeklyReportsMail;
 use App\Models\User;
@@ -49,6 +50,19 @@ class WeeklyReportService
         return str_starts_with($head, '%PDF-');
     }
 
+    /**
+     * P5-03: PDFs carrying scripts, launch actions or embedded files are refused (staff open them in desktop
+     * readers from the email attachments). Name tokens written with #xx escapes are decoded first.
+     * Content hidden inside compressed object streams is not inspected (defence in depth only).
+     */
+    public static function hasActiveContent(UploadedFile $file): bool
+    {
+        $bytes = (string) @file_get_contents((string) $file->getRealPath());
+        $bytes = (string) preg_replace_callback('/#([0-9A-Fa-f]{2})/', fn ($m) => chr((int) hexdec($m[1])), $bytes);
+
+        return preg_match('~/(JavaScript|JS|Launch|EmbeddedFiles?|RichMedia)(?![A-Za-z0-9])~', $bytes) === 1;
+    }
+
     public function store(User $user, UploadedFile $file): WeeklyReportSubmission
     {
         $now = $this->calendar->now();
@@ -60,7 +74,7 @@ class WeeklyReportService
         $deadline = $this->window->deadlineFor($user, $target['window_date']);
         $disk = Storage::disk(FileUrls::disk());
         $path = 'weekly-reports/'.$user->id.'/'.$target['week_start'].'/'.Str::uuid()->toString().'.pdf';
-        $disk->putFileAs(dirname($path), $file, basename($path));
+        $disk->putFileAs(dirname($path), $file, basename($path), ['ContentType' => 'application/pdf']);
 
         try {
             $submission = DB::transaction(function () use ($user, $file, $target, $now, $deadline, $path) {
@@ -94,7 +108,12 @@ class WeeklyReportService
             context: ['submission_id' => $submission->id, 'week_start' => $target['week_start'], 'late' => $submission->is_late]);
 
         // Received after the Friday close: forwarded directly to the authorized staff (in-app + email).
-        if ($now->gt($this->window->closesAt($target['window_date']))) {
+        // P5-07: only the first version received after the close is forwarded; later replacements of the same
+        // employee-week are not re-sent (visible in the application, current version + history).
+        $close = $this->window->closesAt($target['window_date']);
+        $firstAfterClose = ! WeeklyReportSubmission::query()->where('user_id', $user->id)->whereDate('week_start', $target['week_start'])
+            ->where('id', '!=', $submission->id)->where('submitted_at', '>', $close)->exists();
+        if ($now->gt($close) && $firstAfterClose) {
             ForwardWeeklySubmission::dispatch($submission->id)->afterCommit();
         }
 
@@ -120,6 +139,20 @@ class WeeklyReportService
     }
 
     /**
+     * P5-05: attachments are Base64-encoded in the email (×4/3, plus line breaks and MIME headers). They are
+     * attached only if the raw total stays under email_attachments_max_mb AND the encoded size plus a margin
+     * for the body stays under the provider's per-email limit (mail.provider_max_mb, Resend: 40 MB).
+     */
+    public function fitsInEmail(int $rawBytes): bool
+    {
+        $mb = 1024 * 1024;
+        $encoded = (int) ceil($rawBytes * 4 / 3 * 1.03) + (int) config('mail.size_margin_bytes', $mb);
+
+        return $rawBytes <= $this->settings->int('email_attachments_max_mb') * $mb
+            && $encoded <= (int) config('mail.provider_max_mb', 40) * $mb;
+    }
+
+    /**
      * Sends one notification + email per recipient, recording each delivery (a retry skips those done).
      *
      * @param  Collection<int, WeeklyReportSubmission>  $submissions
@@ -127,9 +160,10 @@ class WeeklyReportService
      */
     public function deliver(string $kind, string $ref, string $title, string $body, string $path, Collection $submissions, ?Collection $recipients = null): int
     {
-        $recipients ??= $this->recipients->weekly();
-        $total = (int) $submissions->sum('size_bytes');
-        $attach = $total <= $this->settings->int('email_attachments_max_mb') * 1024 * 1024;
+        // The email lists client names: only accounts allowed to see weekly client lists receive it (P5-02).
+        $recipients = ($recipients ?? $this->recipients->weekly())
+            ->filter(fn (User $u) => AdminReportController::canSeeWeeklyClients($u))->values();
+        $attach = $this->fitsInEmail((int) $submissions->sum('size_bytes'));
         $lines = [$body];
         foreach ($submissions as $s) {
             /** @var WeeklyReportSubmission $s */
@@ -153,7 +187,9 @@ class WeeklyReportService
             }
             try {
                 $recipient->notifyNow(new ReportNotice($kind, $title, $body, $path, ['submission_ids' => $ids]));
-                Mail::to($recipient->email)->queue(new WeeklyReportsMail($title, $lines, $ids, $attach));
+                // The delivery row is a claim; delivered_at is set by the mail itself once actually sent, and a
+                // permanent failure of the attachment version falls back to the link-only version (P5-05).
+                Mail::to($recipient->email)->queue((new WeeklyReportsMail($title, $lines, $ids, $attach))->forDelivery($kind, $ref, $recipient->id));
                 $sent++;
             } catch (Throwable $e) {
                 DB::table('report_deliveries')->where(['kind' => $kind, 'ref' => $ref, 'user_id' => $recipient->id])->delete();

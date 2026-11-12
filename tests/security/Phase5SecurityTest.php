@@ -12,7 +12,6 @@ use App\Enums\UserStatus;
 use App\Mail\MonthlyReportMail;
 use App\Mail\WeeklyReportsMail;
 use App\Models\Client;
-use App\Models\Leave;
 use App\Models\Task;
 use App\Models\User;
 use App\Models\WeeklyReportSubmission;
@@ -200,10 +199,11 @@ describe('admin report tiers', function () {
     });
 
     // P5-02
-    it('P5-02 does not leak client names on the submission endpoint without view_clients', function () {
-        Sanctum::actingAs(User::factory()->admin(Permission::ReceiveWeeklyReports)->create());
-        $body = $this->getJson("/api/admin/reports/weekly/submissions/{$this->sub->id}")->assertOk()->getContent();
-        expect($body)->not->toContain('CLIENT-NAME');
+    // P5-02 decision (SPECS 7): weekly-report recipients get the client list with the report.
+    it('P5-02 shows client names to receive_weekly_reports holders (SPECS 7), consistently', function () {
+        Sanctum::actingAs(User::factory()->admin(Permission::ReceiveWeeklyReports, Permission::ViewReports)->create());
+        expect($this->getJson("/api/admin/reports/weekly/submissions/{$this->sub->id}")->assertOk()->getContent())->toContain('CLIENT-NAME');
+        expect($this->getJson("/api/admin/users/{$this->e->id}/reports/weekly?date=2026-11-16")->assertOk()->getContent())->toContain('CLIENT-NAME');
     });
 
     it('P5-02b does not leak client names on the submission endpoint with view_reports only', function () {
@@ -227,7 +227,7 @@ describe('weekly upload abuse', function () {
         Sanctum::actingAs($this->u);
         $this->postJson('/api/me/reports/weekly/submission', ['file' => pdfUpload()])->assertStatus(422)->assertJsonPath('code', 'window_not_open');
         at('2026-11-20 16:05');
-        foreach (["MZ\x90\x00", '', "<html><script>alert(1)</script>%PDF-1.4", " %PDF-1.4\n"] as $bad) {
+        foreach (["MZ\x90\x00", '', '<html><script>alert(1)</script>%PDF-1.4', " %PDF-1.4\n"] as $bad) {
             $this->postJson('/api/me/reports/weekly/submission', ['file' => pdfBytes($bad)])->assertStatus(422);
         }
         $this->postJson('/api/me/reports/weekly/submission', ['file' => pdfUpload('x.pdf', 10 * 1024 + 1)])->assertStatus(422);
@@ -276,7 +276,7 @@ describe('weekly upload abuse', function () {
             ->assertStatus(201)->assertJsonPath('data.is_late', true)->assertJsonPath('data.week_start', '2026-11-16');
     });
 
-    it('forwards each late version separately (spam bound = version cap)', function () {
+    it('forwards only the first late version (P5-07)', function () {
         $admin = User::factory()->admin(Permission::ReceiveWeeklyReports)->create();
         at('2026-11-20 18:00');
         Sanctum::actingAs($this->u);
@@ -284,7 +284,8 @@ describe('weekly upload abuse', function () {
             $this->postJson('/api/me/reports/weekly/submission', ['file' => pdfUpload()])->assertStatus(201);
         }
         Mail::assertQueued(WeeklyReportsMail::class, fn ($m) => $m->hasTo($admin->email));
-        expect(Mail::queued(WeeklyReportsMail::class, fn ($m) => $m->hasTo($admin->email))->count())->toBe(3);
+        // P5-07: only the first version received after the close is forwarded.
+        expect(Mail::queued(WeeklyReportsMail::class, fn ($m) => $m->hasTo($admin->email))->count())->toBe(1);
     });
 
     // P5-04: a version replaced after the close removes the on-time one from the 17:00 count.

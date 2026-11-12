@@ -115,4 +115,11 @@ return [
         'name' => env('MAIL_FROM_NAME', env('APP_NAME', 'Laravel')),
     ],
 
+    /*
+    | Provider per-email size limit (Resend: 40 MB including Base64-encoded attachments) and the margin
+    | kept for the body and MIME headers. Used to decide whether weekly PDFs are attached (P5-05).
+    */
+    'provider_max_mb' => (int) env('MAIL_PROVIDER_MAX_MB', 40),
+    'size_margin_bytes' => 1024 * 1024,
+
 ];

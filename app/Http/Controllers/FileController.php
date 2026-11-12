@@ -24,7 +24,20 @@ class FileController
         return $disk->response($path, null, [
             'Cache-Control' => 'private, max-age=60',
             'X-Content-Type-Options' => 'nosniff',
-            'Content-Disposition' => 'inline',
+            // P5-03: downloaded as an attachment with a fixed safe name, in a sandbox if opened anyway.
+            'Content-Disposition' => 'attachment; filename="'.self::safeName($path).'"',
+            'Content-Security-Policy' => "default-src 'none'; sandbox; frame-ancestors 'none'; base-uri 'none'",
         ]);
+    }
+
+    public static function safeName(string $path): string
+    {
+        $ext = strtolower(pathinfo($path, PATHINFO_EXTENSION));
+
+        return match ($ext) {
+            'pdf' => 'report.pdf',
+            'jpg', 'jpeg', 'png', 'webp' => 'file.'.$ext,
+            default => 'file',
+        };
     }
 }

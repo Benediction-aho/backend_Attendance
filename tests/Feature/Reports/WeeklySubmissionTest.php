@@ -204,14 +204,14 @@ describe('Friday close (17:00) and late forwarding', function () {
             ->and(ScheduledRun::query()->where('run_key', 'weekly_close:2026-11-20')->value('status'))->toBe('succeeded');
         expect(DB::table('notifications')->where('notifiable_id', $super->id)->value('data'))->toContain('Not received: Fosty Fofana');
 
-        // Late upload: forwarded directly (in-app + email), replacement forwarded again.
+        // Late upload: forwarded directly (in-app + email); a later replacement is not re-sent (P5-07).
         at('2026-11-20 18:00');
         attend($b, '2026-11-20');
         submit($this, $b)->assertCreated()->assertJsonPath('data.is_late', true);
         Mail::assertQueued(WeeklyReportsMail::class, fn ($m) => $m->hasTo($receiver->email) && str_starts_with($m->title, 'Late weekly report from Fosty Fofana'));
         expect(notificationsOf($receiver, 'weekly_forward'))->toBe(1)->and(WeeklyReportSubmission::query()->where('user_id', $b->id)->value('forwarded_at'))->not->toBeNull();
         submit($this, $b)->assertCreated();
-        expect(notificationsOf($receiver, 'weekly_forward'))->toBe(2);
+        expect(notificationsOf($receiver, 'weekly_forward'))->toBe(1);
     });
 
     it('sends secure in-app links instead of attachments above the size limit, even when nobody sent a report', function () {

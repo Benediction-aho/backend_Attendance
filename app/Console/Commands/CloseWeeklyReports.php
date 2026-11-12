@@ -37,8 +37,11 @@ class CloseWeeklyReports extends Command
             }
             $runner->once('weekly_close', 'weekly_close:'.$windowDate, $close, function () use ($window, $service, $logger, $week, $windowDate, $close) {
                 $expected = $window->expectedEmployees($windowDate);
-                $received = WeeklyReportSubmission::query()->with('user')->whereDate('week_start', $week)->where('is_current', true)
-                    ->where('submitted_at', '<=', $close)->orderBy('id')->get();
+                // P5-04: the latest version submitted before the close counts (and is attached), even if it was
+                // replaced after the close; later versions are forwarded separately.
+                $received = WeeklyReportSubmission::query()->with('user')->whereDate('week_start', $week)
+                    ->where('submitted_at', '<=', $close)->orderByDesc('version')->get()
+                    ->unique('user_id')->sortBy('id')->values();
                 $count = $received->whereIn('user_id', $expected->pluck('id')->all())->count();
                 $title = 'Weekly reports: '.$count.' of '.$expected->count().' received';
                 $body = "{$count} of {$expected->count()} expected employee(s) sent their weekly report for the week of "
