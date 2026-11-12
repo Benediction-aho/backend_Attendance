@@ -43,7 +43,16 @@ See `README.md` (PHP + local PostgreSQL, or `docker compose up --build`).
 | 7 – Quality and pilot | Not started | – | |
 | 8 – Production deployment | Not started | – | Requires the owner's written approval below |
 
+## Deployment (attendance-deploy, 2026-11-12)
+- CI backend (`backend-ci`): job `test` (Pint, Larastan, Pest on Postgres 16, reversible migrations) green; new job `docker-build` builds the production image (no push) and smoke-tests `/api/health` + absence of `Server`/`X-Powered-By` headers. Status: see log below.
+- CI frontend (`frontend-ci`): green (lint, format, typecheck, unit tests, build).
+- Supabase `ynspiijfjpumatmszmhx` (Attendance_Manager, eu-west-1, Postgres 17): ACTIVE_HEALTHY, security advisors: no findings. No migration applied (phase 1). Note: CI uses Postgres 16, Supabase runs 17 – align CI to 17 in phase 1.
+- Vercel: **blocked** – the Vercel connection used by the agents has no access to the account scope `benediction-ahouanse-s-projects` (403). No project created.
+- Backend test host: not chosen; Render procedure ready in `docs/DEPLOYMENT.md` (backend repo).
+
 ## Blocked / questions for the owner
+- **Vercel (owner action)**: either (a) in Vercel, grant the Claude/MCP Vercel integration access to the personal scope "benediction-ahouanse-s-projects" (Vercel dashboard > Settings > Integrations/Connected apps, or re-authorize the Vercel connector in claude.ai Settings > Connectors and select that scope), then ask the deploy agent to retry; or (b) create it yourself: Add New > Project > import `Benediction-aho/frontend_Attendance` (install the Vercel GitHub app on that repo if asked), framework Vite, build `npm run build`, output `dist`, env `VITE_API_URL=https://api.example.invalid/api` (Preview + Production). Preview deployments of `claude/upbeat-noether-f7defe` are then automatic.
+- **Backend test host**: approve Render (or another host) and create the account; then provide in Render secrets (never in chat): Supabase DB password, Resend API key, Sentry DSN, VAPID keys. Steps: `docs/DEPLOYMENT.md` section 3.
 - Accounts to provide (see `PLAN_DEVELOPPEMENT.md` section 8): Supabase, Resend + sending domain, Vercel, backend test host.
 
 ## Owner approval for production

@@ -1,0 +1,92 @@
+# Deployment
+
+Status: **test environment in preparation (phase 0)**. Production (phase 8) only after the owner's written
+approval in `docs/PROGRESS.md`. Secrets never go in the repository: only variable **names** appear here.
+
+## 1. Environments
+
+| Component | Test | Production (phase 8) |
+|---|---|---|
+| Frontend (React PWA) | Vercel project, preview deployments of the dev branch | Vercel, custom domain (also the WebAuthn RP ID) |
+| API | Docker image on Render (proposed, awaiting owner approval), role `app` | Same image, same host type |
+| Queue worker | Same image, role `worker` (Render background worker) | Same |
+| Scheduler | Same image, role `scheduler` (exactly one instance) | Same |
+| Database | Supabase project `ynspiijfjpumatmszmhx` (Postgres 17, eu-west-1) | Separate Supabase project |
+| Files | Supabase Storage (S3 protocol, private bucket) | Same, separate bucket/project |
+| CI | GitHub Actions: Pint, Larastan, Pest on Postgres, reversible migrations, `docker build` + `/api/health` smoke test | Same |
+
+One image for all roles and environments (`Dockerfile`, see `docs/DOCKER.md`); only environment variables differ.
+
+## 2. Required variables (names only)
+Values live in the host's secret settings, never in Git.
+
+- App: `APP_NAME`, `APP_ENV`, `APP_KEY`, `APP_DEBUG` (=false), `APP_URL`, `FRONTEND_URL`, `CORS_ALLOWED_ORIGINS`, `TRUSTED_PROXIES`, `LOG_CHANNEL` (=stderr), `LOG_LEVEL`
+- Role: `CONTAINER_ROLE` (`app` | `worker` | `scheduler`), `RUN_MIGRATIONS` (true on `app` only), `PORT` (Render sets it; image default 8080)
+- Database: `DB_CONNECTION` (=pgsql), `DB_HOST`, `DB_PORT`, `DB_DATABASE`, `DB_USERNAME`, `DB_PASSWORD`, `DB_SSLMODE` (=require)
+- Session/cache/queue: `SESSION_DRIVER`, `SESSION_SECURE_COOKIE` (=true), `SESSION_ENCRYPT`, `QUEUE_CONNECTION` (=database), `CACHE_STORE` (=database)
+- Mail: `MAIL_MAILER` (=resend), `MAIL_FROM_ADDRESS`, `MAIL_FROM_NAME`, `RESEND_API_KEY`
+- Storage: `FILESYSTEM_DISK`, `AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY`, `AWS_DEFAULT_REGION`, `AWS_BUCKET`, `AWS_ENDPOINT`, `AWS_USE_PATH_STYLE_ENDPOINT` (=true)
+- Monitoring: `SENTRY_DSN`
+- Web Push: `VAPID_SUBJECT`, `VAPID_PUBLIC_KEY`, `VAPID_PRIVATE_KEY`
+- Frontend (Vercel): `VITE_API_URL` (later also `VITE_SENTRY_DSN`, `VITE_VAPID_PUBLIC_KEY`)
+
+## 3. Backend test host on Render (ready once the owner approves Render)
+
+Prerequisites from the owner: a Render account connected to GitHub with access to `backend_Attendance`;
+the Supabase database password; Resend key; Sentry DSN.
+
+### 3.1 Supabase connection (pooler)
+Render does not provide IPv6 egress reliably and the direct host `db.<ref>.supabase.co` is IPv6-only, so use
+the **Supavisor pooler** (Supabase dashboard > Connect):
+- `DB_HOST` = `aws-0-eu-west-1.pooler.supabase.com` (copy the exact host from the dashboard)
+- `DB_USERNAME` = `postgres.ynspiijfjpumatmszmhx`
+- `DB_DATABASE` = `postgres`, `DB_SSLMODE` = `require`
+- **Session mode, port 5432** for the `app`, `worker` and `scheduler` services and for migrations
+  (Laravel uses prepared statements and advisory locks; transaction mode port 6543 breaks them).
+- Keep the total connection count under the plan's pooler limit (each PHP process = 1 connection).
+
+### 3.2 Services (Blueprint or dashboard), all "Docker" runtime, region Frankfurt (closest to eu-west-1)
+1. **Web service** `attendance-api`
+   - Repository `backend_Attendance`, branch = dev branch for test, Dockerfile path `./Dockerfile`.
+   - Env: all variables of section 2, plus `CONTAINER_ROLE=app`, `RUN_MIGRATIONS=true`.
+   - Health check path: `/api/health`.
+   - `TRUSTED_PROXIES=*`: Render's load balancer terminates TLS and its internal IPs are not fixed; the
+     container is only reachable through that proxy, so trusting all proxies is safe here and needed for
+     correct client IPs (rate limiting, logs) and `https` URLs.
+   - Auto-deploy on push: on.
+2. **Background worker** `attendance-worker`: same repo/Dockerfile, `CONTAINER_ROLE=worker`, `RUN_MIGRATIONS=false`.
+   Render restarts it on each deploy (picks up the new code).
+3. **Scheduler**: either a second background worker `attendance-scheduler` with `CONTAINER_ROLE=scheduler`
+   (exactly 1 instance, recommended: `schedule:work` runs every minute), or a Render **Cron Job** with schedule
+   `* * * * *` and command `php artisan schedule:run` (`CONTAINER_ROLE` irrelevant). Never both.
+4. Use an **Environment Group** for the shared variables, attached to all three services.
+5. Custom domain (test): optional; CORS `CORS_ALLOWED_ORIGINS` must list the Vercel preview origin.
+6. Once live, set the frontend `VITE_API_URL` on Vercel to `https://<api-host>/api` and redeploy.
+
+Free-plan note: free web services sleep after inactivity and workers are not free; the scheduler and
+reminders need an always-on paid instance (Starter) for meaningful tests.
+
+## 4. Deploy procedure
+1. CI green on the commit (tests + Docker build).
+2. Push to the deploy branch; Render builds the image once per service.
+3. `app` runs `migrate --force` at start. Migrations must be **expand/contract** (additive first, remove
+   columns in a later release) so the previous image still works during the rollout.
+4. Render switches traffic after `/api/health` passes (zero-downtime).
+
+## 5. Rollback
+1. Render dashboard > service > Events > previous successful deploy > **Rollback** (redeploys the previous
+   image without rebuilding). Do it for `app`, `worker` and scheduler.
+2. If the faulty release ran a destructive migration, restore from backup (section 6) instead; additive
+   migrations need no rollback.
+3. Frontend: Vercel > Deployments > previous deployment > **Instant Rollback**.
+
+## 6. Backups and restore
+- Supabase daily backups (paid plan; PITR optional). Test env: free plan has no downloadable backups, so a
+  nightly `pg_dump` job will be added in phase 7.
+- Restore drill (to document with real timings in phase 7): restore into a new Supabase project or a branch,
+  point a staging `app` at it, run `/api/health` and a smoke login.
+
+## 7. Monitoring
+- Sentry for backend (`SENTRY_DSN`) and frontend.
+- Uptime check (e.g. Better Stack / UptimeRobot) on `https://<api-host>/api/health` every minute.
+- Scheduler heartbeat: `scheduled_runs` table (phase 1+) plus an alert when a job has not run in time.
