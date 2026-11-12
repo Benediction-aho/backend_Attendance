@@ -1,5 +1,6 @@
 <?php
 
+use App\Models\ActivityLog;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Route;
 
@@ -73,4 +74,10 @@ it('honours configured trusted proxies in the HTTP stack', function () {
         ->withHeader('X-Forwarded-For', '203.0.113.9')
         ->getJson('/api/_ip')
         ->assertJsonPath('ip', '203.0.113.9');
+});
+
+it('answers guests with a JSON 401 even without an Accept header, and logs nothing (P1-04)', function () {
+    $this->get('/api/me')->assertStatus(401)->assertJsonPath('message', 'Unauthenticated.');
+    $this->get('/api/admin/users', ['Authorization' => 'Bearer 1|forged'])->assertStatus(401);
+    expect(ActivityLog::query()->where('event', 'server.error')->count())->toBe(0);
 });

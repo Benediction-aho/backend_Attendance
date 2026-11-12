@@ -26,6 +26,8 @@ return Application::configure(basePath: dirname(__DIR__))
         $middleware->prepend(SecurityHeaders::class);
         $middleware->replace(Illuminate\Http\Middleware\TrustProxies::class, TrustProxies::class);
         $middleware->throttleApi();
+        // API only: guests are never redirected to a "login" route, they get a JSON 401 (P1-04).
+        $middleware->redirectGuestsTo(fn () => null);
     })
     ->withExceptions(function (Exceptions $exceptions): void {
         // API-only: every error is JSON, never an HTML page.
