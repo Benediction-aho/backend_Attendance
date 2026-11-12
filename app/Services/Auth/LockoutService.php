@@ -41,35 +41,26 @@ class LockoutService
         return hash('sha256', 'account|'.User::normalizeEmail($email));
     }
 
-    /** Refuses the attempt (without checking the password) while the bucket is blocked or locked. */
-    public function ensureCanAttempt(string $accountKey, string $scope, string $bucketKey, ?User $user): void
+    /**
+     * Reserves one attempt BEFORE the secret is checked (security report P1-01), atomically under a row lock:
+     * refuses while the bucket is blocked or locked, otherwise counts the attempt as a failure in advance.
+     * When this attempt completes a series, the block (or lock) is applied immediately, so parallel requests
+     * can never check more than "failures per series" secrets nor skip a block stage.
+     * A correct secret then calls reset(); a wrong one calls failed() with the returned outcome.
+     *
+     * @return 'failed'|'blocked'|'locked' what this attempt means if the secret turns out to be wrong
+     */
+    public function reserve(string $accountKey, string $scope, string $bucketKey, ?User $user): string
     {
         if ($user !== null && $user->status === UserStatus::Locked) {
             throw $this->lockedError();
         }
 
-        $attempt = LoginAttempt::query()->where(['account_key' => $accountKey, 'scope' => $scope, 'bucket_key' => $bucketKey])->first();
-        if ($attempt === null) {
-            return;
-        }
-        if ($attempt->locked_at !== null) {
-            throw $this->lockedError();
-        }
-        if ($attempt->blocked_until !== null && $attempt->blocked_until->isFuture()) {
-            throw $this->blockedError($attempt->blocked_until);
-        }
-    }
-
-    /**
-     * Records a failed attempt. Returns the error to send when this failure starts a block or a lock.
-     */
-    public function recordFailure(string $accountKey, string $scope, string $bucketKey, ?User $user): ?ApiError
-    {
         $perSeries = $this->settings->int('lockout_failures_per_series');
         $blocks = $this->settings->intList('lockout_block_minutes');
         $now = Carbon::now();
 
-        /** @var array{0: string, 1: LoginAttempt} $outcome */
+        /** @var array{0: string, 1: ?ApiError} $outcome */
         $outcome = DB::transaction(function () use ($accountKey, $scope, $bucketKey, $user, $perSeries, $blocks, $now) {
             DB::table('login_attempts')->insertOrIgnore([
                 'account_key' => $accountKey, 'scope' => $scope, 'bucket_key' => $bucketKey,
@@ -79,6 +70,13 @@ class LockoutService
             $attempt = LoginAttempt::query()
                 ->where(['account_key' => $accountKey, 'scope' => $scope, 'bucket_key' => $bucketKey])
                 ->lockForUpdate()->firstOrFail();
+
+            if ($attempt->locked_at !== null) {
+                return ['refused', $this->lockedError()];
+            }
+            if ($attempt->blocked_until !== null && $attempt->blocked_until->gt($now)) {
+                return ['refused', $this->blockedError($attempt->blocked_until)];
+            }
 
             $attempt->failures++;
             $attempt->last_failed_at = $now;
@@ -99,27 +97,45 @@ class LockoutService
             }
             $attempt->save();
 
-            return [$result, $attempt];
+            return [$result, null];
         });
 
-        [$result, $attempt] = $outcome;
-        $context = ['scope' => $scope, 'series' => $attempt->series, 'account' => substr($accountKey, 0, 12)];
+        [$result, $error] = $outcome;
+        if ($error !== null) {
+            throw $error;
+        }
 
-        if ($result === 'failed') {
+        /** @var 'failed'|'blocked'|'locked' $result */
+        return $result;
+    }
+
+    /**
+     * Completes a reserved attempt whose secret was wrong: logs it and, when it started a block or a lock,
+     * returns the error to send (and runs the lock side effects). Returns null for a plain failure.
+     *
+     * @param  'failed'|'blocked'|'locked'  $outcome
+     */
+    public function failed(string $accountKey, string $scope, string $bucketKey, ?User $user, string $outcome, bool $lockSideEffects = true): ?ApiError
+    {
+        $attempt = LoginAttempt::query()->where(['account_key' => $accountKey, 'scope' => $scope, 'bucket_key' => $bucketKey])->first();
+        $context = ['scope' => $scope, 'series' => $attempt->series ?? 0, 'account' => substr($accountKey, 0, 12)];
+
+        if ($outcome === 'failed') {
             $this->logger->security('auth.login_failed', 'Failed sign-in attempt', LogLevel::Warning, $user, context: $context);
 
             return null;
         }
 
-        if ($result === 'blocked' && $attempt->blocked_until !== null) {
-            $this->logger->security('auth.login_blocked', 'Sign-in blocked after repeated failures', LogLevel::Warning, $user, context: $context + ['until' => $attempt->blocked_until->toIso8601String()]);
+        if ($outcome === 'blocked') {
+            $until = $attempt->blocked_until ?? Carbon::now()->addMinute();
+            $this->logger->security('auth.login_blocked', 'Sign-in blocked after repeated failures', LogLevel::Warning, $user, context: $context + ['until' => $until->toIso8601String()]);
 
-            return $this->blockedError($attempt->blocked_until);
+            return $this->blockedError($until);
         }
 
         $this->logger->security('auth.device_locked', $scope === LoginAttempt::SCOPE_DEVICE ? 'Sign-in locked on a device' : 'Sign-in locked for unknown devices', LogLevel::Critical, $user, context: $context);
 
-        if ($user !== null) {
+        if ($user !== null && $lockSideEffects) {
             $this->onLocked($user, $accountKey);
         }
 
@@ -149,7 +165,8 @@ class LockoutService
 
     private function onLocked(User $user, string $accountKey): void
     {
-        $lockedBuckets = LoginAttempt::query()->where('account_key', $accountKey)->whereNotNull('locked_at')->count();
+        $lockedBuckets = LoginAttempt::query()->where('account_key', $accountKey)
+            ->whereIn('scope', [LoginAttempt::SCOPE_DEVICE, LoginAttempt::SCOPE_UNKNOWN])->whereNotNull('locked_at')->count();
         $wholeAccount = $lockedBuckets >= $this->settings->int('lockout_multi_device_threshold');
 
         if ($wholeAccount && $user->status === UserStatus::Active) {

@@ -42,10 +42,6 @@ class AppServiceProvider extends ServiceProvider
                 ->by($user instanceof User ? 'user:'.$user->id : 'ip:'.$request->ip());
         });
         RateLimiter::for('client-errors', fn (Request $request) => Limit::perMinute(10)->by('client-errors:'.($request->user('sanctum')?->getAuthIdentifier() ?? $request->ip())));
-        RateLimiter::for('signup', fn (Request $request) => Limit::perHour(app(SettingsService::class)->int('signup_requests_per_hour'))
-            ->by('signup:'.$request->ip())
-            ->response(fn () => response()->json(['message' => 'Too many requests. Please try again later.'], 429)));
-
         // Sliding device sessions (FIABILITE B3): a token unused for longer than the idle period stops working.
         // Checked before Sanctum refreshes last_used_at.
         Sanctum::authenticateAccessTokensUsing(function (PersonalAccessToken $token, bool $isValid): bool {

@@ -6,6 +6,7 @@ use App\Mail\IdentificationCodeMail;
 use App\Models\ActivityLog;
 use App\Models\User;
 use App\Notifications\StaffAlert;
+use App\Services\AtomicLimiter;
 use Illuminate\Support\Carbon;
 use Illuminate\Support\Facades\Hash;
 use Illuminate\Support\Facades\Mail;
@@ -72,6 +73,15 @@ it('rate limits sign-up requests per IP', function () {
         $this->postJson('/api/auth/register', signupPayload(['email' => "u$i@example.com"]))->assertStatus(202);
     }
     $this->postJson('/api/auth/register', signupPayload(['email' => 'u9@example.com']))->assertStatus(429);
+});
+
+it('counts sign-up requests before doing any work, so bursts cannot exceed the limit (P1-01)', function () {
+    // Simulates 5 requests already in flight from this IP (counted, not finished yet).
+    for ($i = 0; $i < 5; $i++) {
+        AtomicLimiter::hit('signup:127.0.0.1', 5, 3600);
+    }
+    $this->postJson('/api/auth/register', signupPayload())->assertStatus(429);
+    expect(User::query()->where('email', 'ama.mensah@example.com')->exists())->toBeFalse();
 });
 
 it('lets a pending user not sign in', function () {

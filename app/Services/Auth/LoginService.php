@@ -10,11 +10,12 @@ use App\Models\LoginAttempt;
 use App\Models\LoginCode;
 use App\Models\User;
 use App\Services\ActivityLogger;
+use App\Services\AtomicLimiter;
 use App\Settings\SettingsService;
 use Illuminate\Support\Carbon;
+use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Hash;
-use Illuminate\Support\Facades\RateLimiter;
 use Illuminate\Support\Str;
 
 /**
@@ -25,7 +26,8 @@ class LoginService
 {
     public const INVALID = 'Invalid email or code.';
 
-    private static ?string $dummyHash = null;
+    /** bcrypt (cost 12) of a random value nobody knows. */
+    private const DUMMY_HASH_12 = '$2y$12$U587WNrZuIN9qsHmo.7mT.IhlXtRnKEuSAG6dScyHe3Asj3OcqAjS';
 
     public function __construct(
         private readonly LockoutService $lockout,
@@ -39,13 +41,6 @@ class LoginService
      */
     public function attempt(array $input, string $ip, ?string $userAgent): array
     {
-        $ipKey = 'login-ip:'.$ip;
-        $ipLimit = $this->settings->int('ip_login_failures_limit');
-        if (RateLimiter::tooManyAttempts($ipKey, $ipLimit)) {
-            $seconds = RateLimiter::availableIn($ipKey);
-            throw new ApiError(429, 'Too many attempts from this network. Please try again later.', 'ip_limited', ['retry_after_seconds' => $seconds], ['Retry-After' => (string) $seconds]);
-        }
-
         $user = User::findByEmail($input['email']);
         $accountKey = LockoutService::accountKey($input['email']);
         $deviceHash = Device::hashIdentifier($input['device_id']);
@@ -54,7 +49,17 @@ class LoginService
             ? [LoginAttempt::SCOPE_DEVICE, $deviceHash]
             : [LoginAttempt::SCOPE_UNKNOWN, LockoutService::UNKNOWN_BUCKET];
 
-        $this->lockout->ensureCanAttempt($accountKey, $scope, $bucket, $user);
+        // Per-IP limit (P1-01, P1-10): counted before the secret is checked, and only for unknown devices
+        // (and unknown emails), so colleagues on known devices behind the shared office IP are never blocked.
+        $ipKey = 'login-ip:'.$ip;
+        $ipWindow = $this->settings->int('ip_login_window_minutes') * 60;
+        if ($scope === LoginAttempt::SCOPE_UNKNOWN && ! AtomicLimiter::hit($ipKey, $this->settings->int('ip_login_failures_limit'), $ipWindow)) {
+            $seconds = AtomicLimiter::availableIn($ipKey);
+            throw new ApiError(429, 'Too many attempts from this network. Please try again later.', 'ip_limited', ['retry_after_seconds' => $seconds], ['Retry-After' => (string) $seconds]);
+        }
+
+        // The attempt is reserved (counted) before the secret is checked: no check-then-act race.
+        $outcome = $this->lockout->reserve($accountKey, $scope, $bucket, $user);
 
         $code = null;
         if ($user === null) {
@@ -65,9 +70,12 @@ class LoginService
         }
 
         if (! $valid) {
-            RateLimiter::hit($ipKey, $this->settings->int('ip_login_window_minutes') * 60);
-            $error = $this->lockout->recordFailure($accountKey, $scope, $bucket, $user);
-            throw $error ?? new ApiError(401, self::INVALID, 'invalid_credentials');
+            throw $this->lockout->failed($accountKey, $scope, $bucket, $user, $outcome) ?? new ApiError(401, self::INVALID, 'invalid_credentials');
+        }
+        // A correct secret proves knowledge: the reserved attempt is given back.
+        $this->lockout->reset($accountKey, $scope, $bucket);
+        if ($scope === LoginAttempt::SCOPE_UNKNOWN) {
+            AtomicLimiter::release($ipKey, $ipWindow);
         }
         /** @var User $user */
 
@@ -84,13 +92,11 @@ class LoginService
             throw new ApiError(401, 'Your identification code has expired. Please ask an administrator for a new one.', 'code_expired');
         }
         if ($code !== null) {
-            $claimed = LoginCode::query()->whereKey($code->id)->whereNull('used_at')->update(['used_at' => Carbon::now()]);
+            $claimed = LoginCode::query()->whereKey($code->id)->whereNull('used_at')->update(['used_at' => Carbon::now(), 'lookup_hash' => null]);
             if ($claimed !== 1) {
                 throw new ApiError(401, self::INVALID, 'invalid_credentials');
             }
         }
-
-        $this->lockout->reset($accountKey, $scope, $bucket);
 
         $token = DB::transaction(function () use ($user, $deviceHash, $input, $ip, $userAgent) {
             $now = Carbon::now();
@@ -126,10 +132,12 @@ class LoginService
     private function verifySecret(User $user, string $secret, ?LoginCode &$code): bool
     {
         if ($user->isSuperAdmin()) {
+            // Several codes may be valid at once (P1-05); the keyed lookup finds the right one with one bcrypt check.
             $code = LoginCode::query()
+                ->where('lookup_hash', SuperAdminCodeService::lookupHash($user, $secret))
                 ->where('user_id', $user->id)->where('purpose', LoginCode::SUPER_ADMIN_LOGIN)
                 ->whereNull('used_at')->where('expires_at', '>', Carbon::now())
-                ->latest('id')->first();
+                ->first();
             if ($code === null) {
                 $this->dummyCheck($secret);
 
@@ -148,10 +156,23 @@ class LoginService
         return Hash::check($secret, $user->password);
     }
 
-    /** Same hashing cost whether or not the account exists (no timing oracle). */
+    /**
+     * Same hashing cost whether or not the account exists (no timing oracle, P1-02): exactly one bcrypt
+     * verification against a precomputed hash, never a Hash::make() on the sign-in path.
+     */
     private function dummyCheck(string $secret): void
     {
-        self::$dummyHash ??= Hash::make(Str::random(32));
-        Hash::check($secret, self::$dummyHash);
+        Hash::check($secret, self::dummyHash());
+    }
+
+    /** bcrypt hash of a random value, at the configured cost (precomputed for the production cost of 12). */
+    public static function dummyHash(): string
+    {
+        $rounds = (int) config('hashing.bcrypt.rounds', 12);
+        if ($rounds === 12) {
+            return self::DUMMY_HASH_12;
+        }
+
+        return Cache::rememberForever('auth:dummy-hash:'.$rounds, fn () => Hash::make(Str::random(40)));
     }
 }

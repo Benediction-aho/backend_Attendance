@@ -8,9 +8,11 @@ use App\Http\Resources\UserResource;
 use App\Models\User;
 use App\Services\AccountService;
 use App\Services\ActivityLogger;
+use App\Services\AtomicLimiter;
 use App\Services\Auth\LoginService;
 use App\Services\Auth\RecoveryService;
 use App\Services\Auth\SuperAdminCodeService;
+use App\Settings\SettingsService;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Validation\Rule;
@@ -19,8 +21,13 @@ class AuthController
 {
     private const DEVICE_RULES = ['required', 'string', 'min:16', 'max:128', 'regex:/^[A-Za-z0-9_-]+$/'];
 
-    public function register(Request $request, AccountService $accounts): JsonResponse
+    public function register(Request $request, AccountService $accounts, SettingsService $settings): JsonResponse
     {
+        // Counted before any work (P1-01): parallel bursts can never exceed the hourly limit.
+        if (! AtomicLimiter::hit('signup:'.$request->ip(), $settings->int('signup_requests_per_hour'), 3600)) {
+            throw new ApiError(429, 'Too many requests. Please try again later.', 'too_many_requests');
+        }
+
         $data = $request->validate([
             'email' => ['required', 'string', 'email:rfc', 'max:254'],
             'first_name' => ['required', 'string', 'max:100'],

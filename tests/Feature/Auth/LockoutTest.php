@@ -2,12 +2,20 @@
 
 use App\Enums\Permission;
 use App\Enums\UserStatus;
+use App\Exceptions\ApiError;
 use App\Mail\SecurityAlertMail;
 use App\Models\ActivityLog;
+use App\Models\Device;
+use App\Models\LoginAttempt;
 use App\Models\User;
 use App\Notifications\StaffAlert;
+use App\Services\AtomicLimiter;
+use App\Services\Auth\LockoutService;
+use App\Services\Auth\LoginService;
 use App\Settings\SettingsService;
+use Illuminate\Hashing\BcryptHasher;
 use Illuminate\Support\Carbon;
+use Illuminate\Support\Facades\Hash;
 use Illuminate\Support\Facades\Mail;
 use Illuminate\Support\Facades\Notification;
 use Illuminate\Testing\TestResponse;
@@ -124,12 +132,92 @@ it('answers unknown emails exactly like real ones', function () {
     expect($ghost)->toBe($real)->and($real[4][0])->toBe(429);
 });
 
-it('limits failed attempts per IP across accounts', function () {
+it('limits sign-in attempts from unknown devices per IP across accounts, but never known devices (P1-10)', function () {
+    app(SettingsService::class)->set(['ip_login_failures_limit' => 30]);
     for ($i = 0; $i < 30; $i++) {
         $this->postJson('/api/auth/login', loginPayload("user$i@example.com", 'nope', LAPTOP));
     }
-    $this->postJson('/api/auth/login', loginPayload('ama@example.com', 'Correct-Pass-1', PHONE))
+    $this->postJson('/api/auth/login', loginPayload('ama@example.com', 'Correct-Pass-1', LAPTOP))
         ->assertStatus(429)->assertJsonPath('code', 'ip_limited');
+    // A colleague on a known device behind the same office IP still signs in.
+    $this->postJson('/api/auth/login', loginPayload('ama@example.com', 'Correct-Pass-1', PHONE))->assertOk();
+});
+
+it('does not count successful sign-ins from new devices against the IP limit', function () {
+    app(SettingsService::class)->set(['ip_login_failures_limit' => 5]);
+    for ($i = 0; $i < 8; $i++) {
+        $u = User::factory()->withPassword('Correct-Pass-1')->create(['email' => "staff$i@example.com"]);
+        $this->postJson('/api/auth/login', loginPayload($u->email, 'Correct-Pass-1', 'new-phone-0000000000'.$i))->assertOk();
+    }
+});
+
+it('reserves the attempt before checking the secret: in-flight attempts never exceed one series (P1-01)', function () {
+    $lockout = app(LockoutService::class);
+    $key = LockoutService::accountKey('ama@example.com');
+    $bucket = Device::hashIdentifier(PHONE);
+
+    // Six requests arrive together: each reserves before any of them has checked its secret.
+    $outcomes = [];
+    for ($i = 0; $i < 5; $i++) {
+        $outcomes[] = $lockout->reserve($key, LoginAttempt::SCOPE_DEVICE, $bucket, $this->user);
+    }
+    expect($outcomes)->toBe(['failed', 'failed', 'failed', 'failed', 'blocked']);
+    expect(fn () => $lockout->reserve($key, LoginAttempt::SCOPE_DEVICE, $bucket, $this->user))
+        ->toThrow(fn (ApiError $e) => expect($e->getStatusCode())->toBe(429));
+
+    // The 10-minute stage cannot be skipped: after it, the next series ends in the 20-minute block, not a lock.
+    Carbon::setTestNow(Carbon::now()->addMinutes(11));
+    $second = [];
+    for ($i = 0; $i < 5; $i++) {
+        $second[] = $lockout->reserve($key, LoginAttempt::SCOPE_DEVICE, $bucket, $this->user);
+    }
+    expect($second[4])->toBe('blocked')
+        ->and(LoginAttempt::query()->where('bucket_key', $bucket)->value('blocked_until')->diffInMinutes(Carbon::now(), true))->toEqual(20.0);
+});
+
+it('counts the per-IP limit before the secret is checked (P1-01)', function () {
+    app(SettingsService::class)->set(['ip_login_failures_limit' => 5]);
+    // Simulates 5 requests still in flight from this IP: the limiter was hit before any secret check.
+    for ($i = 0; $i < 5; $i++) {
+        expect(AtomicLimiter::hit('login-ip:127.0.0.1', 5, 900))->toBeTrue();
+    }
+    $this->postJson('/api/auth/login', loginPayload('ghost@example.com', 'nope', LAPTOP))
+        ->assertStatus(429)->assertJsonPath('code', 'ip_limited');
+});
+
+it('checks exactly one precomputed bcrypt hash for unknown emails and super admins without a code (P1-02)', function () {
+    $sa = User::factory()->superAdmin()->create(['email' => 'boss@example.com']);
+    LoginService::dummyHash(); // warm the per-cost cache used by the test cost (production cost is a constant)
+
+    $counter = new class(['rounds' => 4]) extends BcryptHasher
+    {
+        public int $makes = 0;
+
+        public int $checks = 0;
+
+        public function make(#[SensitiveParameter] $value, array $options = []): string
+        {
+            $this->makes++;
+
+            return parent::make($value, $options);
+        }
+
+        public function check(#[SensitiveParameter] $value, $hashedValue, array $options = []): bool
+        {
+            $this->checks++;
+
+            return parent::check($value, $hashedValue, $options);
+        }
+    };
+    Hash::extend('counting', fn () => $counter);
+    config(['hashing.driver' => 'counting']);
+
+    $this->postJson('/api/auth/login', loginPayload('ghost@example.com', 'nope', LAPTOP))->assertStatus(401);
+    expect([$counter->makes, $counter->checks])->toBe([0, 1]);
+    $this->postJson('/api/auth/login', loginPayload($sa->email, '12345678', LAPTOP))->assertStatus(401);
+    expect([$counter->makes, $counter->checks])->toBe([0, 2]);
+    $this->postJson('/api/auth/login', loginPayload('ama@example.com', 'wrong-pass', LAPTOP))->assertStatus(401);
+    expect([$counter->makes, $counter->checks])->toBe([0, 3]);
 });
 
 it('reads thresholds and durations from settings', function () {
