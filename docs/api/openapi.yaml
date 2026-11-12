@@ -1,0 +1,33 @@
+# API contract for attendance-frontend. Kept in the repository only; never served publicly in production.
+openapi: 3.1.0
+info:
+  title: Assistance Ghana Attendance API
+  version: 0.0.1
+servers:
+  - url: http://localhost:8000/api
+paths:
+  /health:
+    get:
+      summary: Liveness probe
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [status]
+                properties:
+                  status: { type: string, enum: [ok] }
+components:
+  schemas:
+    Error:
+      description: Every error response (no stack trace, generic English message).
+      type: object
+      required: [message]
+      properties:
+        message: { type: string, example: Not found. }
+        errors:
+          description: Present on 422 only, field => list of messages.
+          type: object
+          additionalProperties: { type: array, items: { type: string } }
