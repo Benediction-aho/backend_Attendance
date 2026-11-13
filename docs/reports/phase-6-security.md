@@ -61,3 +61,39 @@ Scripts:
 - **P6-04 – fixed.** `today.checked_in` counts only the expected employees (`checked_in + missing = expected`); new field `checked_in_not_expected` (active members who checked in on a day they were not expected). Blocked/deleted accounts and not-yet-members never count. OpenAPI updated (additive).
 - **P6-05 – fixed.** New batch API `WorkCalendar::dayStatuses(users, date)` (3 queries: holiday, leaves `whereIn`, latest schedule per user with `DISTINCT ON`) shared with `dayStatus()` through one rule; used by the admin dashboard, `WeeklyWindow::expectedEmployees` (dashboard week, reminders, close), the check-in reminder, `/admin/reports/daily` and `/admin/attendance/day`. Plain `work_date` / `date` comparisons (no `::date` cast) in the dashboard, calendar and reminder. `services_top` computed with `GROUP BY service_key` (same order/labels as `ReportBuilder::services`). Dedicated `throttle:dashboard` on both dashboards (setting `dashboard_requests_per_minute`, default 30). Measured on the seed (300 employees, 200k logs): **18 queries, 76–96 ms in-process (was 1,775 / ~940 ms), 98–139 ms over HTTP (was 1.03–1.14 s), 29 MB peak**. Test asserts ≤ 30 queries with 300 employees and no growth vs. 4 employees; batch statuses equal per-user statuses.
 - Results: full suite 477+ tests green, PHPStan clean, `DB_DATABASE=attendance_sec6 vendor/bin/pest tests/security/Phase6SecurityTest.php` 16/16 green.
+
+## Re-test after fixes (backend-security-tester, 2026-11-13)
+Environment: fresh `attendance_sec6` (`migrate:fresh` + `phase6_seed.php 300 200000`), production-mode `php artisan serve --port=8186` (8 workers), commit `1a981ee`.
+
+| ID | Status | Evidence |
+|---|---|---|
+| P6-01 | **Fixed** | Failed sign-ins over HTTP with hostile user agents (`Mozilla;=HYPERLINK(...)`, `x;@SUM(1)`, `a, =1+1`, `＝1+1`, ` -2+3`, `x,@A1`, ideographic space + `=`), then `GET /admin/activity-logs/export?type=security`. Parsed quote-aware with `,` and naive split on `,`: 0 formula cells. With `;` (quote-aware and naive): 0 formula cells except the residual case P6-06. Every field quoted, CRLF lines. |
+| P6-02 | **Fixed** | `cell()` checked directly: U+3000/U+2003 + `=`, `＋ ﹢ ＠ －` all prefixed after NFKC. Zero-width space / BOM before `=` are left verbatim (spreadsheets do not evaluate them: Info, no action). |
+| P6-03 | **Fixed** | Full export over HTTP while 4,000 rows were inserted in parallel: 100,000 rows (cap), the concurrent rows included form a contiguous prefix (`conc 0..68`, inserted before the snapshot), none after the frozen max id, no duplicated log (the 7 identical lines are distinct `logs.exported` entries in the same second). 6.2 s, 31 MB. |
+| P6-04 | **Fixed** | `/admin/dashboard` on the seed: `expected 282 = checked_in 282 + missing 0`, `checked_in_not_expected 18` reported separately. |
+| P6-05 | **Fixed** | Admin dashboard 118–159 ms over HTTP (was 1.03–1.14 s), employee dashboard 85–119 ms. Security test: 18–19 queries independent of the number of employees. Throttle: admin dashboard 429 from the 31st call/min, employee dashboard 429 from the 31st call. `/admin/attendance/day` 80 ms, `/admin/reports/daily` 0.61 s (300 employees with tasks; acceptable). |
+
+Review of the two assertions edited by attendance-backend in `tests/security/Phase6SecurityTest.php`:
+- P6-02: now asserts the hardened output (`' =1+1`, `'=1+1` for `＝1+1`, `'\n=1+1`). Correct and stricter than before; accepted.
+- P6-03: the hook now matches `limit` instead of `offset`. Still meaningful: it injects a row during the first chunk query and `expect($offsetQueries)->toBeGreaterThan(0)` guarantees the hook fired (the test cannot pass vacuously). The variable name `offsetQueries` is now misleading (cosmetic). Accepted.
+
+Batch calendar regression check: new script `tests/security/phase6_calendar_diff.php` (random schedules with up to 3 versions, days off, remote days, overlapping multi-day leaves, 4 holidays, blocked accounts, accounts created during the period; runs in a rolled-back transaction). `DB_DATABASE=attendance_sec6 php tests/security/phase6_calendar_diff.php 60 70` → 4,200 user-days, **0** differences between `dayStatuses()` and `dayStatus()`, **0** differences between `WeeklyWindow::expectedEmployees()` and the per-user filter over 70 days (used by reminders, weekly close, daily report and attendance day). The `(user_id, effective_from)` unique constraint removes any tie-break ambiguity between the two implementations. Full suite: 477/477 green; `Phase6SecurityTest.php` 16/16 green.
+
+### P6-06 – A double quote between the separator and the trigger escapes the after-separator neutralization – Low (new)
+- Affected: `App\Http\Controllers\Admin\ActivityLogController::cell()` (regex `([;,]\s*)(?=[=+\-@\t\r\n])`).
+- Steps: failed sign-in with user agent `z;"=1` (`curl -A 'z;"=1' -H 'Accept: application/json' -H 'Content-Type: application/json' -d '{"email":"<existing>","password":"wrongwrong","device_id":"secdev-100000000004"}' http://127.0.0.1:8186/api/auth/login`), export `?type=security`. The field is written `"z;""=1"` (no `'` inserted). Opening the comma file with `;` as separator, a parser that leaves quoted mode after the first `","` (Python csv, and Excel/LibreOffice behave similarly once a field is "quoted then followed by text") yields a cell starting `=1"...`.
+- Observed: 1 formula-like cell with `;`. Expected: 0.
+- Impact: low – requires opening the comma file with a `;` locale and a parser quirk; the result is usually a broken formula. Already Medium-mitigated by quoting.
+- Suggested fix: allow quotes (and other non-alphanumeric padding) between separator and trigger, e.g. `preg_replace('/([;,][\s"\']*)(?=[=+\-@\t\r\n])/u', "$1'", $s)`, and add `z;"=1` / `z,"@x` to the feature dataset.
+
+### Summary after re-test
+| ID | Severity | Status |
+|---|---|---|
+| P6-01 | Medium | Fixed |
+| P6-02 | Info | Fixed |
+| P6-03 | Low | Fixed |
+| P6-04 | Low | Fixed |
+| P6-05 | Medium | Fixed |
+| P6-06 | Low | Open (new) |
+
+No Critical/High finding open.
