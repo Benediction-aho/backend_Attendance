@@ -15,6 +15,7 @@ use App\Services\Auth\LoginService;
 use App\Services\Auth\RecoveryService;
 use App\Services\Auth\SuperAdminCodeService;
 use App\Settings\SettingsService;
+use App\Support\ClientIp;
 use App\Support\SignupText;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
@@ -28,13 +29,13 @@ class AuthController
     {
         // Counted before any work (P1-01): parallel bursts can never exceed the hourly limit.
         // UX2-02: per-IP limit sized for a whole office behind one Wi-Fi, plus a per-email limit.
-        $ipKey = 'signup:'.$request->ip();
+        $ipKey = 'signup:'.ClientIp::bucket($request->ip());
         if (! AtomicLimiter::hit($ipKey, $settings->int('signup_requests_per_hour'), 3600)) {
             $this->tooManySignups(AtomicLimiter::availableIn($ipKey));
         }
 
         $data = $request->validate([
-            'email' => ['required', 'string', 'email:rfc', 'max:254'],
+            'email' => ['required', 'string', 'email:rfc', 'max:254', 'regex:'.SignupText::EMAIL_PATTERN],
             'first_name' => ['required', 'string', 'max:100', 'regex:'.SignupText::NAME_PATTERN, 'not_regex:'.SignupText::LINK_PATTERN],
             'last_name' => ['required', 'string', 'max:100', 'regex:'.SignupText::NAME_PATTERN, 'not_regex:'.SignupText::LINK_PATTERN],
             'employee_type' => ['required', Rule::in(['intern', 'employee'])],

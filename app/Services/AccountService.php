@@ -88,7 +88,7 @@ class AccountService
         Notification::send($approvers, new StaffAlert(
             'signup_request',
             'New account request',
-            "{$name} ({$user->email}, {$jobTitle}) wants to create an account.",
+            "{$name} (".SignupText::neutralize($user->email).", {$jobTitle}) wants to create an account.",
             ['user_id' => $user->id],
             withEmail: $slot <= $perHour,
             path: '/admin/users/'.$user->id,

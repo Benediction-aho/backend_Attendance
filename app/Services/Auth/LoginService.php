@@ -12,6 +12,7 @@ use App\Models\User;
 use App\Services\ActivityLogger;
 use App\Services\AtomicLimiter;
 use App\Settings\SettingsService;
+use App\Support\ClientIp;
 use Illuminate\Support\Carbon;
 use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\DB;
@@ -51,7 +52,7 @@ class LoginService
 
         // Per-IP limit (P1-01, P1-10): counted before the secret is checked, and only for unknown devices
         // (and unknown emails), so colleagues on known devices behind the shared office IP are never blocked.
-        $ipKey = 'login-ip:'.$ip;
+        $ipKey = 'login-ip:'.ClientIp::bucket($ip);
         $ipWindow = $this->settings->int('ip_login_window_minutes') * 60;
         if ($scope === LoginAttempt::SCOPE_UNKNOWN && ! AtomicLimiter::hit($ipKey, $this->settings->int('ip_login_failures_limit'), $ipWindow)) {
             $seconds = AtomicLimiter::availableIn($ipKey);

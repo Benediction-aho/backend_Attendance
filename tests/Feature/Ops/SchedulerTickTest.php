@@ -1,7 +1,9 @@
 <?php
 
+use App\Models\ActivityLog;
 use App\Settings\SettingsService;
 use Illuminate\Support\Facades\Artisan;
+use Illuminate\Support\Facades\DB;
 
 it('is disabled when no token is configured', function () {
     config(['services.scheduler.tick_token' => '']);
@@ -34,6 +36,7 @@ it('REL-09: answers 404 for every other method, like an unknown route', function
 })->with(['GET', 'PUT', 'PATCH', 'DELETE']);
 
 it('REL-09: answers 404 instead of 429 once the per-minute limit is reached', function () {
+    $this->withoutDefer();
     config(['services.scheduler.tick_token' => str_repeat('a', 48)]);
     Artisan::spy();
     for ($i = 0; $i < 15; $i++) {
@@ -50,4 +53,26 @@ it('REL-09: is not subject to the general API limiter (no 429 leaks its existenc
     for ($i = 0; $i < 40; $i++) {
         $this->withServerVariables(['REMOTE_ADDR' => '198.51.100.'.($i % 2 + 1)])->postJson('/api/ops/scheduler-tick')->assertNotFound();
     }
+});
+
+it('REL-18: a wrong token does no database work before the answer is sent', function () {
+    config(['services.scheduler.tick_token' => str_repeat('a', 48)]);
+    DB::enableQueryLog();
+    DB::flushQueryLog();
+
+    $this->postJson('/api/ops/scheduler-tick', [], ['X-Scheduler-Token' => str_repeat('b', 48)])->assertNotFound();
+
+    expect(DB::getQueryLog())->toBe([])
+        ->and(ActivityLog::query()->where('event', 'ops.scheduler_tick_refused')->count())->toBe(0);
+});
+
+it('REL-18: the refusal is still logged once the response is sent', function () {
+    config(['services.scheduler.tick_token' => str_repeat('a', 48)]);
+    $this->postJson('/api/ops/scheduler-tick', [], ['X-Scheduler-Token' => str_repeat('b', 48)])->assertNotFound();
+    expect(ActivityLog::query()->where('event', 'ops.scheduler_tick_refused')->count())->toBe(0);
+
+    // Deferred callbacks run once the response is sent (withoutDefer runs them inline, as after the response).
+    $this->withoutDefer();
+    $this->postJson('/api/ops/scheduler-tick', [], ['X-Scheduler-Token' => str_repeat('b', 48)])->assertNotFound();
+    expect(ActivityLog::query()->where('event', 'ops.scheduler_tick_refused')->count())->toBe(1);
 });

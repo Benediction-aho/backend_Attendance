@@ -169,10 +169,23 @@ For tests on Render's free plan (owner decision; production will move to the com
    `203.0.113.77`. If it is the forged value, the proxy overwrites nothing: set `TRUSTED_PROXIES` to an empty value
    and open a question. If it is an address of Render/Cloudflare shared by everyone, a second proxy hop exists:
    list its ranges in `TRUSTED_PROXIES` (with `REMOTE_ADDR`).
-3. `curl -s -H 'X-Forwarded-Host: evil.example' https://<api-host>/api/health` changes nothing; signed file links
+3. REL-19: repeat step 1 with **two** forged lines (`-H 'X-Forwarded-For: 203.0.113.77' -H 'X-Forwarded-For: 203.0.113.78'`): the recorded IP must still be your real address.
+4. `curl -s -H 'X-Forwarded-Host: evil.example' https://<api-host>/api/health` changes nothing; signed file links
    always start with `APP_URL`.
-4. Record the date and result here.
+5. Record the date and result here.
 
 ### 3.5 Request body limit (REL-06)
 `MAX_REQUEST_BODY_KB` (default 128) refuses any non-multipart body above that size with 413 before it is parsed.
 Uploads (weekly PDF, profile photo) are multipart and keep their own limits (settings + `post_max_size`).
+
+### 3.6 Super admin locked out without a known device (REL-20) – out-of-band procedure
+The recovery link is capped per hour (`recovery_links_sent_per_hour`); only a device the super admin already used
+bypasses the cap. If an attacker keeps the cap used up while the super admin has lost every known device:
+1. **Recommended: keep at least two active super admins.** The other super admin opens Users > the account >
+   **Unlock** (`POST /api/admin/users/{id}/unlock`); the locked super admin then signs in with a new one-time code.
+2. With a single super admin, the server owner (Render shell / server console, never by e-mail or chat) unlocks the
+   account after checking the person's identity by phone or in person:
+   `php artisan tinker --execute="app(App\Services\Auth\LockoutService::class)->unlockAccount(App\Models\User::findByEmail('<email>'))"`
+   then writes down who did it and why (the unlock itself is not logged from tinker).
+   Look at the `auth.recovery_contention` critical entries to identify the attacking addresses.
+3. Afterwards, add a second super admin (promote an eligible admin) so step 1 is available next time.

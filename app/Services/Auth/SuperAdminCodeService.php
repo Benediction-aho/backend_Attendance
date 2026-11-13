@@ -13,6 +13,7 @@ use App\Services\ActivityLogger;
 use App\Services\AtomicLimiter;
 use App\Services\Codes;
 use App\Settings\SettingsService;
+use App\Support\ClientIp;
 use Illuminate\Support\Carbon;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Hash;
@@ -42,8 +43,8 @@ class SuperAdminCodeService
     public function requestRecovery(string $email, string $ip, ?string $deviceId = null): void
     {
         $perHour = $this->settings->int('otp_requests_per_hour');
-        $accountKey = 'recovery:'.LockoutService::accountKey($email).':'.hash('sha256', $ip);
-        $ipKey = 'otp-ip:'.$ip;
+        $accountKey = 'recovery:'.LockoutService::accountKey($email).':'.hash('sha256', ClientIp::bucket($ip));
+        $ipKey = 'otp-ip:'.ClientIp::bucket($ip);
         $withinAccount = AtomicLimiter::hit($accountKey, $perHour, 3600);
         $withinIp = AtomicLimiter::hit($ipKey, $perHour * 4, 3600);
         if (! $withinAccount || ! $withinIp) {
@@ -97,8 +98,8 @@ class SuperAdminCodeService
     public function request(string $email, string $ip, ?string $deviceId = null): void
     {
         $perHour = $this->settings->int('otp_requests_per_hour');
-        $accountKey = 'otp:'.LockoutService::accountKey($email).':'.hash('sha256', $ip);
-        $ipKey = 'otp-ip:'.$ip;
+        $accountKey = 'otp:'.LockoutService::accountKey($email).':'.hash('sha256', ClientIp::bucket($ip));
+        $ipKey = 'otp-ip:'.ClientIp::bucket($ip);
 
         $withinAccount = AtomicLimiter::hit($accountKey, $perHour, 3600);
         $withinIp = AtomicLimiter::hit($ipKey, $perHour * 4, 3600);

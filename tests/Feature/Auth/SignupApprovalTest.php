@@ -269,3 +269,23 @@ it('REL-03: removes sign-up requests left unanswered beyond the configured reten
     // The email is free again.
     $this->postJson('/api/auth/register', signupPayload(['email' => $old->email]))->assertStatus(202);
 });
+
+it('REL-16: refuses quoted, spaced or bracketed e-mail addresses everywhere', function (string $email) {
+    $this->postJson('/api/auth/register', signupPayload(['email' => $email]))->assertUnprocessable()->assertJsonValidationErrors(['email']);
+    $sa = User::factory()->superAdmin()->create();
+    $this->withToken(deviceToken($sa))->postJson('/api/admin/users', signupPayload(['email' => $email, 'employee_type' => 'employee']))
+        ->assertUnprocessable()->assertJsonValidationErrors(['email']);
+    expect(User::query()->where('status', 'pending')->count())->toBe(0);
+})->with([
+    'quoted url' => ['"https://evil.example/login?x=2"@relsec.test'],
+    'quoted text' => ['"Your account is locked visit evil"@relsec.test'],
+    'ip literal' => ['a@[127.0.0.1]'],
+    'no tld' => ['a@localhost'],
+]);
+
+it('REL-16: neutralises the e-mail address in the approver alert', function () {
+    Notification::fake();
+    $approver = User::factory()->admin(Permission::ApproveUsers)->create();
+    $this->postJson('/api/auth/register', signupPayload(['email' => 'ama.mensah@example.com']))->assertStatus(202);
+    Notification::assertSentTo($approver, StaffAlert::class, fn ($n) => ! str_contains($n->body, 'example.com') && ! str_contains($n->body, '@') && str_contains($n->body, 'ama'));
+});

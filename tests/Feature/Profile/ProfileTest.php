@@ -215,3 +215,8 @@ it('shows personal data only to the user and to account managers', function () {
     $this->bearer(deviceToken($manager, 'device-man-0000000001'))->getJson("/api/admin/users/{$this->user->id}")
         ->assertOk()->assertJsonPath('data.phone', '+233200000000')->assertJsonMissingPath('data.password');
 })->skip(fn () => ! Route::has('admin.users.show'), 'admin user endpoints come with item 8');
+
+it('REL-16: refuses a quoted e-mail address on e-mail change', function () {
+    $this->bearer($this->token)->postJson('/api/me/email', ['email' => '"https://evil.example"@example.com', 'current_password' => 'Current-pass-1'])
+        ->assertUnprocessable()->assertJsonValidationErrors(['email']);
+});

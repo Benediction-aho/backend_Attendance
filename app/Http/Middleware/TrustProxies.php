@@ -2,6 +2,7 @@
 
 namespace App\Http\Middleware;
 
+use Closure;
 use Illuminate\Http\Middleware\TrustProxies as Middleware;
 use Illuminate\Http\Request;
 
@@ -20,6 +21,20 @@ class TrustProxies extends Middleware
      * @var int
      */
     protected $headers = Request::HEADER_X_FORWARDED_FOR | Request::HEADER_X_FORWARDED_PROTO;
+
+    /**
+     * REL-19: several X-Forwarded-For header lines are joined in order (RFC 9110 field combination) so the
+     * right-most entry, the one appended by the trusted proxy, is used, never the first client-chosen line.
+     */
+    public function handle(Request $request, Closure $next)
+    {
+        $lines = $request->headers->all('x-forwarded-for');
+        if (count($lines) > 1) {
+            $request->headers->set('X-Forwarded-For', implode(', ', array_map(fn ($l) => trim((string) $l), $lines)));
+        }
+
+        return parent::handle($request, $next);
+    }
 
     /**
      * @return array<int, string>|string|null

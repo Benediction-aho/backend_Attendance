@@ -8,6 +8,7 @@ use App\Enums\UserStatus;
 use App\Http\Resources\UserResource;
 use App\Models\User;
 use App\Services\AccountService;
+use App\Support\SignupText;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Gate;
@@ -65,7 +66,7 @@ class UserController
         Gate::authorize('create', [User::class, (is_string($requestedRole) ? Role::tryFrom($requestedRole) : null) ?? Role::Employee]);
 
         $data = $request->validate([
-            'email' => ['required', 'string', 'email:rfc', 'max:254'],
+            'email' => ['required', 'string', 'email:rfc', 'max:254', 'regex:'.SignupText::EMAIL_PATTERN],
             'first_name' => ['required', 'string', 'max:100'],
             'last_name' => ['required', 'string', 'max:100'],
             'employee_type' => ['required', Rule::in(['intern', 'employee'])],

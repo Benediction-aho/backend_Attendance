@@ -9,6 +9,7 @@ use App\Models\User;
 use App\Services\Push\PushTransport;
 use App\Services\Push\WebPushTransport;
 use App\Settings\SettingsService;
+use App\Support\ClientIp;
 use Illuminate\Cache\RateLimiting\Limit;
 use Illuminate\Http\Request;
 use Illuminate\Support\Carbon;
@@ -53,16 +54,16 @@ class AppServiceProvider extends ServiceProvider
             $user = $request->user('sanctum');
 
             return Limit::perMinute(app(SettingsService::class)->int('api_requests_per_minute'))
-                ->by($user instanceof User ? 'user:'.$user->id : 'ip:'.$request->ip());
+                ->by($user instanceof User ? 'user:'.$user->id : 'ip:'.ClientIp::bucket($request->ip()));
         });
         RateLimiter::for('attendance', fn (Request $request) => Limit::perMinute(app(SettingsService::class)->int('checkin_attempts_per_minute'))
-            ->by('attendance:'.($request->user('sanctum')?->getAuthIdentifier() ?? $request->ip())));
-        RateLimiter::for('client-errors', fn (Request $request) => Limit::perMinute(10)->by('client-errors:'.($request->user('sanctum')?->getAuthIdentifier() ?? $request->ip())));
+            ->by('attendance:'.($request->user('sanctum')?->getAuthIdentifier() ?? ClientIp::bucket($request->ip()))));
+        RateLimiter::for('client-errors', fn (Request $request) => Limit::perMinute(10)->by('client-errors:'.($request->user('sanctum')?->getAuthIdentifier() ?? ClientIp::bucket($request->ip()))));
         // P6-05: dashboards are polled; a dedicated per-user limit keeps them from saturating workers.
         RateLimiter::for('dashboard', fn (Request $request) => Limit::perMinute(app(SettingsService::class)->int('dashboard_requests_per_minute'))
-            ->by('dashboard:'.($request->user('sanctum')?->getAuthIdentifier() ?? $request->ip())));
+            ->by('dashboard:'.($request->user('sanctum')?->getAuthIdentifier() ?? ClientIp::bucket($request->ip()))));
         RateLimiter::for('log-export', fn (Request $request) => Limit::perHour(app(SettingsService::class)->int('log_export_per_hour'))
-            ->by('log-export:'.($request->user('sanctum')?->getAuthIdentifier() ?? $request->ip()))
+            ->by('log-export:'.($request->user('sanctum')?->getAuthIdentifier() ?? ClientIp::bucket($request->ip())))
             // UX6-06: say when the next export is possible.
             ->response(function (Request $request, array $headers) {
                 $seconds = max(1, (int) ($headers['Retry-After'] ?? 60));

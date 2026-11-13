@@ -12,6 +12,7 @@ use App\Services\EmailChangeService;
 use App\Services\FileUrls;
 use App\Services\ImageSanitizer;
 use App\Settings\SettingsService;
+use App\Support\SignupText;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Http\UploadedFile;
@@ -98,7 +99,7 @@ class ProfileController
     {
         $user = $this->user($request);
         $data = $request->validate([
-            'email' => ['required', 'string', 'email:rfc', 'max:254'],
+            'email' => ['required', 'string', 'email:rfc', 'max:254', 'regex:'.SignupText::EMAIL_PATTERN],
             'current_password' => [$user->isSuperAdmin() ? 'nullable' : 'required', 'string', 'max:200'],
         ]);
         if (! $user->isSuperAdmin()) {

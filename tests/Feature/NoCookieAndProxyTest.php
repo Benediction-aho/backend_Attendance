@@ -1,7 +1,10 @@
 <?php
 
+use App\Http\Middleware\TrustProxies;
 use App\Models\LoginAttempt;
 use App\Models\User;
+use App\Settings\SettingsService;
+use App\Support\ClientIp;
 use Illuminate\Http\Request;
 use Illuminate\Http\UploadedFile;
 use Illuminate\Support\Facades\Route;
@@ -109,4 +112,31 @@ it('REL-06: leaves multipart uploads to their own per-route limits', function ()
         ['CONTENT_TYPE' => 'multipart/form-data; boundary=----x', 'CONTENT_LENGTH' => '5000000', 'HTTP_ACCEPT' => 'application/json']);
 
     expect($response->status())->not->toBe(413)->toBeLessThan(500);
+});
+
+it('REL-17: buckets IPv6 clients by /64 and unwraps IPv4-mapped addresses', function () {
+    expect(ClientIp::bucket('2001:db8:1:2:aaaa::1'))->toBe('2001:db8:1:2::/64')
+        ->and(ClientIp::bucket('2001:db8:1:2:ffff:1:2:3'))->toBe('2001:db8:1:2::/64')
+        ->and(ClientIp::bucket('::ffff:198.51.100.7'))->toBe('198.51.100.7')
+        ->and(ClientIp::bucket('198.51.100.7'))->toBe('198.51.100.7');
+});
+
+it('REL-17: sign-ups from one IPv6 /64 share one per-IP quota', function () {
+    app(SettingsService::class)->set(['signup_requests_per_hour' => 2]);
+    foreach ([1, 2, 3] as $i) {
+        $response = $this->withServerVariables(['REMOTE_ADDR' => "2001:db8:5:6::{$i}"])->postJson('/api/auth/register', [
+            'email' => "v6{$i}@example.com", 'first_name' => 'Ama', 'last_name' => 'Mensah', 'employee_type' => 'employee', 'job_title' => 'Clerk',
+        ]);
+        $response->assertStatus($i <= 2 ? 202 : 429);
+    }
+});
+
+it('REL-19: joins several X-Forwarded-For lines and uses the right-most entry', function () {
+    config(['app.trusted_proxies' => '*']);
+    $request = Request::create('/api/_ip', 'GET', server: ['REMOTE_ADDR' => '10.1.2.3']);
+    $request->headers->set('X-Forwarded-For', ['203.0.113.2', '198.51.100.7']);
+
+    $ip = (new TrustProxies)->handle($request, fn (Request $r) => response($r->ip()))->getContent();
+
+    expect($ip)->toBe('198.51.100.7');
 });

@@ -100,11 +100,11 @@ Scripts added: `tests/security/release_fixtures.sh` (users of every role/tier th
 | REL-11 | Dev-only npm advisories | Info | Open (frontend) |
 | REL-12 | Tailwind version comment | Info | Open (frontend) |
 | REL-13 | `checkin_opens_at` vs `late_after` consistency | Info | Fixed – verified |
-| REL-16 | URL in the sign-up e-mail (quoted local part) reaches approver e-mails | Medium | Open (new, re-test) |
-| REL-17 | Per-IP limits keyed on the full IPv6 address | Low | Open (new, re-test) |
-| REL-18 | Scheduler tick: wrong-token path measurably slower than an unknown route | Info | Open (new, re-test) |
-| REL-19 | Several `X-Forwarded-For` header lines: the first one is used | Info | Open – verify live (new, re-test) |
-| REL-20 | Recovery from a new device can still be starved (by design) | Info | Accepted risk – document (new, re-test) |
+| REL-16 | URL in the sign-up e-mail (quoted local part) reaches approver e-mails | Medium | Fixed (backend) |
+| REL-17 | Per-IP limits keyed on the full IPv6 address | Low | Fixed (backend) |
+| REL-18 | Scheduler tick: wrong-token path measurably slower than an unknown route | Info | Fixed (backend) |
+| REL-19 | Several `X-Forwarded-For` header lines: the first one is used | Info | Fixed (backend) – still verify live (REL-14) |
+| REL-20 | Recovery from a new device can still be starved (by design) | Info | Accepted risk – documented (DEPLOYMENT.md §3.6) |
 | REL-21 | Global sign-up cap can be exhausted from many IPs | Info | Accepted risk – document (new, re-test) |
 | REL-14 | Live test environment not reachable from sandbox | Info | Blocked |
 
@@ -172,6 +172,14 @@ Regression: route × role/tier matrix (35 routes × 25 callers) identical to the
 
 ### REL-21 – Global sign-up cap exhaustible — Info (accepted risk)
 - `signup_requests_global_per_hour` (200) is shared by everyone: 200 well-formed requests from many IPs block legitimate sign-ups for up to an hour (429). Acceptable trade-off for the flood protection; mention in the admin guide (setting can be raised, pending requests visible in the app).
+
+## Fixes applied after re-test (attendance-backend, 2026-11-13)
+
+- **REL-16** – One plain-address rule `SignupText::EMAIL_PATTERN` (no quotes, spaces, brackets, IP literals; dotted domain with a TLD) added to `email:rfc` on sign-up, `POST /admin/users` and `POST /me/email` (and `attendance:create-super-admin` unchanged: owner-run). The address is also neutralised in the approver alert (e-mail and in-app text). Tests: quoted URL, quoted text, IP literal, no TLD → 422 on sign-up and user creation; quoted address → 422 on e-mail change; alert body contains no `@` nor `example.com`.
+- **REL-17** – `App\Support\ClientIp::bucket()`: IPv4 unchanged, IPv4-mapped IPv6 → IPv4, other IPv6 → /64 prefix. Used for every per-IP key (login IP limit, sign-up, OTP and recovery per IP and per account+IP, scheduler tick, API/attendance/dashboard/client-error/export limiters for guests). Logged IPs stay complete. Tests: helper cases; three sign-ups from one /64 with a limit of 2 → 202, 202, 429.
+- **REL-18** – Wrong-token path does no database work before answering: the limiter hit and the `ops.scheduler_tick_refused` log are deferred until after the response (`defer()`); the limit is checked only for a correct token (still 404 for a minute after 10 wrong tokens from the address). Tests: query log empty for a wrong-token request; refusal logged after the response; REL-09 limit test still green.
+- **REL-19** – `TrustProxies` joins several `X-Forwarded-For` lines in order before trusting them, so the right-most entry (appended by the trusted proxy) is used. Test: two lines `203.0.113.2` / `198.51.100.7` from the proxy → `198.51.100.7`. Live check added to `DEPLOYMENT.md` §3.4.
+- **REL-20** – Out-of-band recovery documented in `DEPLOYMENT.md` §3.6 (second super admin unlocks; otherwise server-side procedure), recommendation of two super admins. Accepted risk.
 
 ## Tests passed
 
