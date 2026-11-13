@@ -49,7 +49,7 @@ class MonthlyReportService
         return 'Rapport_de_performance_'.self::FRENCH_MONTHS[$m].'_'.$year.'.pdf';
     }
 
-    /** @param list<array{user_id: int, employee: string, late: int, clients: int, services: list<array{service: string, service_key: string, quantity: int}>}> $rows */
+    /** @param list<array{user_id: int, employee: string, detail: string|null, late: int, clients: int, services: list<array{service: string, service_key: string, quantity: int}>}> $rows */
     public function render(array $rows): string
     {
         return Pdf::loadView('pdf.monthly', ['rows' => $rows])->setPaper('a4')->output();

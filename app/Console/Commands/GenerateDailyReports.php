@@ -40,7 +40,7 @@ class GenerateDailyReports extends Command
                 $users = User::query()->where('role', Role::Employee->value)
                     ->where(fn ($q) => $q->where('status', UserStatus::Active->value)->orWhereIn('id', $withData))->get();
                 foreach ($users as $user) {
-                    if (in_array($user->id, $withData, true) || ($user->status === UserStatus::Active && $user->created_at?->copy()->setTimezone($calendar->timezone())->toDateString() <= $date && $calendar->dayStatus($user, $date)->isExpected())) {
+                    if (in_array($user->id, $withData, true) || ($user->status === UserStatus::Active && $calendar->wasMemberOn($user, $date) && $calendar->dayStatus($user, $date)->isExpected())) {
                         $builder->snapshot($user, $date);
                         $count++;
                     }

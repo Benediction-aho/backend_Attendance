@@ -94,10 +94,24 @@ class ClientController
     private function validated(Request $request, bool $partial): array
     {
         $req = $partial ? ['sometimes', 'required'] : ['required'];
+        $max = $this->settings->int('client_quantity_max');
+        // UX5-05 / UX5-06: quantity is never coerced (0 → 422) and messages are plain English.
+        $quantity = "Quantity must be between 1 and {$max}.";
         $data = $request->validate([
             'name' => [...$req, 'string', 'max:200'],
             'service' => [...$req, 'string', 'max:200'],
-            'quantity' => [...$req, 'integer', 'min:1', 'max:'.$this->settings->int('client_quantity_max')],
+            'quantity' => [...$req, 'integer', 'min:1', 'max:'.$max],
+        ], [
+            'name.required' => 'Please enter the client name.',
+            'name.string' => 'Please enter the client name.',
+            'name.max' => 'The client name must be 200 characters or fewer.',
+            'service.required' => 'Please enter the service.',
+            'service.string' => 'Please enter the service.',
+            'service.max' => 'The service must be 200 characters or fewer.',
+            'quantity.required' => $quantity,
+            'quantity.integer' => $quantity,
+            'quantity.min' => $quantity,
+            'quantity.max' => $quantity,
         ]);
         $out = [];
         if (array_key_exists('name', $data)) {

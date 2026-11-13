@@ -5,6 +5,13 @@ Updated by the agents at the end of every work session.
 ## Current phase
 **Phase 5 – Tasks, clients and reports: backend done – ready for backend-security-tester** (focus below). Phase 4 backend: no open finding.
 
+### Phase 5 UX fixes, server side (2026-11-13) – `frontend_Attendance/docs/reports/phase-5-ux.md`
+- **UX5-02**: "expected" in past runs uses the population of that date: `WorkCalendar::wasMemberOn` (approved_at, else created_at, on or before the date) + day status (leave/day off/holiday). Applied to the weekly close/catch-up, reminder and admin weekly page, the daily report catch-up, and the monthly rows (accounts that joined after the period are left out unless they have data). Limit: a deactivated account is judged by its current status (no status history yet).
+- **UX5-03**: the close email lists "Not received (N):" then one bullet per employee: `MENSAH Ama – Accountant`, plus `(email)` for recipients allowed to list accounts. The in-app notification body now says only "Not received: N." **For attendance-frontend**: `GET /admin/reports/weekly` adds `missing: EmployeeSummary[]` (additive) – render one per line, collapse after ~10.
+- **UX5-05 / UX5-06**: quantity outside 1..`client_quantity_max` (0, negative, decimal, text) → 422 `"Quantity must be between 1 and 999."` (never coerced). Plain messages for tasks ("Write the task first.", "The task must be 500 characters or fewer.") and clients (name/service). **For attendance-frontend**: stop coercing 0 to 1 client side; show the server message.
+- **UX5-08**: monthly PDF rows of same-name employees get a small second line with the job title (or `job title, email-local-part` if still ambiguous); CSS moved to pt sizes matching the template (13 pt header/title, 11 pt headings, 10.5 pt body). Owner may still prefer a strict template (question below).
+- Tests: `tests/Feature/Reports/Phase5UxFixesTest.php`. Suite 443 green, PHPStan clean.
+
 ### Phase 3–4 UX fixes, server side (2026-11-13) – `frontend_Attendance/docs/reports/phase-3-4-ux.md`
 - **UX34-01 (High) lost passkey**: `GET /me/faceid` adds `can_reregister` (state ready, nothing pending) and `replacement_pending`. `POST /me/faceid/register/options` with `{ reregister: true }` is allowed on a ready device; the new credential is **pending** on the same device, the owner gets the existing security alert (email + in-app), approvers get "registered Face ID again on the same phone" (`data.reregistration`), the admin list shows `registration.replaces_same_device`. Approval revokes the old credential; rejection keeps it. The old one keeps working meanwhile (state stays `ready`).
 - **UX34-05**: email buttons use PWA routes: `SimpleMail::appUrl()` prefixes app-relative notification paths with `/app` (StaffAlertMail, WeeklyReportsMail → `/app/admin/reports/weekly`); identification-code email → `/sign-in`; recover/confirm-email unchanged (public routes). In-app `data.path` stays app-relative (front `notificationTarget` handles both). A test audits every mailable.
@@ -187,6 +194,7 @@ See `README.md` (PHP + local PostgreSQL, or `docker compose up --build`).
 - Backend test host: Render approved by the owner (account to create); Render procedure ready in `docs/DEPLOYMENT.md` (backend repo).
 
 ## Blocked / questions for the owner
+- (UX5-08) Monthly PDF: a disambiguator line (job title) is added under same-name employees only. Keep it, or follow the template strictly?
 Phase 3 business questions (safe default implemented, configurable where possible):
 - **Q10 – GPS accuracy rule**: the check-in is refused while the reported accuracy is worse than `checkin_max_accuracy_m` (50 m), then accepted if the measured position is within the radius (50 m). Stricter alternative: require distance + accuracy ≤ radius (often impossible indoors). Confirm.
 - **Q11 – Working days**: default Monday–Friday (`working_days`). Is Saturday worked?

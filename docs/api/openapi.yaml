@@ -990,7 +990,7 @@ paths:
       parameters:
         - { name: date, in: query, schema: { type: string, format: date } }
       responses:
-        '200': { description: 'week_start, window_date, opens_at, closes_at, expected_count, received_count, data: [{user: EmployeeSummary, expected, submission: WeeklySubmission|null}]' }
+        '200': { description: 'week_start, window_date, opens_at, closes_at, expected_count, received_count, missing: [EmployeeSummary] (expected employees without a current report, sorted by name; email only for viewers allowed to list accounts), data: [{user: EmployeeSummary, expected, submission: WeeklySubmission|null}]. Expected = active employees who were members (approved_at, else created_at) on the window date and expected that day (UX5-02).' }
         '403': { $ref: '#/components/responses/Forbidden' }
   /admin/reports/weekly/submissions/{id}:
     get:

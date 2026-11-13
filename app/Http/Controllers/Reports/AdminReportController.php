@@ -82,6 +82,9 @@ class AdminReportController
             'closes_at' => $this->window->closesAt($windowDate)->toIso8601String(),
             'expected_count' => count($expected),
             'received_count' => $current->keys()->intersect($expected)->count(),
+            // UX5-03: expected employees without a current report, same EmployeeSummary as the rows.
+            'missing' => $users->filter(fn (User $u) => in_array($u->id, $expected, true) && ! $current->has($u->id))
+                ->map(fn (User $u) => $this->userSummary($u))->values(),
             'data' => $users->map(fn (User $u) => [
                 'user' => $this->userSummary($u),
                 'expected' => in_array($u->id, $expected, true),

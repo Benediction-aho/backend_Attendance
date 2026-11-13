@@ -46,11 +46,12 @@ class CloseWeeklyReports extends Command
                 $title = 'Weekly reports: '.$count.' of '.$expected->count().' received';
                 $body = "{$count} of {$expected->count()} expected employee(s) sent their weekly report for the week of "
                     .Carbon::parse($week)->format('j M Y').'.';
-                $missing = $expected->whereNotIn('id', $received->pluck('user_id')->all())->map(fn ($u) => $u->fullName())->values()->all();
-                if ($missing !== []) {
-                    $body .= ' Not received: '.implode(', ', $missing).'.';
+                // UX5-03: the missing employees are listed one per line in the email (with a disambiguator).
+                $missing = $expected->whereNotIn('id', $received->pluck('user_id')->all())->values();
+                if ($missing->isNotEmpty()) {
+                    $body .= ' Not received: '.$missing->count().'.';
                 }
-                $service->deliver('weekly_close', $windowDate, $title, $body, '/admin/reports/weekly?date='.$windowDate, $received);
+                $service->deliver('weekly_close', $windowDate, $title, $body, '/admin/reports/weekly?date='.$windowDate, $received, missing: $missing);
                 $logger->log('reports.weekly_closed', $title, LogType::Automatic, context: ['window_date' => $windowDate, 'received' => $count, 'expected' => $expected->count()]);
             });
         }

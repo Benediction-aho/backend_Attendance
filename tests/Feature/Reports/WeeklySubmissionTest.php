@@ -202,7 +202,7 @@ describe('Friday close (17:00) and late forwarding', function () {
             ->and(notificationsOf($viewer, 'weekly_close'))->toBe(0)
             ->and(DB::table('report_deliveries')->where('kind', 'weekly_close')->count())->toBe(2)
             ->and(ScheduledRun::query()->where('run_key', 'weekly_close:2026-11-20')->value('status'))->toBe('succeeded');
-        expect(DB::table('notifications')->where('notifiable_id', $super->id)->value('data'))->toContain('Not received: Fosty Fofana');
+        expect(DB::table('notifications')->where('notifiable_id', $super->id)->value('data'))->toContain('Not received: 1.');
 
         // Late upload: forwarded directly (in-app + email); a later replacement is not re-sent (P5-07).
         at('2026-11-20 18:00');

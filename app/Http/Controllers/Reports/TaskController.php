@@ -26,12 +26,20 @@ class TaskController
         return response()->json(['work_date' => $date, 'data' => $tasks->map(fn (Task $t) => $t->present())->values()]);
     }
 
+    /** UX5-06: plain-English validation messages. */
+    private const MESSAGES = [
+        'title.required' => 'Write the task first.',
+        'title.string' => 'Write the task first.',
+        'title.max' => 'The task must be 500 characters or fewer.',
+        'done.boolean' => 'Done must be true or false.',
+    ];
+
     public function store(Request $request): JsonResponse
     {
         $data = $request->validate([
             'title' => ['required', 'string', 'max:500'],
             'done' => ['sometimes', 'boolean'],
-        ]);
+        ], self::MESSAGES);
         $user = $this->user($request);
         $date = $this->calendar->workDate();
         $title = trim((string) preg_replace('/\s+/u', ' ', $data['title']));
@@ -58,7 +66,7 @@ class TaskController
         $data = $request->validate([
             'title' => ['sometimes', 'required', 'string', 'max:500'],
             'done' => ['sometimes', 'boolean'],
-        ]);
+        ], self::MESSAGES);
         if (array_key_exists('title', $data)) {
             $title = trim((string) preg_replace('/\s+/u', ' ', $data['title']));
             if ($title === '') {

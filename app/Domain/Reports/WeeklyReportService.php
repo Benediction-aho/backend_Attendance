@@ -19,6 +19,7 @@ use Illuminate\Http\UploadedFile;
 use Illuminate\Support\Carbon;
 use Illuminate\Support\Collection;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Gate;
 use Illuminate\Support\Facades\Mail;
 use Illuminate\Support\Facades\Storage;
 use Illuminate\Support\Str;
@@ -152,13 +153,22 @@ class WeeklyReportService
             && $encoded <= (int) config('mail.provider_max_mb', 40) * $mb;
     }
 
+    /** UX5-03: "MENSAH Ama – Accountant (ama@…)": job title always, email only for recipients allowed to list accounts. */
+    public static function missingLine(User $u, bool $withEmail): string
+    {
+        $title = trim((string) $u->job_title);
+
+        return mb_strtoupper($u->last_name).' '.$u->first_name.($title !== '' ? ' – '.$title : '').($withEmail ? ' ('.$u->email.')' : '');
+    }
+
     /**
      * Sends one notification + email per recipient, recording each delivery (a retry skips those done).
      *
      * @param  Collection<int, WeeklyReportSubmission>  $submissions
      * @param  Collection<int, User>|null  $recipients
+     * @param  Collection<int, User>|null  $missing  expected employees without a report (listed one per line)
      */
-    public function deliver(string $kind, string $ref, string $title, string $body, string $path, Collection $submissions, ?Collection $recipients = null): int
+    public function deliver(string $kind, string $ref, string $title, string $body, string $path, Collection $submissions, ?Collection $recipients = null, ?Collection $missing = null): int
     {
         // The email lists client names: only accounts allowed to see weekly client lists receive it (P5-02).
         $recipients = ($recipients ?? $this->recipients->weekly())
@@ -185,11 +195,20 @@ class WeeklyReportService
             if ($claimed !== 1) {
                 continue;
             }
+            $mailLines = $lines;
+            if ($missing !== null && $missing->isNotEmpty()) {
+                $withEmail = Gate::forUser($recipient)->allows('viewAny', User::class);
+                $list = ['Not received ('.$missing->count().'):'];
+                foreach ($missing as $m) {
+                    $list[] = '  • '.self::missingLine($m, $withEmail);
+                }
+                array_splice($mailLines, 1, 0, $list);
+            }
             try {
                 $recipient->notifyNow(new ReportNotice($kind, $title, $body, $path, ['submission_ids' => $ids]));
                 // The delivery row is a claim; delivered_at is set by the mail itself once actually sent, and a
                 // permanent failure of the attachment version falls back to the link-only version (P5-05).
-                Mail::to($recipient->email)->queue((new WeeklyReportsMail($title, $lines, $ids, $attach))->forDelivery($kind, $ref, $recipient->id));
+                Mail::to($recipient->email)->queue((new WeeklyReportsMail($title, $mailLines, $ids, $attach))->forDelivery($kind, $ref, $recipient->id));
                 $sent++;
             } catch (Throwable $e) {
                 DB::table('report_deliveries')->where(['kind' => $kind, 'ref' => $ref, 'user_id' => $recipient->id])->delete();

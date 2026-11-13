@@ -139,7 +139,7 @@ class ReportBuilder
      * Monthly rows (SPECS 7, template): one per employee, sorted by last name.
      * Employees: active employees, plus anyone else with lateness or clients in the period.
      *
-     * @return list<array{user_id: int, employee: string, late: int, clients: int, services: list<array{service: string, service_key: string, quantity: int}>}>
+     * @return list<array{user_id: int, employee: string, detail: string|null, late: int, clients: int, services: list<array{service: string, service_key: string, quantity: int}>}>
      */
     public function monthlyRows(string $start, string $end): array
     {
@@ -152,12 +152,27 @@ class ReportBuilder
             ->where(fn ($q) => $q->where('status', 'active')->orWhereIn('id', $ids))
             ->orderByRaw('upper(last_name), upper(first_name), id')->get();
 
+        // UX5-02: an account that joined after the period (catch-up run) is not listed unless it has data.
+        $users = $users->filter(fn (User $u) => in_array($u->id, $ids, false) || $this->calendar->wasMemberOn($u, $end))->values();
+        // UX5-08: same-name employees are told apart by their job title, then by the email local part.
+        $names = $users->countBy(fn (User $u) => mb_strtoupper($u->last_name.' '.$u->first_name));
+        $withTitle = $users->countBy(fn (User $u) => mb_strtoupper($u->last_name.' '.$u->first_name).'|'.$u->job_title);
+
         $rows = [];
         foreach ($users as $user) {
+            $key = mb_strtoupper($user->last_name.' '.$user->first_name);
+            $suffix = null;
+            if ($names[$key] > 1) {
+                $title = trim((string) $user->job_title);
+                $suffix = $title !== '' && $withTitle[$key.'|'.$user->job_title] === 1
+                    ? $title
+                    : ($title !== '' ? $title.', ' : '').strstr($user->email, '@', true);
+            }
             $own = $clients->get($user->id) ?? collect();
             $rows[] = [
                 'user_id' => $user->id,
                 'employee' => mb_strtoupper($user->last_name).' '.$user->first_name,
+                'detail' => $suffix,
                 'late' => (int) ($late[$user->id] ?? 0),
                 'clients' => $own->count(),
                 'services' => self::services($own),

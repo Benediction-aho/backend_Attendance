@@ -71,6 +71,17 @@ class WorkCalendar
             ->whereDate('start_date', '<=', $date)->whereDate('end_date', '>=', $date)->first();
     }
 
+    /**
+     * UX5-02: whether the account already belonged to the staff on a date (approved, or created when no
+     * approval date is recorded, on or before it). Past runs (catch-ups) must not count later accounts.
+     */
+    public function wasMemberOn(User $user, string $date): bool
+    {
+        $since = $user->approved_at ?? $user->created_at;
+
+        return $since === null || Carbon::instance($since)->setTimezone($this->timezone())->toDateString() <= $date;
+    }
+
     public function dayStatus(User $user, string $date): DayStatus
     {
         if ($this->holiday($date) !== null) {

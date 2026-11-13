@@ -6,7 +6,11 @@
     <tr><td>
       <p style="font-size:18px;font-weight:bold;margin:0 0 16px;">{{ $greeting }}</p>
       @foreach ($lines as $line)
-        <p style="font-size:15px;line-height:1.5;margin:0 0 12px;">{{ $line }}</p>
+        @if (str_starts_with($line, '  • '))
+          <p style="font-size:14px;line-height:1.4;margin:0 0 4px 12px;">{{ $line }}</p>
+        @else
+          <p style="font-size:15px;line-height:1.5;margin:0 0 12px;">{{ $line }}</p>
+        @endif
       @endforeach
       @if ($highlight)
         <p style="font-size:24px;letter-spacing:3px;font-weight:bold;background:#eef2f7;border-radius:8px;padding:12px 16px;text-align:center;margin:16px 0;">{{ $highlight }}</p>

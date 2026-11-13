@@ -64,7 +64,7 @@ class WeeklyWindow
     {
         return User::query()->where('role', Role::Employee->value)->where('status', UserStatus::Active->value)
             ->orderByRaw('upper(last_name), upper(first_name), id')->get()
-            ->filter(fn (User $u) => $this->calendar->dayStatus($u, $windowDate)->isExpected())->values();
+            ->filter(fn (User $u) => $this->calendar->wasMemberOn($u, $windowDate) && $this->calendar->dayStatus($u, $windowDate)->isExpected())->values();
     }
 
     /**
