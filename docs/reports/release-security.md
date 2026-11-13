@@ -87,22 +87,28 @@ Scripts added: `tests/security/release_fixtures.sh` (users of every role/tier th
 
 | ID | Title | Severity | Status |
 |---|---|---|---|
-| REL-01 | Super admin enumeration by timing (`/auth/super-admin/code`) | Medium | Fixed (backend) |
-| REL-02 | Recovery quota exhaustible by anyone | Medium | Fixed (backend) |
-| REL-03 | Sign-up flood e-mails all approvers; text injection | Medium | Fixed (backend) |
+| REL-01 | Super admin enumeration by timing (`/auth/super-admin/code`) | Medium | Fixed – verified in re-test |
+| REL-02 | Recovery quota exhaustible by anyone | Medium | Fixed – verified (residual REL-20, Info) |
+| REL-03 | Sign-up flood e-mails all approvers; text injection | Medium | Fixed for names/job title/flood – bypass through the e-mail field: REL-16 |
 | REL-04 | No security headers on the frontend (clickjacking, no CSP) | Medium | Open (frontend) |
-| REL-05 | `TRUSTED_PROXIES=*` trusts all forwarded headers (verify on Render) | Medium | Fixed (backend) |
-| REL-06 | Large JSON bodies parsed before throttling | Low | Fixed (backend) |
-| REL-07 | `PRIVATE_FILES_DISK` missing from `render.yaml` | Low | Fixed (backend) |
-| REL-08 | `promote_to_super_admin` not enforced | Info | Fixed (backend) |
-| REL-09 | Scheduler endpoint existence (405/429) | Info | Fixed (backend) |
-| REL-10 | Validation before authorization on user creation | Info | Fixed (backend) |
+| REL-05 | `TRUSTED_PROXIES=*` trusts all forwarded headers (verify on Render) | Medium | Fixed – verified locally (live check still REL-14; see REL-17, REL-19) |
+| REL-06 | Large JSON bodies parsed before throttling | Low | Fixed – verified |
+| REL-07 | `PRIVATE_FILES_DISK` missing from `render.yaml` | Low | Fixed – verified |
+| REL-08 | `promote_to_super_admin` not enforced | Info | Fixed – verified |
+| REL-09 | Scheduler endpoint existence (405/429) | Info | Fixed for status codes – timing residual REL-18 |
+| REL-10 | Validation before authorization on user creation | Info | Fixed – verified |
 | REL-11 | Dev-only npm advisories | Info | Open (frontend) |
 | REL-12 | Tailwind version comment | Info | Open (frontend) |
-| REL-13 | `checkin_opens_at` vs `late_after` consistency | Info | Fixed (backend) |
+| REL-13 | `checkin_opens_at` vs `late_after` consistency | Info | Fixed – verified |
+| REL-16 | URL in the sign-up e-mail (quoted local part) reaches approver e-mails | Medium | Open (new, re-test) |
+| REL-17 | Per-IP limits keyed on the full IPv6 address | Low | Open (new, re-test) |
+| REL-18 | Scheduler tick: wrong-token path measurably slower than an unknown route | Info | Open (new, re-test) |
+| REL-19 | Several `X-Forwarded-For` header lines: the first one is used | Info | Open – verify live (new, re-test) |
+| REL-20 | Recovery from a new device can still be starved (by design) | Info | Accepted risk – document (new, re-test) |
+| REL-21 | Global sign-up cap can be exhausted from many IPs | Info | Accepted risk – document (new, re-test) |
 | REL-14 | Live test environment not reachable from sandbox | Info | Blocked |
 
-Critical: 0 · High: 0 · Medium: 5 · Low: 2 · Info: 7. Previously open P0-01 (legacy v1 password in git history, owner action) still applies.
+Critical: 0 · High: 0 · Medium: 5 · Low: 2 · Info: 7 (initial pass). After re-test: open Medium = REL-04 (frontend) and REL-16 (new); open Low = REL-17. Previously open P0-01 (legacy v1 password in git history, owner action) still applies.
 
 ## Fixes applied (attendance-backend, 2026-11-13)
 
@@ -118,6 +124,54 @@ All backend findings fixed with Pest regression tests; full suite green, PHPStan
 - **REL-09** – Route is `Route::any` without the general `throttle:api`; the controller answers 404 for any method other than POST, when disabled, for a wrong token and once its own per-IP limit (10/min) is reached – no 405, no 429. Tests: GET/PUT/PATCH/DELETE → same JSON as an unknown route; 15 bad calls then a valid token → 404, scheduler not run; 40 calls with a low `api_requests_per_minute` → always 404.
 - **REL-10** – `POST /admin/users` authorizes (role read from input, default employee) before validating. Tests: employee with empty body → 403 without `errors`; `create_users` admin asking for an admin → 403; valid caller with empty body → 422.
 - **REL-13** – `PUT /admin/settings` refuses `checkin_opens_at >= late_after` (each value taken from the request or from the value effective at the change date) with 422 on `values.checkin_opens_at`. Tests: opens after late, equal, `late_after` moved before opening → 422 and nothing stored; consistent changes accepted.
+
+## Re-test (backend-security-tester, 2026-11-13, commit ab97724)
+
+Setup: fresh DB `attendance_relsec2`, production mode, `php -S` on 8282 (sync queue, `SCHEDULER_TICK_TOKEN` set), 8283 (`-c docker/php.ini`), 8284 (`TRUSTED_PROXIES=*`), 8285 (`QUEUE_CONNECTION=database`); fixtures through the API (`release_fixtures.sh` + identification-code change). New scripts: `tests/security/release_retest_timing.sh`, `tests/security/release_retest_signup.py`.
+
+| ID | Result | Evidence |
+|---|---|---|
+| REL-01 | **Fixed** | `P=8285 N=12 bash tests/security/release_retest_timing.sh sa1@… nobody@… e1@… sa1@…` (fresh IP per request): median 0.270 / 0.262 / 0.256 / 0.258 s; super admin past the active-code cap (2nd series) indistinguishable. Recovery (`PATH_=/api/auth/recovery`): SA not locked 0.260, unknown 0.259, employee 0.250; SA locked (links sent, then cap reached): 0.266 vs unknown 0.251 / employee 0.256. |
+| REL-02 | **Fixed** | SA locked by 5 wrong codes from `dev-attacker-…`; 30 recovery requests from 30 IPs → 3 links sent, 7 × `auth.recovery_contention` (critical). Then: known `device_id` → link sent despite the cap; unknown device → nothing; leading space/upper-case variants behave as expected (trimmed / unknown). Known device from one IP: limited by the per-(account, IP) quota (5). Residual REL-20. |
+| REL-03 | **Partly fixed** | Global cap, approver e-mail budget (5 then one summary, rest in-app) and purge OK. 26 payloads (`release_retest_signup.py`): full-width/ideographic/one-dot-leader/small full stops, zero-width, NBSP, RTL override, newline, Arabic full stop, full-width URL → 422. Accepted but harmless after neutralisation: `evil. example`, combining dot below, Cyrillic homoglyph names, `evil/com/login`, `evil,com`, phone numbers and plain phishing wording (no link). **Bypass: the `email` field** → REL-16. |
+| REL-05 | **Fixed (locally)** | Port 8284, IP recorded in `activity_logs`: `XFF: 203.0.113.1, 198.51.100.44` → 198.51.100.44 (right-most); garbage → peer; `Forwarded`, `X-Real-IP` ignored; IPv6 / `[v6]:port` / `v4:port` parsed. `X-Forwarded-Host/Port/Prefix`, forged `Host` → signed photo URL always built on `APP_URL`. Signed URLs only validate when the request host equals `APP_URL` (expected; APP_URL must be the public API origin). See REL-17/REL-19. |
+| REL-06 | **Fixed** | Port 8283 (`docker/php.ini`), 10 MB JSON with 600 k keys to `/auth/login`: with Content-Length → 413; `Transfer-Encoding: chunked` → 413; `Content-Encoding: gzip` (2.9 MB) → 413 (never inflated); form-urlencoded → 413; `Content-Type: multipart/form-data; boundary=x/json` with a JSON body → PHP exposes no body, 422 (no JSON parsing); real multipart with a 15 MB text field → 422 in the same time as a 413 (`max_input_vars`=1000 bounds field count). 140 KB `PUT /admin/settings` as super admin → 413. |
+| REL-07 | **Fixed** | `render.yaml`: `PRIVATE_FILES_DISK`, `AWS_*` present (`sync: false` for secrets) on web, worker, scheduler. |
+| REL-08 | **Fixed** | Tier-less admin and employee → 422 `not_eligible_for_super_admin`; tier holder promoting himself → 403; settings toggle by `manage_settings_security` → 403; eligible admin promoted by super admin → 200 (then demoted back). |
+| REL-09 | **Fixed (status codes)** | POST/GET/HEAD without/with wrong token, 13 calls in a minute → always 404 with the same body and headers as an unknown route; valid token after the per-IP limit from the same IP → 404, from another IP → 204. Timing residual → REL-18. (php built-in server answers `HTTP/1.1` for the route and `HTTP/1.0` for unknown routes; Caddy/FrankenPHP rewrite the status line, so not visible online.) |
+| REL-10 | **Fixed** | Employee `{}`, `{"role":["x"]}`, `{"role":null}` → 403 without `errors`; `create_users` asking `super_admin` → 403; invalid role values from a valid caller → 422. |
+| REL-13 | **Fixed** | `opens 12:00 / late 08:10`, opens alone later than current late, late alone earlier than current opens, with future `effective_from` → 422; bad format → 422. |
+
+Regression: route × role/tier matrix (35 routes × 25 callers) identical to the first pass (only the routes of each tier open; self-view of `GET /admin/users/{self}` allowed by policy); `release_faceid.php` → `fails=0` (perimeter, accuracy, NaN/1e400/array, assertion abuse, cross-user intent, replay idempotent, 10 parallel confirms → 1 × 201 + 9 × 200, one attendance); login lockout 4 × 401 then 429.
+
+### REL-16 – URL injected into approver e-mails through the sign-up `email` field — Medium (bypass of REL-03)
+- File: `AuthController::register` (`email:rfc`), `AccountService::alertApprovers()` (name and job title are neutralised, `$user->email` is not).
+- Steps (fresh alert budget):
+  ```bash
+  curl -s --interface 127.41.0.2 -X POST localhost:8282/api/auth/register -H 'Accept: application/json' -H 'Content-Type: application/json' \
+    -d '{"email":"\"https://evil.example/login?x=2\"@relsec.test","first_name":"Ama","last_name":"Mensah","employee_type":"employee","job_title":"Accountant"}'
+  ```
+- Observed: 202; approver e-mail (text and HTML parts) and in-app notification: `Ama Mensah ("https://evil.example/login?x=2"@relsec.test, Accountant) wants to create an account.` A quoted local part is valid RFC 5322, so any URL (or `"Your account is locked visit …"`) is carried verbatim, sent from the company domain; mail clients auto-link it. Bounded by `signup_alert_emails_per_hour` (5) but each one is a convincing phishing mail to privileged users.
+- Expected: no attacker-controlled link in staff e-mails (REL-03 fix intent).
+- Fix: validate sign-up e-mail as a plain address – `email:rfc,strict` is not enough; add `regex:/^[A-Za-z0-9._%+\-]+@[A-Za-z0-9.\-]+\.[A-Za-z]{2,}$/` (no quotes, no spaces) or `email:filter` (PHP `FILTER_VALIDATE_EMAIL` without unicode refuses quoted parts with `/`? – check) and keep `email:rfc`; and render the e-mail address in the alert through a neutralising helper too (or omit it from the e-mail and show it only in the app). Apply the same rule to `POST /admin/users` and e-mail change.
+
+### REL-17 – Per-IP limits keyed on the full IPv6 address — Low
+- Files: every limiter keyed with `$request->ip()` (login IP limit, sign-up per IP, OTP/recovery per IP, scheduler tick).
+- Steps: port 8284, `X-Forwarded-For: 2001:db8::1` → recorded IP `2001:db8::1`; each distinct /128 is a fresh bucket. A client with one ordinary IPv6 /64 (or /56, /48 from many providers) has 2^64+ addresses, so per-IP quotas give no protection if the edge accepts IPv6 clients. Account/device lockouts and the new global caps still hold, hence Low.
+- Fix: normalise IPv6 to its /64 prefix (IPv4 unchanged, IPv4-mapped `::ffff:a.b.c.d` → IPv4) in one helper used for every limiter key.
+
+### REL-18 – Scheduler tick: wrong-token path slower than an unknown route — Info (residual of REL-09)
+- Steps: `bash` 15 POSTs each from a fresh IP with a wrong `X-Scheduler-Token`: `/api/ops/scheduler-tick` median **26–29 ms**, `/api/ops/nonexistent` median **8–9 ms** (the route writes an `ops.scheduler_tick_refused` log row). The endpoint's existence remains detectable by timing; the 32+ character token keeps it safe.
+- Fix (optional): do the refusal log asynchronously / only once per IP per minute, or accept and document.
+
+### REL-19 – Several `X-Forwarded-For` header lines: the first one is used — Info (verify live)
+- Steps: port 8284, `-H 'X-Forwarded-For: 203.0.113.2' -H 'X-Forwarded-For: 198.51.100.7'` → recorded IP **203.0.113.2** (client-chosen). Safe only if the hosting edge appends to the existing header value (usual) rather than adding a second header line, and if FrankenPHP joins duplicate lines. Add to the REL-14 live checklist: send two forged header lines and compare the IP in `activity_logs`.
+
+### REL-20 – Recovery from a new device can still be starved — Info (accepted risk)
+- With the fix, anyone can use up `recovery_links_sent_per_hour` (3) per hour from any IPs; only a request carrying the `device_id` of a known device of the super admin bypasses it. A super admin who lost every known device (new phone) and is locked out cannot get a link while the attacker keeps going (critical log is written). Document the out-of-band procedure (second super admin or `attendance:` command on the server) in `DEPLOYMENT.md`; recommend two super admins.
+
+### REL-21 – Global sign-up cap exhaustible — Info (accepted risk)
+- `signup_requests_global_per_hour` (200) is shared by everyone: 200 well-formed requests from many IPs block legitimate sign-ups for up to an hour (429). Acceptable trade-off for the flood protection; mention in the admin guide (setting can be raised, pending requests visible in the app).
 
 ## Tests passed
 
