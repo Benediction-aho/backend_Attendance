@@ -186,7 +186,7 @@ See `README.md` (PHP + local PostgreSQL, or `docker compose up --build`).
 | 3 – Attendance (manual) | Backend done | phase-3-security (fixes re-tested, no Critical/High) | P3-04 closed by phase 4 (re-test) |
 | 4 – PWA, Face ID, notifications | Backend done | phase-4-security pending | Ready for backend-security-tester; frontend can start |
 | 5 – Tasks, clients, reports | Not started | – | |
-| 6 – Dashboards and logs | Not started | – | |
+| 6 – Dashboards and logs | Backend done | phase-6-security pending | Ready for backend-security-tester; frontend can start (endpoints below) |
 | 7 – Quality and pilot | Not started | – | |
 | 8 – Production deployment | Not started | – | Requires the owner's written approval below |
 
@@ -211,6 +211,10 @@ Phase 3 business questions (safe default implemented, configurable where possibl
 - **Q18 – Remote days per week (P3-01)**: an employee can self-select at most `max_remote_days_per_week` remote days (default 2); the choice applies from the next day and admins with `manage_work_schedules` are notified. Confirm the number (contract-dependent?) and whether remote days chosen by the employee should need admin validation.
 - **Q17 – Office GPS coordinates and holiday list** (owner input, PLAN §8): defaults 5.595223, -0.216703 in use; please provide the coordinates measured on site and the holiday list.
 - Note: `faceid_required` and `faceid_required_for_checkin` merged in phase 4 (one setting, default on).
+
+Phase 6 business questions (safe default implemented, configurable where possible):
+- **Q28 – Dashboard tiers**: today's counts (expected, checked in, missing, on leave, remote) need any attendance tier; `late` and refused attempts need `view_lateness`; month-to-date clients and top services need `view_clients` or `view_statistics`; month late count needs `view_lateness`; weekly "N of M" needs `view_reports` or `receive_weekly_reports`; pending counts need the matching approval tier. Confirm, or name other tiers (e.g. should `view_statistics` also show lateness totals?).
+- **Q29 – Log CSV export**: super admins only (not `view_logs` admins), capped at `log_export_max_rows` (100,000), `log_export_per_hour` (10). Confirm.
 
 Phase 5 business questions (safe default implemented, configurable where possible):
 - **Q23 – "Absent on Friday"**: grace (submit on the next working day without being late) is given when the employee was not expected on Friday (leave, day off, holiday) and, by default, also when expected but without check-in (`weekly_absent_friday_grace`). The grace ends at the window end time (17:00) of the next expected day. Confirm both.
@@ -244,6 +248,7 @@ Phase 1 business questions (safe default implemented, configurable where possibl
 _Not given yet._
 
 ## Log
+- 2026-11-13 – Phase 6 backend: `GET /api/me/dashboard` (today, week, monthly period 26→25 up to today, weekly report status) and `GET /api/admin/dashboard` (today / week / month / pending sections, absent when the tier is missing; super admin sees all) – all figures computed server-side; `GET /api/admin/activity-logs/export` (super admin CSV, same filters, streamed, capped, rate limited, logged as `logs.exported`, CSV-injection safe). New settings `dashboard_top_services`, `log_export_max_rows`, `log_export_per_hour`. Contract in `docs/api/openapi.yaml` (no breaking change). Phase 5 UX fixes UX5-09 (no "0 of 0" weekly close email when nobody was expected; run recorded, `reports.weekly_close_skipped` logged) and UX5-10 (emails/notifications use "First Last"; the monthly PDF keeps "LAST First"; weekly attachment names `Weekly_report_First_Last_…`). 465 tests green, PHPStan clean. **Ready for backend-security-tester (phase 6); attendance-frontend can build the dashboards on these endpoints.**
 - 2026-11-12 – Phase 5 backend: tasks, clients (service suggestions), daily report 17:00, weekly summary, weekly PDF upload (window, versions, late forwarding, 16:30 reminder, 17:00 close), monthly PDF of the 26th (DomPDF, template in English). 380 tests green. Ready for backend-security-tester.
 - 2026-11-12 – Phase 4 backend: Face ID (WebAuthn passkeys: registration, admin approval of new devices, revoke, assertion bound to the check-in intent, required by default), Web Push (VAPID subscriptions, queued delivery, expired cleanup, push copy of every in-app notification). 326 tests green. Ready for backend-security-tester.
 - 2026-11-12 – Phase 2 UX backend fixes UX2-01, 02, 07, 08, 17, 18 (UX2-11 kept). 335 tests green.
