@@ -16,6 +16,7 @@ use App\Http\Controllers\FileController;
 use App\Http\Controllers\HealthController;
 use App\Http\Controllers\MeController;
 use App\Http\Controllers\NotificationController;
+use App\Http\Controllers\Ops\SchedulerTickController;
 use App\Http\Controllers\ProfileController;
 use App\Http\Controllers\PushSubscriptionController;
 use App\Http\Controllers\Reports\AdminReportController;
@@ -27,6 +28,7 @@ use App\Http\Middleware\EnsureEmployee;
 use Illuminate\Support\Facades\Route;
 
 Route::get('/health', HealthController::class)->name('health');
+Route::post('/ops/scheduler-tick', SchedulerTickController::class)->middleware('throttle:10,1')->name('ops.scheduler-tick');
 
 // Signed, short-lived links to private files (local disk only; S3 uses pre-signed URLs).
 Route::get('/files/{path}', [FileController::class, 'show'])->where('path', '[A-Za-z0-9/_.-]+')->name('files.show');

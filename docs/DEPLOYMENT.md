@@ -142,3 +142,11 @@ reminders need an always-on paid instance (Starter) for meaningful tests.
 - Sentry for backend (`SENTRY_DSN`) and frontend.
 - Uptime check (e.g. Better Stack / UptimeRobot) on `https://<api-host>/api/health` every minute.
 - Scheduler heartbeat: `scheduled_runs` table (phase 1+) plus an alert when a job has not run in time.
+
+### 3.3 Free-plan test setup (no worker, no scheduler process)
+For tests on Render's free plan (owner decision; production will move to the company's own server):
+- `QUEUE_CONNECTION=sync` on the API: emails and pushes are sent during the request (no worker needed).
+- Scheduler: an external cron service (e.g. cron-job.org, free) calls `POST /api/ops/scheduler-tick` every
+  minute with header `X-Scheduler-Token: <SCHEDULER_TICK_TOKEN>`. The endpoint runs `schedule:run` once; every
+  task is idempotent and catches up, so missed or duplicate ticks are safe. Without `SCHEDULER_TICK_TOKEN` the
+  endpoint answers 404. The per-minute call also keeps the free service and the free Supabase project awake.

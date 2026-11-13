@@ -2,6 +2,11 @@
 
 return [
 
+    // External cron trigger for hosts without a scheduler process (see docs/DEPLOYMENT.md §3.3).
+    'scheduler' => [
+        'tick_token' => env('SCHEDULER_TICK_TOKEN', ''),
+    ],
+
     /*
     |--------------------------------------------------------------------------
     | Third Party Services
