@@ -132,6 +132,7 @@ Route::middleware(['auth:sanctum', EnsureAccountUsable::class])->group(function 
         Route::post('/faceid/credentials/{credential}/revoke', [FaceIdController::class, 'revoke'])->whereNumber('credential')->name('admin.faceid.revoke');
 
         Route::get('/activity-logs', [ActivityLogController::class, 'index'])->middleware('can:view-logs')->name('admin.activity-logs.index');
+        Route::get('/activity-logs/export', [ActivityLogController::class, 'export'])->middleware(['can:super-admin', 'throttle:log-export'])->name('admin.activity-logs.export');
         Route::get('/dashboard', [DashboardController::class, 'admin'])->name('admin.dashboard');
 
         // Authorization per action in UserPolicy (role + permission tier).

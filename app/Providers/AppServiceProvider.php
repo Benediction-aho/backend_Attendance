@@ -50,6 +50,8 @@ class AppServiceProvider extends ServiceProvider
         RateLimiter::for('attendance', fn (Request $request) => Limit::perMinute(app(SettingsService::class)->int('checkin_attempts_per_minute'))
             ->by('attendance:'.($request->user('sanctum')?->getAuthIdentifier() ?? $request->ip())));
         RateLimiter::for('client-errors', fn (Request $request) => Limit::perMinute(10)->by('client-errors:'.($request->user('sanctum')?->getAuthIdentifier() ?? $request->ip())));
+        RateLimiter::for('log-export', fn (Request $request) => Limit::perHour(app(SettingsService::class)->int('log_export_per_hour'))
+            ->by('log-export:'.($request->user('sanctum')?->getAuthIdentifier() ?? $request->ip())));
         // Sliding device sessions (FIABILITE B3): a token unused for longer than the idle period stops working.
         // Checked before Sanctum refreshes last_used_at.
         Sanctum::authenticateAccessTokensUsing(function (PersonalAccessToken $token, bool $isValid): bool {

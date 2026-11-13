@@ -425,6 +425,30 @@ paths:
       responses:
         '200': { description: '{ data: [{ id, created_at, type, level, event, description, user{id,name,email,deleted}, actor{id,name}, context, ip, device_id, user_agent }], meta }' }
 
+  /admin/activity-logs/export:
+    get:
+      summary: CSV export of the activity log (super admins only; 403 for everyone else, including view_logs admins).
+      description: |
+        Same filters as /admin/activity-logs (no per_page). Streamed (text/csv; charset=UTF-8, UTF-8 BOM, attachment
+        `activity_log_YYYY-MM-DD_HHMMSS.csv`), newest first, capped at settings.log_export_max_rows. Columns: Date (Africa/Accra),
+        Type, Level, Event, Description, User, User email, Actor, IP, Device, User agent, Context (JSON). Cells starting with
+        = + - @ are prefixed with ' (CSV injection). Each export is logged (security event `logs.exported`, filters and row count).
+        Rate limited to settings.log_export_per_hour per super admin (429).
+      security: [{ deviceToken: [] }]
+      parameters:
+        - { name: user_id, in: query, schema: { type: integer } }
+        - { name: actor_id, in: query, schema: { type: integer } }
+        - { name: type, in: query, schema: { type: string, enum: [action, error, security, automatic] } }
+        - { name: level, in: query, schema: { type: string, enum: [info, warning, error, critical] } }
+        - { name: event, in: query, schema: { type: string } }
+        - { name: from, in: query, schema: { type: string, format: date } }
+        - { name: to, in: query, schema: { type: string, format: date } }
+      responses:
+        '200': { description: CSV file, content: { text/csv: { schema: { type: string } } } }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '422': { description: Invalid filter }
+        '429': { description: Too many exports }
+
   # ---------------- Phase 6: dashboards ----------------
   /me/dashboard:
     get:

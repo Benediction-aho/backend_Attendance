@@ -151,3 +151,45 @@ it('keeps log entries when a device or user they reference is deleted (P1-08)', 
 
     expect($log->fresh()->device_id)->toBe($device->id)->and($log->fresh()->user_id)->toBe($this->emp->id);
 });
+
+describe('CSV export (phase 6)', function () {
+    it('streams the filtered logs as CSV for super admins and logs the export', function () {
+        app(ActivityLogger::class)->log('profile.updated', '=HYPERLINK("http://x")', user: $this->emp);
+        $r = $this->bearer(deviceToken($this->sa))->get('/api/admin/activity-logs/export?user_id='.$this->emp->id.'&type=action');
+        $r->assertOk()->assertHeader('Content-Type', 'text/csv; charset=UTF-8');
+        expect($r->headers->get('Content-Disposition'))->toContain('attachment; filename=activity_log_');
+        $lines = array_values(array_filter(explode("\n", $r->streamedContent())));
+        expect($lines)->toHaveCount(3) // header + 2 action rows of the employee
+            ->and($lines[0])->toContain('Date,Type,Level,Event')
+            ->and($r->streamedContent())->toContain("'=HYPERLINK")->not->toContain(',=HYPERLINK')->not->toContain('auth.login_failed');
+        $log = ActivityLog::query()->where('event', 'logs.exported')->firstOrFail();
+        expect($log->type)->toBe(LogType::Security)->and($log->actor_id)->toBe($this->sa->id)
+            ->and($log->context['rows'])->toBe(2)->and($log->context['filters']['type'])->toBe('action');
+    });
+
+    it('caps the rows at the configured maximum', function () {
+        app(SettingsService::class)->set(['log_export_max_rows' => 100]);
+        for ($i = 0; $i < 110; $i++) {
+            app(ActivityLogger::class)->log('scheduled.y', 'Row '.$i, LogType::Automatic);
+        }
+        $r = $this->bearer(deviceToken($this->sa))->get('/api/admin/activity-logs/export?event=scheduled.y');
+        expect(count(array_filter(explode("\n", $r->streamedContent()))))->toBe(101)
+            ->and(ActivityLog::query()->where('event', 'logs.exported')->value('context')['truncated'])->toBeTrue();
+    });
+
+    it('is refused to admins, even with view_logs, and validates filters', function () {
+        $admin = User::factory()->admin(Permission::ViewLogs)->create();
+        $this->bearer(deviceToken($admin))->get('/api/admin/activity-logs/export')->assertForbidden();
+        $this->bearer(deviceToken($this->emp))->get('/api/admin/activity-logs/export')->assertForbidden();
+        $this->bearer(deviceToken($this->sa))->getJson('/api/admin/activity-logs/export?type=nope')->assertStatus(422);
+        expect(ActivityLog::query()->where('event', 'logs.exported')->count())->toBe(0);
+    });
+
+    it('is rate limited per super admin', function () {
+        app(SettingsService::class)->set(['log_export_per_hour' => 2]);
+        $token = deviceToken($this->sa);
+        $this->bearer($token)->get('/api/admin/activity-logs/export')->assertOk();
+        $this->bearer($token)->get('/api/admin/activity-logs/export')->assertOk();
+        $this->bearer($token)->get('/api/admin/activity-logs/export')->assertStatus(429);
+    });
+});
