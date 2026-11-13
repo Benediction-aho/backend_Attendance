@@ -6,6 +6,7 @@ use App\Enums\EmployeeType;
 use App\Enums\Permission;
 use App\Enums\Role;
 use App\Enums\UserStatus;
+use App\Settings\SettingDefinitions;
 use Database\Factories\UserFactory;
 use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Database\Eloquent\Factories\HasFactory;
@@ -136,6 +137,16 @@ class User extends Authenticatable
         }
 
         return $this->grantedPermissions()[$permission->value] ?? false;
+    }
+
+    /**
+     * Settings sections this user may read and change (super admin: all; admin: per permission).
+     *
+     * @return list<string>
+     */
+    public function settingsSections(): array
+    {
+        return array_values(array_filter(SettingDefinitions::SECTIONS, fn (string $s) => $this->hasPermission(Permission::forSettingsSection($s))));
     }
 
     /** @return array<string, bool> */

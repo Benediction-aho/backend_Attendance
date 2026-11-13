@@ -68,6 +68,12 @@ Chaque autorisation est un **palier** activable séparément dans la configurati
 - Voir les statistiques et analyses
 - Recevoir les notifications et emails de rapports hebdomadaires
 - Devenir super admin (promotion)
+- Voir les journaux d'activité
+- **Configuration – Présence** (`manage_settings_attendance`, « Settings – Attendance ») : pointage, Face ID, horaires, jours de travail, congés / télétravail, rappels
+- **Configuration – Rapports** (`manage_settings_reports`, « Settings – Reports ») : rapports journaliers / hebdomadaires / mensuels, limites tâches / clients, pièces jointes, tableau de bord
+- **Configuration – Sécurité** (`manage_settings_security`, « Settings – Security ») : verrouillage, codes, limites de requêtes, sessions, journaux, push, fichiers
+
+Configuration par sections (décision du propriétaire, 2026-11-13) : un admin ne voit et ne modifie que les sections qui lui sont accordées (refus total si une seule clé est hors de ses sections). Toute modification faite par un admin est notifiée aux super admins (in-app + email) et journalisée. Restent **réservés au super admin** : destinataires du rapport mensuel, visibilité des événements super admin dans les journaux, fuseau horaire (non modifiable).
 
 Règle de sécurité : il doit toujours rester **au moins un super admin actif** (impossible de supprimer, bloquer ou rétrograder le dernier).
 

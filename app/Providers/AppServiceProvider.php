@@ -82,6 +82,7 @@ class AppServiceProvider extends ServiceProvider
             return true;
         });
 
+        Gate::define('manage-settings', fn (User $user) => $user->settingsSections() !== []);
         Gate::define('super-admin', fn (User $user) => $user->isSuperAdmin());
         Gate::define('view-logs', fn (User $user) => $user->hasPermission(Permission::ViewLogs));
         // Attendance views (any attendance-related tier); field-level filtering in AttendancePresenter.

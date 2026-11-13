@@ -97,13 +97,17 @@ class SettingsService
     /**
      * Current values plus scheduled future changes, for the configuration page.
      *
-     * @return list<array{key: string, label: string, group: string, type: string, editable: bool, value: mixed, default: mixed, scheduled: list<array{value: mixed, effective_from: string}>}>
+     * @param  list<string>|null  $keys  only these keys (null: all)
+     * @return list<array{key: string, label: string, group: string, section: string, super_admin_only: bool, type: string, editable: bool, value: mixed, default: mixed, scheduled: list<array{value: mixed, effective_from: string}>}>
      */
-    public function describe(): array
+    public function describe(?array $keys = null): array
     {
         $now = Carbon::now()->getTimestamp();
         $out = [];
         foreach (SettingDefinitions::all() as $key => $definition) {
+            if ($keys !== null && ! in_array($key, $keys, true)) {
+                continue;
+            }
             $scheduled = [];
             foreach ($this->versions()[$key] ?? [] as $version) {
                 if ($version['from'] > $now) {
@@ -117,6 +121,8 @@ class SettingsService
                 'key' => $key,
                 'label' => $definition['label'],
                 'group' => $definition['group'],
+                'section' => $definition['section'],
+                'super_admin_only' => $definition['super_admin_only'],
                 'type' => $definition['type'],
                 'editable' => $definition['editable'] ?? true,
                 'value' => $this->get($key),

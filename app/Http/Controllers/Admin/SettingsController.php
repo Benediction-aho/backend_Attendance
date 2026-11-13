@@ -7,12 +7,14 @@ use App\Enums\Role;
 use App\Enums\UserStatus;
 use App\Models\SettingHistory;
 use App\Models\User;
+use App\Notifications\StaffAlert;
 use App\Services\ActivityLogger;
 use App\Settings\SettingDefinitions;
 use App\Settings\SettingsService;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Carbon;
+use Illuminate\Support\Facades\Notification;
 use Illuminate\Validation\Rule;
 use Illuminate\Validation\ValidationException;
 
@@ -20,9 +22,33 @@ class SettingsController
 {
     public function __construct(private readonly SettingsService $settings, private readonly ActivityLogger $logger) {}
 
-    public function index(): JsonResponse
+    public function index(Request $request): JsonResponse
     {
-        return response()->json(['data' => $this->settings->describe()]);
+        /** @var User $actor */
+        $actor = $request->user();
+
+        return $this->listing($actor);
+    }
+
+    /**
+     * Keys the user may see and change: settings of their sections; super-admin-only settings for super admins.
+     *
+     * @return list<string>
+     */
+    private function allowedKeys(User $user): array
+    {
+        $sections = $user->settingsSections();
+
+        return array_keys(array_filter(SettingDefinitions::all(), fn (array $d) => in_array($d['section'], $sections, true)
+            && (! $d['super_admin_only'] || $user->isSuperAdmin())));
+    }
+
+    private function listing(User $user): JsonResponse
+    {
+        return response()->json([
+            'data' => $this->settings->describe($this->allowedKeys($user)),
+            'sections' => $user->settingsSections(),
+        ]);
     }
 
     public function update(Request $request): JsonResponse
@@ -45,6 +71,14 @@ class SettingsController
                     : ($definition['item_rules'] ?? ['integer', 'min:1', 'max:1440']);
             }
         }
+        /** @var User $actor */
+        $actor = $request->user();
+        $requested = array_keys((array) $request->input('values'));
+        // All-or-nothing: one key outside the caller's sections refuses the whole change (before validation).
+        if (array_diff(array_intersect($requested, array_keys($definitions)), $this->allowedKeys($actor)) !== []) {
+            abort(403, 'You are not allowed to change one or more of these settings.');
+        }
+
         $data = $request->validate($rules);
 
         /** @var array<string, mixed> $values */
@@ -59,8 +93,6 @@ class SettingsController
             ? Carbon::createFromFormat('Y-m-d', $data['effective_from'])?->startOfDay()
             : Carbon::now();
 
-        /** @var User $actor */
-        $actor = $request->user();
         $this->settings->set($values, $actor, $effective);
 
         $this->logger->log('settings.updated', 'Configuration changed: '.implode(', ', array_keys($values)), level: LogLevel::Warning, actor: $actor, context: [
@@ -68,14 +100,28 @@ class SettingsController
             'effective_from' => $effective?->toIso8601String(),
         ]);
 
-        return response()->json(['data' => $this->settings->describe()]);
+        if (! $actor->isSuperAdmin()) {
+            $labels = array_map(fn (string $k) => $definitions[$k]['label'], array_keys($values));
+            Notification::send(User::query()->activeSuperAdmins()->get(), new StaffAlert(
+                'settings_changed',
+                'Configuration changed by an admin',
+                "{$actor->fullName()} changed: ".implode('; ', $labels).'.',
+                ['keys' => array_keys($values), 'actor_id' => $actor->id],
+                path: '/admin/settings',
+            ));
+        }
+
+        return $this->listing($actor);
     }
 
     public function history(Request $request): JsonResponse
     {
         $request->validate(['key' => ['nullable', 'string', 'max:80']]);
 
+        /** @var User $actor */
+        $actor = $request->user();
         $page = SettingHistory::query()
+            ->whereIn('key', $this->allowedKeys($actor))
             ->with('changer:id,first_name,last_name')
             ->when($request->filled('key'), fn ($q) => $q->where('key', $request->string('key')->toString()))
             ->orderByDesc('changed_at')->orderByDesc('id')
@@ -90,6 +136,7 @@ class SettingsController
                 'changed_at' => $h->changed_at->toIso8601String(),
                 'changed_by' => $h->changer ? ['id' => $h->changer->id, 'name' => $h->changer->fullName()] : null,
             ]),
+            'sections' => $actor->settingsSections(),
             'meta' => ['current_page' => $page->currentPage(), 'last_page' => $page->lastPage(), 'total' => $page->total()],
         ]);
     }

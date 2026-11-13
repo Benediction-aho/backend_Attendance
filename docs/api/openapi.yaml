@@ -28,7 +28,7 @@ paths:
                   status: { type: string, enum: [ok] }
   /admin/settings:
     get:
-      summary: All settings with current value, default and scheduled future values (super admin only)
+      summary: 'Settings the caller may manage, with current value, default and scheduled future values. Super admin: all sections; admin: only sections granted by manage_settings_attendance / manage_settings_reports / manage_settings_security (403 with none). Super-admin-only settings (super_admin_only: true – monthly_report_recipient_ids, logs_admins_see_super_admin_events, timezone) are never returned to admins.'
       security: [{ deviceToken: [] }]
       responses:
         '200':
@@ -39,10 +39,11 @@ paths:
                 type: object
                 properties:
                   data: { type: array, items: { $ref: '#/components/schemas/Setting' } }
+                  sections: { type: array, items: { type: string, enum: [attendance, reports, security] }, description: Sections the caller can edit }
         '401': { $ref: '#/components/responses/Unauthenticated' }
         '403': { $ref: '#/components/responses/Forbidden' }
     put:
-      summary: Change one or more settings, now or from a future date (super admin only). History is kept; past records keep the old rule.
+      summary: 'Change one or more settings, now or from a future date. History is kept; past records keep the old rule. All-or-nothing: if any key is outside the caller''s sections (or super-admin-only for an admin), 403 and nothing is changed. A change by an admin notifies every active super admin (in-app + email, kind settings_changed); every change is in the activity log (settings.updated).'
       security: [{ deviceToken: [] }]
       requestBody:
         required: true
@@ -60,13 +61,13 @@ paths:
         '403': { $ref: '#/components/responses/Forbidden' }
   /admin/settings/history:
     get:
-      summary: Settings change history, newest first, 50 per page (super admin only)
+      summary: Settings change history, newest first, 50 per page, limited to the keys the caller may manage (same rules as GET /admin/settings)
       security: [{ deviceToken: [] }]
       parameters:
         - { name: key, in: query, schema: { type: string } }
         - { name: page, in: query, schema: { type: integer } }
       responses:
-        '200': { description: 'data[] {key, old_value, new_value, effective_from, changed_at, changed_by{id,name}} + meta' }
+        '200': { description: 'data[] {key, old_value, new_value, effective_from, changed_at, changed_by{id,name}} + sections + meta' }
   /auth/register:
     post:
       summary: Public sign-up request (no password). Same 202 answer whether or not the email is already used. Rate limited per IP (settings.signup_requests_per_hour).
@@ -1170,6 +1171,8 @@ components:
         key: { type: string }
         label: { type: string }
         group: { type: string, enum: [attendance, reports, system, security] }
+        section: { type: string, enum: [attendance, reports, security], description: 'Permission section: manage_settings_<section>' }
+        super_admin_only: { type: boolean, description: 'Only super admins see and change it (admins never receive these settings)' }
         type: { type: string, enum: [int, float, bool, time, string, int_list] }
         editable: { type: boolean }
         value: {}

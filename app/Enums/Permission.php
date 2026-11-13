@@ -26,6 +26,19 @@ enum Permission: string
     case ReceiveWeeklyReports = 'receive_weekly_reports';
     case PromoteToSuperAdmin = 'promote_to_super_admin';
     case ViewLogs = 'view_logs';
+    case ManageSettingsAttendance = 'manage_settings_attendance';
+    case ManageSettingsReports = 'manage_settings_reports';
+    case ManageSettingsSecurity = 'manage_settings_security';
+
+    /** Permission that lets an admin manage one settings section. */
+    public static function forSettingsSection(string $section): self
+    {
+        return match ($section) {
+            'attendance' => self::ManageSettingsAttendance,
+            'reports' => self::ManageSettingsReports,
+            default => self::ManageSettingsSecurity,
+        };
+    }
 
     public function label(): string
     {
@@ -49,6 +62,9 @@ enum Permission: string
             self::ReceiveWeeklyReports => 'Receive weekly report notifications and emails',
             self::PromoteToSuperAdmin => 'Eligible for promotion to super admin',
             self::ViewLogs => 'View activity logs',
+            self::ManageSettingsAttendance => 'Settings – Attendance',
+            self::ManageSettingsReports => 'Settings – Reports',
+            self::ManageSettingsSecurity => 'Settings – Security',
         };
     }
 }

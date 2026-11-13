@@ -9,9 +9,42 @@ namespace App\Settings;
 final class SettingDefinitions
 {
     /**
-     * @return array<string, array{type: string, default: mixed, rules: list<string>, item_rules?: list<string>, group: string, label: string, editable?: bool}>
+     * Settings sections: each one is managed by admins holding the matching permission (super admins: all).
+     */
+    public const SECTIONS = ['attendance', 'reports', 'security'];
+
+    /**
+     * Settings that only a super admin may change or see, whatever the admin's section permissions:
+     * they decide who receives confidential data or what admins can see (privilege-related).
+     */
+    public const SUPER_ADMIN_ONLY = ['monthly_report_recipient_ids', 'logs_admins_see_super_admin_events', 'timezone'];
+
+    /** Section of each group; a setting may override it with its own 'section'. */
+    private const GROUP_SECTIONS = ['attendance' => 'attendance', 'reports' => 'reports', 'security' => 'security', 'system' => 'security'];
+
+    /**
+     * @return array<string, array{type: string, default: mixed, rules: list<string>, item_rules?: list<string>, group: string, section: string, label: string, editable?: bool, super_admin_only: bool}>
      */
     public static function all(): array
+    {
+        static $cache = null;
+        if ($cache !== null) {
+            return $cache;
+        }
+        $out = [];
+        foreach (self::raw() as $key => $definition) {
+            $definition['section'] ??= self::GROUP_SECTIONS[$definition['group']];
+            $definition['super_admin_only'] = in_array($key, self::SUPER_ADMIN_ONLY, true);
+            $out[$key] = $definition;
+        }
+
+        return $cache = $out;
+    }
+
+    /**
+     * @return array<string, array{type: string, default: mixed, rules: list<string>, item_rules?: list<string>, group: string, section?: string, label: string, editable?: bool}>
+     */
+    private static function raw(): array
     {
         return [
             // Office and attendance

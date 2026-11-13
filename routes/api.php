@@ -150,7 +150,7 @@ Route::middleware(['auth:sanctum', EnsureAccountUsable::class])->group(function 
         Route::put('/users/{user}/permissions', [UserController::class, 'permissions'])->name('admin.users.permissions');
         Route::put('/users/{user}/role', [UserController::class, 'role'])->name('admin.users.role');
 
-        Route::middleware('can:super-admin')->group(function () {
+        Route::middleware('can:manage-settings')->group(function () {
             Route::get('/settings', [SettingsController::class, 'index'])->name('admin.settings.index');
             Route::put('/settings', [SettingsController::class, 'update'])->name('admin.settings.update');
             Route::get('/settings/history', [SettingsController::class, 'history'])->name('admin.settings.history');
