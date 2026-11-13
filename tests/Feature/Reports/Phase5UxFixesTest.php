@@ -5,10 +5,13 @@
 use App\Domain\Reports\ReportBuilder;
 use App\Enums\Permission;
 use App\Mail\WeeklyReportsMail;
+use App\Models\ActivityLog;
 use App\Models\DailyReport;
+use App\Models\ScheduledRun;
 use App\Models\User;
 use App\Models\WeeklyReportSubmission;
 use Illuminate\Support\Carbon;
+use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Mail;
 use Illuminate\Support\Facades\Storage;
 use Laravel\Sanctum\Sanctum;
@@ -29,7 +32,7 @@ describe('UX5-02 expected population of past runs', function () {
 
         $this->artisan('reports:weekly-close')->assertSuccessful();
         Mail::assertQueued(WeeklyReportsMail::class, fn ($m) => $m->hasTo($super->email) && $m->title === 'Weekly reports: 0 of 1 received'
-            && collect($m->lines)->contains(fn ($l) => str_contains($l, 'OLD '.$old->first_name)));
+            && collect($m->lines)->contains(fn ($l) => str_contains($l, $old->first_name.' Old')));
 
         Sanctum::actingAs($super);
         $this->getJson('/api/admin/reports/weekly?date=2026-11-04')->assertOk()->assertJsonPath('expected_count', 1);
@@ -64,10 +67,10 @@ describe('UX5-03 missing list', function () {
 
         Mail::assertQueued(WeeklyReportsMail::class, fn ($m) => $m->hasTo($super->email)
             && in_array('Not received (2):', $m->lines, true)
-            && in_array('  • MENSAH Ama – Accountant ('.$a->email.')', $m->lines, true)
-            && in_array('  • MENSAH Ama – Driver ('.$b->email.')', $m->lines, true));
+            && in_array('  • Ama Mensah – Accountant ('.$a->email.')', $m->lines, true)
+            && in_array('  • Ama Mensah – Driver ('.$b->email.')', $m->lines, true));
         Mail::assertQueued(WeeklyReportsMail::class, fn ($m) => $m->hasTo($receiver->email)
-            && in_array('  • MENSAH Ama – Accountant', $m->lines, true)
+            && in_array('  • Ama Mensah – Accountant', $m->lines, true)
             && ! collect($m->lines)->contains(fn ($l) => str_contains($l, $a->email)));
         expect(collect(Mail::queued(WeeklyReportsMail::class))->first()->lines[0])->not->toContain('Mensah,');
 
@@ -121,5 +124,22 @@ describe('UX5-08 monthly homonyms', function () {
         expect(collect($rows)->pluck('detail')->all())->toBe([null, 'Accountant', 'Driver, efua.b', 'Driver, efua.c']);
         $html = view('pdf.monthly', ['rows' => $rows])->render();
         expect($html)->toContain('Driver, efua.c')->toContain('font-size: 10.5pt');
+    });
+});
+
+describe('UX5-09 empty weekly close', function () {
+    it('sends nothing when nobody was expected, records the run as done and logs it', function () {
+        $super = User::factory()->superAdmin()->create(['created_at' => Carbon::parse('2026-01-01')]);
+        User::factory()->create(['created_at' => Carbon::parse('2026-11-12 10:00')]);
+        at('2026-11-13 09:00'); // catch-up of 6 Nov: nobody was a member then
+
+        $this->artisan('reports:weekly-close')->assertSuccessful();
+        Mail::assertNotQueued(WeeklyReportsMail::class, fn ($m) => str_contains($m->title, '0 of 0'));
+        expect(ScheduledRun::query()->where('run_key', 'weekly_close:2026-11-06')->value('status'))->toBe('succeeded')
+            ->and(ActivityLog::query()->where('event', 'reports.weekly_close_skipped')->count())->toBe(1)
+            ->and(DB::table('notifications')->where('notifiable_id', $super->id)->count())->toBe(0);
+
+        $this->artisan('reports:weekly-close')->assertSuccessful(); // never twice
+        expect(ActivityLog::query()->where('event', 'reports.weekly_close_skipped')->count())->toBe(1);
     });
 });

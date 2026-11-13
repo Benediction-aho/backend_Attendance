@@ -153,12 +153,15 @@ class WeeklyReportService
             && $encoded <= (int) config('mail.provider_max_mb', 40) * $mb;
     }
 
-    /** UX5-03: "MENSAH Ama – Accountant (ama@…)": job title always, email only for recipients allowed to list accounts. */
+    /**
+     * UX5-03 / UX5-10: "Ama Mensah – Accountant (ama@…)": same "First Last" order as the app; job title always,
+     * email only for recipients allowed to list accounts. (The monthly PDF keeps the template "LAST First".)
+     */
     public static function missingLine(User $u, bool $withEmail): string
     {
         $title = trim((string) $u->job_title);
 
-        return mb_strtoupper($u->last_name).' '.$u->first_name.($title !== '' ? ' – '.$title : '').($withEmail ? ' ('.$u->email.')' : '');
+        return $u->fullName().($title !== '' ? ' – '.$title : '').($withEmail ? ' ('.$u->email.')' : '');
     }
 
     /**

@@ -9,6 +9,7 @@ use App\Models\User;
 use App\Models\WeeklyReportSubmission;
 use App\Settings\SettingsService;
 use Illuminate\Http\UploadedFile;
+use Illuminate\Support\Carbon;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Mail;
 use Illuminate\Support\Facades\Storage;
@@ -246,6 +247,7 @@ describe('Friday close (17:00) and late forwarding', function () {
     it('retries only the recipients not served when one delivery fails', function () {
         $s1 = User::factory()->superAdmin()->create();
         $s2 = User::factory()->superAdmin()->create();
+        User::factory()->create(['created_at' => Carbon::parse('2026-01-01')]); // UX5-09: someone must be expected
         DB::table('report_deliveries')->insert(['kind' => 'weekly_close', 'ref' => '2026-11-20', 'user_id' => $s1->id, 'sent_at' => now()]);
         at('2026-11-20 17:00');
         $this->artisan('reports:weekly-close')->assertSuccessful();

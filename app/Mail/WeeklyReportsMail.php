@@ -99,7 +99,7 @@ class WeeklyReportsMail extends SimpleMail
         }
         $out = [];
         foreach (WeeklyReportSubmission::query()->with('user')->whereIn('id', $this->submissionIds)->orderBy('id')->get() as $s) {
-            $name = preg_replace('/[^A-Za-z0-9_-]+/', '_', mb_strtoupper($s->user->last_name).'_'.$s->user->first_name);
+            $name = preg_replace('/[^A-Za-z0-9_-]+/', '_', $s->user->first_name.'_'.$s->user->last_name);
             $out[] = Attachment::fromStorageDisk(FileUrls::disk(), $s->path)
                 ->as("Weekly_report_{$name}_{$s->week_start->toDateString()}.pdf")->withMime('application/pdf');
         }

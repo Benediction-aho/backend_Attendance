@@ -37,6 +37,13 @@ class CloseWeeklyReports extends Command
             }
             $runner->once('weekly_close', 'weekly_close:'.$windowDate, $close, function () use ($window, $service, $logger, $week, $windowDate, $close) {
                 $expected = $window->expectedEmployees($windowDate);
+                // UX5-09: nobody was expected that week (catch-up or not): no "0 of 0" email, the run is still done.
+                if ($expected->isEmpty()) {
+                    $logger->log('reports.weekly_close_skipped', 'Weekly close skipped: no employee was expected for the week of '
+                        .Carbon::parse($week)->format('j M Y').'.', LogType::Automatic, context: ['window_date' => $windowDate]);
+
+                    return;
+                }
                 // P5-04: the latest version submitted before the close counts (and is attached), even if it was
                 // replaced after the close; later versions are forwarded separately.
                 $received = WeeklyReportSubmission::query()->with('user')->whereDate('week_start', $week)
