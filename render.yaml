@@ -44,7 +44,7 @@ envVarGroups:
       - key: MAIL_MAILER
         value: resend
       - key: MAIL_FROM_ADDRESS
-        value: no-reply@attendance.assistanghana.com
+        value: no-reply@attendance.assistanceghana.com
       - key: MAIL_FROM_NAME
         value: Assistance Ghana
       - key: WEBAUTHN_RP_ID
