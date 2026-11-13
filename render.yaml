@@ -14,9 +14,9 @@ envVarGroups:
       - key: APP_URL
         value: https://attendance-api.onrender.com
       - key: FRONTEND_URL
-        value: https://frontend-attendance-iota.vercel.app
+        value: https://attendance.assistanceghana.com
       - key: CORS_ALLOWED_ORIGINS
-        value: https://frontend-attendance-iota.vercel.app
+        value: https://attendance.assistanceghana.com
       - key: TRUSTED_PROXIES
         value: "*"
       - key: LOG_CHANNEL
@@ -48,11 +48,11 @@ envVarGroups:
       - key: MAIL_FROM_NAME
         value: Assistance Ghana
       - key: WEBAUTHN_RP_ID
-        value: frontend-attendance-iota.vercel.app
+        value: attendance.assistanceghana.com
       - key: WEBAUTHN_RP_NAME
         value: Assistance Ghana Attendance
       - key: WEBAUTHN_ORIGINS
-        value: https://frontend-attendance-iota.vercel.app
+        value: https://attendance.assistanceghana.com
 
 services:
   - type: web
