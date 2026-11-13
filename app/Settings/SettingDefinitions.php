@@ -44,7 +44,7 @@ final class SettingDefinitions
             'weekly_window_end' => ['type' => 'time', 'default' => '17:00', 'rules' => ['date_format:H:i'], 'group' => 'reports', 'label' => 'Weekly report window closes'],
             'weekly_reminder_time' => ['type' => 'time', 'default' => '16:30', 'rules' => ['date_format:H:i'], 'group' => 'reports', 'label' => 'Weekly report reminder time'],
             'monthly_report_day' => ['type' => 'int', 'default' => 26, 'rules' => ['integer', 'between:1,28'], 'group' => 'reports', 'label' => 'Monthly report day of month'],
-            'monthly_report_time' => ['type' => 'time', 'default' => '19:00', 'rules' => ['date_format:H:i'], 'group' => 'reports', 'label' => 'Monthly report sending time'],
+            'monthly_report_time' => ['type' => 'time', 'default' => '08:00', 'rules' => ['date_format:H:i'], 'group' => 'reports', 'label' => 'Monthly report sending time'],
             'monthly_report_recipient_ids' => ['type' => 'int_list', 'default' => [], 'rules' => ['array', 'max:50'], 'item_rules' => ['integer', 'distinct', 'min:1'], 'group' => 'reports', 'label' => 'Additional monthly report recipients (admin ids)'],
             'report_pdf_max_mb' => ['type' => 'int', 'default' => 10, 'rules' => ['integer', 'min:1', 'max:20'], 'group' => 'reports', 'label' => 'Maximum PDF report size (MB)'],
             'email_attachments_max_mb' => ['type' => 'int', 'default' => 20, 'rules' => ['integer', 'min:1', 'max:28'], 'group' => 'reports', 'label' => 'Maximum email attachments size (MB)'],

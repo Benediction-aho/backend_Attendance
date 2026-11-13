@@ -90,7 +90,7 @@ Une ou deux pages regroupant **tous les paramètres du système**, modifiables a
 | Heure de fin de journée (départ anticipé avant) | **17:00** |
 | Heure de check-out automatique (réinitialisation de la journée) | **00:00** |
 | Comptabiliser les heures de travail | **désactivé** |
-| Heure d'envoi du rapport mensuel (le 26) | soir (heure à définir) |
+| Heure d'envoi du rapport mensuel (le 26) | **08:00** |
 | Heure du rappel aux employés n'ayant pas envoyé leur rapport hebdomadaire | **vendredi 16:30** |
 | Motif obligatoire pour un check-out avant l'heure de fin de journée | activé |
 | Heure de génération du rapport journalier | **17:00** |

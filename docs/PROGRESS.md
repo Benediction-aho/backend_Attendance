@@ -6,7 +6,7 @@ Updated by the agents at the end of every work session.
 **Phase 5 – Tasks, clients and reports: backend done – ready for backend-security-tester** (focus below). Phase 4 backend: no open finding.
 
 ### Monthly report period change (2026-11-13, owner decision)
-- Monthly report now covers the **26th of the previous month to the 25th of the current month, inclusive** (no day counted twice). `MonthlyReportService::period()` ends on (report day − 1); still driven by `monthly_report_day` (default 26), so the stored `period_start`/`period_end` and PDF/email labels follow. Generation stays on the 26th at `monthly_report_time` (19:00); catch-up unchanged. No API contract change.
+- Monthly report now covers the **26th of the previous month to the 25th of the current month, inclusive** (no day counted twice). `MonthlyReportService::period()` ends on (report day − 1); still driven by `monthly_report_day` (default 26), so the stored `period_start`/`period_end` and PDF/email labels follow. Generation on the 26th at `monthly_report_time` (default **08:00**, owner decision); catch-up unchanged. No API contract change.
 - Tests: boundaries (25th included, 26th excluded, previous 26th included), Dec→Jan rollover, February (incl. leap year), configured day 20 → 20 Oct–19 Nov. SPECS section 7 updated in both repos.
 
 ### Phase 5 UX fixes, server side (2026-11-13) – `frontend_Attendance/docs/reports/phase-5-ux.md`
@@ -198,7 +198,7 @@ See `README.md` (PHP + local PostgreSQL, or `docker compose up --build`).
 - Backend test host: Render approved by the owner (account to create); Render procedure ready in `docs/DEPLOYMENT.md` (backend repo).
 
 ## Blocked / questions for the owner
-- Monthly report time: the period now ends on the 25th, so the report could be sent on the morning of the 26th. The default stays 19:00 (setting `monthly_report_time`, editable by the super admin). Change the default?
+- ~~Monthly report time~~ → **owner decision: 08:00 on the 26th** (default of `monthly_report_time` changed).
 - (UX5-08) Monthly PDF: a disambiguator line (job title) is added under same-name employees only. Keep it, or follow the template strictly?
 Phase 3 business questions (safe default implemented, configurable where possible):
 - **Q10 – GPS accuracy rule**: the check-in is refused while the reported accuracy is worse than `checkin_max_accuracy_m` (50 m), then accepted if the measured position is within the radius (50 m). Stricter alternative: require distance + accuracy ≤ radius (often impossible indoors). Confirm.

@@ -86,7 +86,7 @@ it('renders the PDF like the template (English content, formatting)', function (
     expect($html)->toContain('td.late { color: #FF0000')->toContain('<td class="late">6</td>');
 });
 
-it('is sent on the 26th at 19:00 to super admins and selected admins only, once, with an in-app notice', function () {
+it('is sent on the 26th at 08:00 to super admins and selected admins only, once, with an in-app notice', function () {
     $super = User::factory()->superAdmin()->create();
     $selected = User::factory()->admin()->create();
     $notSelected = User::factory()->admin(Permission::ViewReports, Permission::ReceiveWeeklyReports)->create();
@@ -98,11 +98,11 @@ it('is sent on the 26th at 19:00 to super admins and selected admins only, once,
     attend($employee, '2026-11-25', true);
     client($employee, '2026-11-25', 'Residence Permit', 2);
 
-    at('2026-11-26 18:59:59');
+    at('2026-11-26 07:59:59');
     $this->artisan('reports:monthly')->assertSuccessful();
     Mail::assertNothingQueued();
 
-    at('2026-11-26 19:00');
+    at('2026-11-26 08:00');
     $this->artisan('reports:monthly')->assertSuccessful();
     $this->artisan('reports:monthly')->assertSuccessful();
     Mail::assertQueuedCount(2);
