@@ -89,22 +89,25 @@ Scripts added: `tests/security/release_fixtures.sh` (users of every role/tier th
 |---|---|---|---|
 | REL-01 | Super admin enumeration by timing (`/auth/super-admin/code`) | Medium | Fixed – verified in re-test |
 | REL-02 | Recovery quota exhaustible by anyone | Medium | Fixed – verified (residual REL-20, Info) |
-| REL-03 | Sign-up flood e-mails all approvers; text injection | Medium | Fixed for names/job title/flood – bypass through the e-mail field: REL-16 |
-| REL-04 | No security headers on the frontend (clickjacking, no CSP) | Medium | Open (frontend) |
+| REL-03 | Sign-up flood e-mails all approvers; text injection | Medium | Fixed – verified (with REL-16) |
+| REL-04 | No security headers on the frontend (clickjacking, no CSP) | Medium | Fixed – verified in config (frontend 823482a); live headers still REL-14; see REL-23 |
 | REL-05 | `TRUSTED_PROXIES=*` trusts all forwarded headers (verify on Render) | Medium | Fixed – verified locally (live check still REL-14; see REL-17, REL-19) |
 | REL-06 | Large JSON bodies parsed before throttling | Low | Fixed – verified |
 | REL-07 | `PRIVATE_FILES_DISK` missing from `render.yaml` | Low | Fixed – verified |
 | REL-08 | `promote_to_super_admin` not enforced | Info | Fixed – verified |
-| REL-09 | Scheduler endpoint existence (405/429) | Info | Fixed for status codes – timing residual REL-18 |
+| REL-09 | Scheduler endpoint existence (405/429) | Info | Fixed – verified (with REL-18) |
 | REL-10 | Validation before authorization on user creation | Info | Fixed – verified |
 | REL-11 | Dev-only npm advisories | Info | Open (frontend) |
-| REL-12 | Tailwind version comment | Info | Open (frontend) |
+| REL-12 | Tailwind version comment | Info | Fixed – verified (built CSS has no banner) |
 | REL-13 | `checkin_opens_at` vs `late_after` consistency | Info | Fixed – verified |
-| REL-16 | URL in the sign-up e-mail (quoted local part) reaches approver e-mails | Medium | Fixed (backend) |
-| REL-17 | Per-IP limits keyed on the full IPv6 address | Low | Fixed (backend) |
-| REL-18 | Scheduler tick: wrong-token path measurably slower than an unknown route | Info | Fixed (backend) |
-| REL-19 | Several `X-Forwarded-For` header lines: the first one is used | Info | Fixed (backend) – still verify live (REL-14) |
+| REL-16 | URL in the sign-up e-mail (quoted local part) reaches approver e-mails | Medium | Fixed – verified |
+| REL-17 | Per-IP limits keyed on the full IPv6 address | Low | Fixed – verified |
+| REL-18 | Scheduler tick: wrong-token path measurably slower than an unknown route | Info | Fixed for timing – verified; regression REL-22 |
+| REL-19 | Several `X-Forwarded-For` header lines: the first one is used | Info | Not reproducible locally (php -S keeps only the first line); verify live (REL-14) |
 | REL-20 | Recovery from a new device can still be starved (by design) | Info | Accepted risk – documented (DEPLOYMENT.md §3.6) |
+| REL-22 | Scheduler wrong-token refusals no longer counted nor logged (`defer` skipped on 404) | Low | Open (new, final re-test) |
+| REL-23 | Frontend CSP: no storage host in `img-src`/`connect-src`, API host hard-coded | Info | Open (new, final re-test) |
+| REL-24 | Sign-up e-mail pattern refuses valid addresses with `'` | Info | Open (new, final re-test) |
 | REL-21 | Global sign-up cap can be exhausted from many IPs | Info | Accepted risk – document (new, re-test) |
 | REL-14 | Live test environment not reachable from sandbox | Info | Blocked |
 
@@ -180,6 +183,28 @@ Regression: route × role/tier matrix (35 routes × 25 callers) identical to the
 - **REL-18** – Wrong-token path does no database work before answering: the limiter hit and the `ops.scheduler_tick_refused` log are deferred until after the response (`defer()`); the limit is checked only for a correct token (still 404 for a minute after 10 wrong tokens from the address). Tests: query log empty for a wrong-token request; refusal logged after the response; REL-09 limit test still green.
 - **REL-19** – `TrustProxies` joins several `X-Forwarded-For` lines in order before trusting them, so the right-most entry (appended by the trusted proxy) is used. Test: two lines `203.0.113.2` / `198.51.100.7` from the proxy → `198.51.100.7`. Live check added to `DEPLOYMENT.md` §3.4.
 - **REL-20** – Out-of-band recovery documented in `DEPLOYMENT.md` §3.6 (second super admin unlocks; otherwise server-side procedure), recommendation of two super admins. Accepted risk.
+
+## Final re-test (backend 04ce7ce, frontend 823482a, 2026-11-13)
+
+- **REL-16 Fixed.** 21 e-mail variants: quoted local part with URL, RFC comments `a(https://…)@`, `a@(…)`, spaces, IP literal, trailing dot, `..`, leading dot, Unicode local part, Unicode domain, list `a@x,b@y` → 422. `a+tag@`, `first.last@sub.`, `A_B-c%d@`, punycode domain → 202 (real addresses still work). Approver e-mails now show `user at relsec. test` (neutralised, never a link). `https.evil.example.login@relsec.test` is accepted but rendered `https. evil. example. login at relsec. test` (no link).
+- **REL-17 Fixed.** Port 8284, `signup:` buckets: `2001:db8:1:2::1`, `…:ffff:ffff:ffff:ffff`, uncompressed upper-case form, `[…::43]:443` → one bucket `2001:db8:1:2::/64` (4 hits); `::ffff:203.0.113.5`, `::ffff:cb00:7105` and `203.0.113.5` → one bucket `203.0.113.5`; another /64 → separate bucket; `…%eth0` → invalid, peer address used. Note: NAT64 (`64:ff9b::/96`) clients all share one /64 bucket – acceptable.
+- **REL-18 Fixed for timing**: wrong token median 7.5–9.3 ms vs unknown route 8.4–8.5 ms. **But see REL-22.**
+- **REL-19**: with `php -S`, two `X-Forwarded-For` lines reach PHP as the first line only (the SAPI drops the rest), so the joining code cannot be exercised locally (`203.0.113.2` + `198.51.100.7` → 203.0.113.2). FrankenPHP/Go keeps all lines; the Pest test covers the joining. Keep in the REL-14 live checklist.
+- **REL-04 Fixed (config)**: `vercel.json` sets CSP (`frame-ancestors 'none'`, `object-src 'none'`, `script-src 'self'`), `X-Frame-Options: DENY`, `nosniff`, `Referrer-Policy: strict-origin-when-cross-origin` (only the origin leaves cross-site, so `?token=` is not leaked), Permissions-Policy (geolocation self, WebAuthn self), HSTS. Live check still REL-14.
+- **REL-12 Fixed**: `vite build` into the scratchpad (repository untouched): no `tailwindcss v…` banner in any asset, no source map.
+- Regression: release matrix identical to the previous pass (only differences: tokens revoked by my own role change / code regeneration → 401, expected); `release_faceid.php` with two new employees → `fails=0`, 10 parallel confirms → 1 × 201 + 9 × 200.
+
+### REL-22 – Scheduler wrong-token refusals are no longer counted nor logged — Low (regression of the REL-18 fix)
+- File: `SchedulerTickController` – the refusal hit + `ops.scheduler_tick_refused` log run in `defer(...)`; Laravel's `InvokeDeferredCallbacks` only runs deferred callbacks when the status is `< 400` unless `->always()` is used. The answer is 404, so they never run.
+- Steps: 12 POSTs with a wrong token from 127.23.0.1, then the valid token from the same IP → **204** (expected 404 for a minute); `select count(*) from activity_logs where event='ops.scheduler_tick_refused'` → **0**.
+- Impact: token brute force is neither limited nor visible (a 32+ character token keeps it impractical; monitoring is lost).
+- Fix: `defer(fn () => …)->always()` (or `app()->terminating(...)`); add a test that counts the log row and the 404 after 10 wrong tokens.
+
+### REL-23 – Frontend CSP: storage host missing, API host hard-coded — Info
+- `img-src`/`connect-src` allow only `'self'` and `https://attendance-api-1xgl.onrender.com`. Once `PRIVATE_FILES_DISK=s3` (REL-07), photos and PDFs are served by pre-signed Supabase Storage URLs on another host → blocked by CSP. The final API domain will also need to be added. Fix: add the storage origin (and the final API origin) when known; keep a note in `DEPLOYMENT.md`.
+
+### REL-24 – Sign-up e-mail pattern refuses valid addresses with an apostrophe — Info
+- `o'brien@relsec.test` → 422. Legitimate but rare; add `'` to the local-part class if needed (it is not a link character).
 
 ## Tests passed
 
