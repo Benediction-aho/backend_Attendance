@@ -75,6 +75,7 @@ final class SettingDefinitions
             'otp_ttl_minutes' => ['type' => 'int', 'default' => 10, 'rules' => ['integer', 'min:1', 'max:60'], 'group' => 'security', 'label' => 'Super admin login code validity (minutes)'],
             'otp_length' => ['type' => 'int', 'default' => 8, 'rules' => ['integer', 'min:6', 'max:12'], 'group' => 'security', 'label' => 'Super admin login code length'],
             'otp_requests_per_hour' => ['type' => 'int', 'default' => 5, 'rules' => ['integer', 'min:1', 'max:60'], 'group' => 'security', 'label' => 'Login code requests per hour (per account and IP)'],
+            'dashboard_requests_per_minute' => ['type' => 'int', 'default' => 30, 'rules' => ['integer', 'min:5', 'max:600'], 'group' => 'security', 'label' => 'Dashboard requests per user per minute'],
             'log_export_per_hour' => ['type' => 'int', 'default' => 10, 'rules' => ['integer', 'min:1', 'max:100'], 'group' => 'security', 'label' => 'Activity log CSV exports per super admin per hour'],
             'log_export_max_rows' => ['type' => 'int', 'default' => 100000, 'rules' => ['integer', 'min:100', 'max:1000000'], 'group' => 'security', 'label' => 'Maximum rows in one activity log CSV export'],
             'otp_max_active_codes' => ['type' => 'int', 'default' => 3, 'rules' => ['integer', 'min:1', 'max:10'], 'group' => 'security', 'label' => 'Super admin login codes valid at the same time'],

@@ -34,16 +34,17 @@ class AdminAttendanceController
         $data = $request->validate(['date' => ['nullable', 'date_format:Y-m-d']]);
         $date = $data['date'] ?? $this->calendar->workDate();
 
-        $attendances = Attendance::query()->whereDate('work_date', $date)->get()->keyBy('user_id');
+        $attendances = Attendance::query()->where('work_date', $date)->get()->keyBy('user_id');
         $employees = User::query()->where('role', Role::Employee->value)
             ->where(fn ($q) => $q->where('status', UserStatus::Active->value)->orWhereIn('id', $attendances->keys()))
             ->orderBy('first_name')->orderBy('last_name')->get();
+        $statuses = $this->calendar->dayStatuses($employees, $date);
 
         return response()->json([
             'date' => $date,
             'server_time' => $this->calendar->now()->toIso8601String(),
-            'data' => $employees->map(function (User $u) use ($date, $attendances, $actor) {
-                $status = $this->calendar->dayStatus($u, $date);
+            'data' => $employees->map(function (User $u) use ($statuses, $attendances, $actor) {
+                $status = $statuses[$u->id];
                 /** @var Attendance|null $a */
                 $a = $attendances->get($u->id);
 

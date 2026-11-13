@@ -2,6 +2,7 @@
 
 // Phase 6: dashboards computed server-side, sections filtered by permission tier, frozen clock.
 
+use App\Domain\Attendance\WorkCalendar;
 use App\Enums\Permission;
 use App\Enums\UserStatus;
 use App\Models\Attendance;
@@ -15,6 +16,7 @@ use App\Models\WeeklyReportSubmission;
 use App\Models\WorkSchedule;
 use App\Settings\SettingsService;
 use Illuminate\Support\Carbon;
+use Illuminate\Support\Facades\DB;
 use Laravel\Sanctum\Sanctum;
 
 function dashClient(User $u, string $date, string $service, int $qty = 1): void
@@ -101,7 +103,7 @@ describe('admin dashboard', function () {
     it('gives the super admin every section', function () {
         Sanctum::actingAs(User::factory()->superAdmin()->create());
         $d = $this->getJson('/api/admin/dashboard')->assertOk()->json('data');
-        expect($d['today'])->toBe(['expected' => 3, 'checked_in' => 2, 'missing' => 1, 'on_leave' => 1, 'remote' => 1, 'not_working' => 1,
+        expect($d['today'])->toBe(['expected' => 3, 'checked_in' => 2, 'checked_in_not_expected' => 0, 'missing' => 1, 'on_leave' => 1, 'remote' => 1, 'not_working' => 1,
             'late' => 1, 'refused_attempts' => 1, 'missions_pending' => 1])
             ->and($d['week'])->toMatchArray(['week_start' => '2026-11-16', 'window_date' => '2026-11-20', 'weekly_reports_received' => 0, 'weekly_reports_expected' => 4, 'closed' => false])
             ->and($d['month'])->toMatchArray(['period_start' => '2026-10-26', 'period_end' => '2026-11-25', 'late_count' => 3, 'clients_count' => 4])
@@ -154,5 +156,66 @@ describe('admin dashboard', function () {
         User::factory()->status(UserStatus::Blocked)->create(['created_at' => Carbon::parse('2026-01-01')]);
         Sanctum::actingAs(User::factory()->superAdmin()->create());
         expect($this->getJson('/api/admin/dashboard')->json('data.today.expected'))->toBe(3);
+    });
+});
+
+describe('phase 6 security fixes', function () {
+    it('P6-04 counts checked_in only among expected employees, other check-ins separately', function () {
+        $blocked = User::factory()->status(UserStatus::Blocked)->create(['created_at' => Carbon::parse('2026-01-01')]);
+        attend($blocked, '2026-11-18');
+        attend($this->leave, '2026-11-18');
+        Sanctum::actingAs(User::factory()->superAdmin()->create());
+        $t = $this->getJson('/api/admin/dashboard')->assertOk()->json('data.today');
+        expect($t['checked_in'] + $t['missing'])->toBe($t['expected'])
+            ->and($t['checked_in'])->toBe(2) // a and b; the blocked account does not count
+            ->and($t['checked_in_not_expected'])->toBe(1); // employee on leave who checked in anyway
+    });
+
+    it('P6-05 admin dashboard runs a constant number of queries (300 employees)', function () {
+        $sa = User::factory()->superAdmin()->create();
+        Sanctum::actingAs($sa);
+        $count = function () {
+            DB::flushQueryLog();
+            DB::enableQueryLog();
+            $this->getJson('/api/admin/dashboard')->assertOk();
+            $n = count(DB::getQueryLog());
+            DB::disableQueryLog();
+
+            return $n;
+        };
+        $small = $count();
+        $users = User::factory()->count(300)->create(['created_at' => Carbon::parse('2026-01-01')]);
+        foreach ($users as $i => $u) {
+            if ($i % 3 === 0) {
+                WorkSchedule::query()->create(['user_id' => $u->id, 'effective_from' => '2026-01-01', 'days_off' => [], 'remote_days' => [3]]);
+            }
+            if ($i % 10 === 0) {
+                Leave::query()->create(['user_id' => $u->id, 'start_date' => '2026-11-17', 'end_date' => '2026-11-19']);
+            }
+        }
+        $big = $count();
+        $t = $this->getJson('/api/admin/dashboard')->json('data.today');
+        expect($big)->toBeLessThanOrEqual(30)->and($big)->toBeLessThanOrEqual($small + 2)
+            ->and($t['on_leave'])->toBe(31)->and($t['remote'])->toBe(1 + 100 - 10); // leave takes precedence over remote
+    });
+
+    it('P6-05 batch day statuses match the per-user rule', function () {
+        $cal = app(WorkCalendar::class);
+        $users = User::query()->get();
+        foreach (['2026-11-18', '2026-11-21', '2026-11-16'] as $date) {
+            $batch = $cal->dayStatuses($users, $date);
+            foreach ($users as $u) {
+                expect($batch[$u->id])->toBe($cal->dayStatus($u, $date));
+            }
+        }
+    });
+
+    it('P6-05 dashboards have a dedicated rate limit', function () {
+        app(SettingsService::class)->set(['dashboard_requests_per_minute' => 5]);
+        Sanctum::actingAs($this->a);
+        for ($i = 0; $i < 5; $i++) {
+            $this->getJson('/api/me/dashboard')->assertOk();
+        }
+        $this->getJson('/api/me/dashboard')->assertStatus(429);
     });
 });

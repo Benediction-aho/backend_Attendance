@@ -78,7 +78,7 @@ Route::middleware(['auth:sanctum', EnsureAccountUsable::class])->group(function 
 
         // Tasks, clients and reports (phase 5). Reading is always allowed; every write needs today's
         // check-in on expected days (checked-in, P3-06).
-        Route::get('/me/dashboard', [DashboardController::class, 'employee'])->name('me.dashboard');
+        Route::get('/me/dashboard', [DashboardController::class, 'employee'])->middleware('throttle:dashboard')->name('me.dashboard');
         Route::get('/me/tasks', [TaskController::class, 'index'])->name('me.tasks.index');
         Route::get('/me/clients', [ClientController::class, 'index'])->name('me.clients.index');
         Route::get('/clients/services', [ClientController::class, 'suggestions'])->name('clients.services');
@@ -133,7 +133,7 @@ Route::middleware(['auth:sanctum', EnsureAccountUsable::class])->group(function 
 
         Route::get('/activity-logs', [ActivityLogController::class, 'index'])->middleware('can:view-logs')->name('admin.activity-logs.index');
         Route::get('/activity-logs/export', [ActivityLogController::class, 'export'])->middleware(['can:super-admin', 'throttle:log-export'])->name('admin.activity-logs.export');
-        Route::get('/dashboard', [DashboardController::class, 'admin'])->name('admin.dashboard');
+        Route::get('/dashboard', [DashboardController::class, 'admin'])->middleware('throttle:dashboard')->name('admin.dashboard');
 
         // Authorization per action in UserPolicy (role + permission tier).
         Route::get('/permissions', [UserController::class, 'permissionCatalog'])->middleware('can:super-admin')->name('admin.permissions.index');

@@ -38,11 +38,12 @@ class AdminReportController
         $users = User::query()->where('role', Role::Employee->value)
             ->when(isset($data['user_id']), fn ($q) => $q->whereKey($data['user_id']), fn ($q) => $q->where('status', UserStatus::Active->value))
             ->orderByRaw('upper(last_name), upper(first_name), id')->get();
-        $snapshots = DailyReport::query()->whereDate('work_date', $date)->whereIn('user_id', $users->pluck('id'))->get()->keyBy('user_id');
+        $statuses = $this->calendar->dayStatuses($users, $date);
+        $snapshots = DailyReport::query()->where('work_date', $date)->whereIn('user_id', $users->pluck('id'))->get()->keyBy('user_id');
 
         return response()->json(['work_date' => $date, 'data' => $users->map(fn (User $u) => [
             'user' => $this->userSummary($u),
-            'day_status' => $this->calendar->dayStatus($u, $date)->value,
+            'day_status' => $statuses[$u->id]->value,
             'generated_at' => $snapshots->get($u->id)?->generated_at->toIso8601String(),
         ] + $this->filterDay($admin, $this->builder->daily($u, $date)))->values()]);
     }

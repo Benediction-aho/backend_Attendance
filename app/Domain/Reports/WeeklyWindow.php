@@ -62,9 +62,12 @@ class WeeklyWindow
     /** @return Collection<int, User> */
     public function expectedEmployees(string $windowDate): Collection
     {
-        return User::query()->where('role', Role::Employee->value)->where('status', UserStatus::Active->value)
+        $users = User::query()->where('role', Role::Employee->value)->where('status', UserStatus::Active->value)
             ->orderByRaw('upper(last_name), upper(first_name), id')->get()
-            ->filter(fn (User $u) => $this->calendar->wasMemberOn($u, $windowDate) && $this->calendar->dayStatus($u, $windowDate)->isExpected())->values();
+            ->filter(fn (User $u) => $this->calendar->wasMemberOn($u, $windowDate))->values();
+        $statuses = $this->calendar->dayStatuses($users, $windowDate);
+
+        return $users->filter(fn (User $u) => $statuses[$u->id]->isExpected())->values();
     }
 
     /**

@@ -5,6 +5,9 @@ Updated by the agents at the end of every work session.
 ## Current phase
 **Phase 5 – Tasks, clients and reports: backend done – ready for backend-security-tester** (focus below). Phase 4 backend: no open finding.
 
+### Phase 6 security fixes (2026-11-13) – `docs/reports/phase-6-security.md`
+- P6-01/02 CSV export: every field quoted, formula triggers neutralized at field start, after leading whitespace and after `;`/`,`, NFKC-normalized. P6-03: keyset export (`lazyByIdDesc`) from a frozen max id. P6-04: `today.checked_in` among expected only + new `checked_in_not_expected` (additive, for attendance-frontend). P6-05: `WorkCalendar::dayStatuses()` batch API (dashboard, reminders, weekly window, admin daily/attendance day), `GROUP BY` services_top, `throttle:dashboard` (new setting `dashboard_requests_per_minute`, default 30 – 429 possible on both dashboards). Admin dashboard: 18 queries / ~0.1 s with 300 employees (was 1,775 / ~1 s). No Critical/High open; ready for a backend-security-tester re-check.
+
 ### Monthly report period change (2026-11-13, owner decision)
 - Monthly report now covers the **26th of the previous month to the 25th of the current month, inclusive** (no day counted twice). `MonthlyReportService::period()` ends on (report day − 1); still driven by `monthly_report_day` (default 26), so the stored `period_start`/`period_end` and PDF/email labels follow. Generation on the 26th at `monthly_report_time` (default **08:00**, owner decision); catch-up unchanged. No API contract change.
 - Tests: boundaries (25th included, 26th excluded, previous 26th included), Dec→Jan rollover, February (incl. leap year), configured day 20 → 20 Oct–19 Nov. SPECS section 7 updated in both repos.
@@ -261,3 +264,4 @@ _Not given yet._
 - Specifications, agents and workflow added to the repository.
 - Switched from native app (Capacitor) to PWA; automatic check-in now based on office Wi-Fi detection.
 - Wi-Fi detection and automatic check-in removed; check-in = GPS perimeter + Face ID (passkey); fixed-time reminder at 08:05.
+- 2026-11-13 – Phase 6 security fixes P6-01…P6-05 (see report "Fixes applied"); admin dashboard 1,775 → 18 queries with 300 employees; export keyset pagination; CSV fully quoted.

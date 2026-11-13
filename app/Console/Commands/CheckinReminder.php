@@ -46,11 +46,12 @@ class CheckinReminder extends Command
         $failed = 0;
         $ran = $runner->once('checkin_reminder', 'checkin_reminder:'.$date, $reminderAt, function () use ($calendar, $settings, $date, $now, &$sent, &$failed) {
             $lateAfter = $settings->string('late_after', $now);
-            $checkedIn = Attendance::query()->whereDate('work_date', $date)->pluck('user_id')->all();
+            $checkedIn = Attendance::query()->where('work_date', $date)->pluck('user_id')->all();
             $employees = User::query()->where('role', Role::Employee->value)->where('status', UserStatus::Active->value)
                 ->whereNotIn('id', $checkedIn)->get();
+            $statuses = $calendar->dayStatuses($employees, $date); // P6-05: constant number of queries
             foreach ($employees as $employee) {
-                if (! $calendar->dayStatus($employee, $date)->isExpected()) {
+                if (! $statuses[$employee->id]->isExpected()) {
                     continue;
                 }
                 // Claim the recipient first (unique kind/user/date): a retried run skips those already reminded.

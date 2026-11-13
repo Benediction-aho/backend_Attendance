@@ -8,9 +8,9 @@
 use App\Enums\LogLevel;
 use App\Enums\LogType;
 use App\Enums\Permission;
+use App\Enums\UserStatus;
 use App\Http\Controllers\Admin\ActivityLogController;
 use App\Models\ActivityLog;
-use App\Models\Attendance;
 use App\Models\Client;
 use App\Models\Leave;
 use App\Models\User;
@@ -100,11 +100,10 @@ describe('CSV injection', function () {
         expect($bad)->toBe([]);
     });
 
-    it('P6-02 info: leading whitespace and unicode lookalikes are kept verbatim', function () {
-        // Excel/LibreOffice do not evaluate these today; recorded for awareness only.
-        expect(ActivityLogController::cell(' =1+1'))->toBe(' =1+1')
-            ->and(ActivityLogController::cell("\u{FF1D}1+1"))->toBe("\u{FF1D}1+1")
-            ->and(ActivityLogController::cell("\n=1+1"))->toBe("\n=1+1");
+    it('P6-02 leading whitespace and unicode lookalikes are neutralized (hardening applied)', function () {
+        expect(ActivityLogController::cell(' =1+1'))->toBe("' =1+1")
+            ->and(ActivityLogController::cell("\u{FF1D}1+1"))->toBe("'=1+1")
+            ->and(ActivityLogController::cell("\n=1+1"))->toBe("'\n=1+1");
     });
 });
 
@@ -116,7 +115,7 @@ describe('CSV streaming', function () {
         $inserted = false;
         $offsetQueries = 0;
         DB::listen(function ($q) use (&$inserted, &$offsetQueries) {
-            if (str_contains($q->sql, 'from "activity_logs"') && str_contains($q->sql, 'offset')) {
+            if (str_contains($q->sql, 'from "activity_logs"') && str_contains($q->sql, 'limit')) {
                 $offsetQueries++;
                 if (! $inserted) {
                     $inserted = true;
@@ -157,7 +156,7 @@ describe('dashboards', function () {
     });
 
     it('P6-04 checked_in counts only employees counted in expected (no blocked / not-yet-member leak)', function () {
-        $blocked = User::factory()->status(\App\Enums\UserStatus::Blocked)->create(['created_at' => Carbon::parse('2026-01-01')]);
+        $blocked = User::factory()->status(UserStatus::Blocked)->create(['created_at' => Carbon::parse('2026-01-01')]);
         attend($blocked, '2026-11-18');
         $onLeave = User::factory()->create(['created_at' => Carbon::parse('2026-01-01')]);
         Leave::query()->create(['user_id' => $onLeave->id, 'start_date' => '2026-11-18', 'end_date' => '2026-11-18']);

@@ -430,9 +430,10 @@ paths:
       summary: CSV export of the activity log (super admins only; 403 for everyone else, including view_logs admins).
       description: |
         Same filters as /admin/activity-logs (no per_page). Streamed (text/csv; charset=UTF-8, UTF-8 BOM, attachment
-        `activity_log_YYYY-MM-DD_HHMMSS.csv`), newest first, capped at settings.log_export_max_rows. Columns: Date (Africa/Accra),
-        Type, Level, Event, Description, User, User email, Actor, IP, Device, User agent, Context (JSON). Cells starting with
-        = + - @ are prefixed with ' (CSV injection). Each export is logged (security event `logs.exported`, filters and row count).
+        `activity_log_YYYY-MM-DD_HHMMSS.csv`), newest first (by id; a snapshot of the rows existing when the export starts), capped at settings.log_export_max_rows. Columns: Date (Africa/Accra),
+        Type, Level, Event, Description, User, User email, Actor, IP, Device, User agent, Context (JSON). Every field is enclosed in
+        double quotes, lines end with CRLF; text is NFKC-normalized and a ' is inserted before = + - @ tab CR LF at the field start
+        (also after leading whitespace) and after any `;` or `,` (CSV injection, any locale). Each export is logged (security event `logs.exported`, filters and row count).
         Rate limited to settings.log_export_per_hour per super admin (429).
       security: [{ deviceToken: [] }]
       parameters:
@@ -463,12 +464,14 @@ paths:
       responses:
         '200': { description: '{ data: { server_time, work_date, today, week, month } }' }
         '403': { $ref: '#/components/responses/Forbidden' }
+        '429': { description: 'More than settings.dashboard_requests_per_minute requests per user per minute.' }
   /admin/dashboard:
     get:
       summary: Admin / super admin dashboard; sections and fields depend on the viewer's tiers (403 for employees).
       description: |
         A section or field the viewer is not allowed to see is **absent** (never 0). Super admins get everything.
-        - `today` (any attendance tier, as /admin/attendance/day): expected, checked_in, missing (expected without check-in yet), on_leave, remote,
+        - `today` (any attendance tier, as /admin/attendance/day): expected, checked_in (among the expected only, so checked_in + missing = expected),
+          checked_in_not_expected (members checked in on a day they were not expected; blocked/deleted accounts never count), missing (expected without check-in yet), on_leave, remote,
           not_working (day off, holiday, leave, weekend); + `late`, `refused_attempts` with view_lateness; + `missions_pending` with approve_mission_checkins.
           Population: active employees/interns who were members on that day.
         - `week` (view_reports or receive_weekly_reports): week_start, window_date, closes_at, closed, weekly_reports_received, weekly_reports_expected
@@ -480,6 +483,7 @@ paths:
       responses:
         '200': { description: '{ data: { server_time, work_date, today?, week?, month?, pending? } }' }
         '403': { $ref: '#/components/responses/Forbidden' }
+        '429': { description: 'More than settings.dashboard_requests_per_minute requests per user per minute (both dashboards).' }
 
   # ---------------- Phase 3: attendance ----------------
   /attendance/today:

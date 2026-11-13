@@ -62,13 +62,13 @@ class WorkCalendar
 
     public function holiday(string $date): ?Holiday
     {
-        return Holiday::query()->whereDate('date', $date)->first();
+        return Holiday::query()->where('date', $date)->first();
     }
 
     public function leave(User $user, string $date): ?Leave
     {
         return Leave::query()->where('user_id', $user->id)
-            ->whereDate('start_date', '<=', $date)->whereDate('end_date', '>=', $date)->first();
+            ->where('start_date', '<=', $date)->where('end_date', '>=', $date)->first();
     }
 
     /**
@@ -84,16 +84,52 @@ class WorkCalendar
 
     public function dayStatus(User $user, string $date): DayStatus
     {
-        if ($this->holiday($date) !== null) {
+        return $this->resolveStatus($date, $this->holiday($date) !== null, $this->leave($user, $date) !== null, $this->scheduleFor($user, $date));
+    }
+
+    /**
+     * P6-05: day status of many employees on one date with a constant number of queries (holiday, leaves,
+     * latest schedules: 3 queries whatever the number of users). Used by dashboards, reminders and reports.
+     *
+     * @param  iterable<User>  $users
+     * @return array<int, DayStatus> keyed by user id
+     */
+    public function dayStatuses(iterable $users, string $date): array
+    {
+        $ids = [];
+        foreach ($users as $u) {
+            $ids[] = $u->id;
+        }
+        if ($ids === []) {
+            return [];
+        }
+        $holiday = Holiday::query()->where('date', $date)->exists();
+        $onLeave = $holiday ? [] : array_flip(Leave::query()->whereIn('user_id', $ids)
+            ->where('start_date', '<=', $date)->where('end_date', '>=', $date)->distinct()->pluck('user_id')->all());
+        $schedules = WorkSchedule::query()->whereIn('user_id', $ids)->where('effective_from', '<=', $date)
+            ->select('work_schedules.*')->distinct('user_id')
+            ->orderBy('user_id')->orderByDesc('effective_from')->orderByDesc('id')->get()->keyBy('user_id');
+        $out = [];
+        foreach ($ids as $id) {
+            /** @var WorkSchedule|null $schedule */
+            $schedule = $schedules->get($id);
+            $out[$id] = $this->resolveStatus($date, $holiday, isset($onLeave[$id]), $schedule);
+        }
+
+        return $out;
+    }
+
+    private function resolveStatus(string $date, bool $holiday, bool $leave, ?WorkSchedule $schedule): DayStatus
+    {
+        if ($holiday) {
             return DayStatus::Holiday;
         }
-        if ($this->leave($user, $date) !== null) {
+        if ($leave) {
             return DayStatus::Leave;
         }
         if (! $this->isWorkingDay($date)) {
             return DayStatus::NonWorking;
         }
-        $schedule = $this->scheduleFor($user, $date);
         $weekday = $this->weekday($date);
         if ($schedule !== null && in_array($weekday, $schedule->days_off, true)) {
             return DayStatus::DayOff;

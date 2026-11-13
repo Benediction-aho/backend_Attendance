@@ -53,7 +53,10 @@ class ActivityLogController
     {
         $f = $this->filters($request, false);
         $max = $settings->int('log_export_max_rows');
-        $query = $this->query($request, $settings, $f);
+        // P6-03: freeze the upper bound before streaming and page by id (keyset, no OFFSET): rows written during
+        // the export are never included, so no row is duplicated or skipped and every chunk costs the same.
+        $maxId = (int) ActivityLog::query()->max('id');
+        $query = $this->query($request, $settings, $f)->where('id', '<=', $maxId)->reorder();
         $total = (clone $query)->count();
         /** @var User $viewer */
         $viewer = $request->user();
@@ -68,20 +71,20 @@ class ActivityLogController
                 return;
             }
             fwrite($out, "\xEF\xBB\xBF"); // UTF-8 BOM for spreadsheet apps
-            fputcsv($out, ['Date', 'Type', 'Level', 'Event', 'Description', 'User', 'User email', 'Actor', 'IP', 'Device', 'User agent', 'Context'], escape: '');
+            fwrite($out, self::line(['Date', 'Type', 'Level', 'Event', 'Description', 'User', 'User email', 'Actor', 'IP', 'Device', 'User agent', 'Context']));
             $written = 0;
-            foreach ($query->lazy(500) as $log) {
+            foreach ($query->lazyByIdDesc(500, 'id') as $log) {
                 if ($written >= $max) {
                     break;
                 }
                 /** @var ActivityLog $log */
-                fputcsv($out, array_map(self::cell(...), [
+                fwrite($out, self::line([
                     $log->created_at->setTimezone($tz)->format('Y-m-d H:i:s'),
                     $log->type->value, $log->level->value, $log->event, $log->description,
                     $log->user?->fullName(), $log->user?->email, $log->actor?->fullName(),
                     $log->ip, $log->device_id, $log->user_agent,
                     $log->context ? json_encode($log->context, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES) : '',
-                ]), escape: '');
+                ]));
                 if (++$written % 500 === 0) {
                     flush();
                 }
@@ -90,11 +93,38 @@ class ActivityLogController
         }, $name, ['Content-Type' => 'text/csv; charset=UTF-8', 'Cache-Control' => 'no-store']);
     }
 
+    /**
+     * One CSV line where every field is quoted (P6-01): no spreadsheet can split a field on `;` or `,`.
+     *
+     * @param  list<mixed>  $fields
+     */
+    public static function line(array $fields): string
+    {
+        return implode(',', array_map(fn ($v) => '"'.str_replace('"', '""', self::cell($v)).'"', $fields))."\r\n";
+    }
+
+    /**
+     * CSV-injection neutralization (P6-01, P6-02): a quote is put before any formula trigger found at the start
+     * of the field or right after a `;` or `,` (list separators of other locales), after trimming whitespace and
+     * NFKC normalization (full-width "＝" becomes "=").
+     */
     public static function cell(mixed $v): string
     {
         $s = (string) ($v ?? '');
+        if ($s === '') {
+            return '';
+        }
+        if (class_exists(\Normalizer::class)) {
+            $s = \Normalizer::normalize($s, \Normalizer::FORM_KC) ?: $s;
+        }
+        // Field start: a trigger first, or after leading whitespace (tab/CR/LF themselves count as triggers).
+        if (preg_match('/^(?:[\t\r\n]|\s*[=+\-@])/u', $s) === 1) {
+            $s = "'".$s;
+        }
+        // After a list separator of any locale (`;` or `,`), optional whitespace, then a trigger.
+        $s = (string) preg_replace('/([;,]\s*)(?=[=+\-@\t\r\n])/u', "$1'", $s);
 
-        return $s !== '' && in_array($s[0], ['=', '+', '-', '@', "\t", "\r"], true) ? "'".$s : $s;
+        return $s;
     }
 
     /** @return array<string, mixed> */

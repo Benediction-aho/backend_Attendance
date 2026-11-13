@@ -3,6 +3,7 @@
 use App\Enums\LogLevel;
 use App\Enums\LogType;
 use App\Enums\Permission;
+use App\Http\Controllers\Admin\ActivityLogController;
 use App\Models\ActivityLog;
 use App\Models\Device;
 use App\Models\ScheduledRun;
@@ -12,6 +13,7 @@ use App\Services\ScheduledRunner;
 use App\Settings\SettingsService;
 use Illuminate\Support\Carbon;
 use Illuminate\Support\Facades\Artisan;
+use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Route;
 
 beforeEach(function () {
@@ -160,8 +162,8 @@ describe('CSV export (phase 6)', function () {
         expect($r->headers->get('Content-Disposition'))->toContain('attachment; filename=activity_log_');
         $lines = array_values(array_filter(explode("\n", $r->streamedContent())));
         expect($lines)->toHaveCount(3) // header + 2 action rows of the employee
-            ->and($lines[0])->toContain('Date,Type,Level,Event')
-            ->and($r->streamedContent())->toContain("'=HYPERLINK")->not->toContain(',=HYPERLINK')->not->toContain('auth.login_failed');
+            ->and($lines[0])->toContain('"Date","Type","Level","Event"')
+            ->and($r->streamedContent())->toContain("'=HYPERLINK")->not->toContain('"=HYPERLINK')->not->toContain('auth.login_failed');
         $log = ActivityLog::query()->where('event', 'logs.exported')->firstOrFail();
         expect($log->type)->toBe(LogType::Security)->and($log->actor_id)->toBe($this->sa->id)
             ->and($log->context['rows'])->toBe(2)->and($log->context['filters']['type'])->toBe('action');
@@ -191,5 +193,44 @@ describe('CSV export (phase 6)', function () {
         $this->bearer($token)->get('/api/admin/activity-logs/export')->assertOk();
         $this->bearer($token)->get('/api/admin/activity-logs/export')->assertOk();
         $this->bearer($token)->get('/api/admin/activity-logs/export')->assertStatus(429);
+    });
+});
+
+describe('CSV export hardening (phase 6 security)', function () {
+    it('P6-01/P6-02 quotes every field and neutralizes formulas after separators, whitespace and lookalikes', function (string $in, string $out) {
+        expect(ActivityLogController::cell($in))->toBe($out);
+    })->with([
+        ['x;=HYPERLINK("a")', "x;'=HYPERLINK(\"a\")"],
+        ['a, +1', "a, '+1"],
+        [' =1+1', "' =1+1"],
+        ["\u{FF1D}1+1", "'=1+1"],
+        ["\t1", "'\t1"],
+        ['plain text', 'plain text'],
+    ]);
+
+    it('P6-01 writes every field enclosed in quotes', function () {
+        expect(ActivityLogController::line(['a', 'b"c', null]))->toBe("\"a\",\"b\"\"c\",\"\"\r\n");
+    });
+
+    it('P6-03 pages by id from a frozen max id (no OFFSET, no duplicates with concurrent writes)', function () {
+        for ($i = 0; $i < 1100; $i++) {
+            ActivityLog::query()->create(['type' => LogType::Action->value, 'level' => LogLevel::Info->value, 'event' => 'test.event', 'description' => "row {$i}"]);
+        }
+        $offset = 0;
+        $inserted = false;
+        DB::listen(function ($q) use (&$offset, &$inserted) {
+            if (str_contains($q->sql, 'from "activity_logs"') && str_contains($q->sql, 'limit')) {
+                $offset += str_contains($q->sql, 'offset') ? 1 : 0;
+                if (! $inserted) {
+                    $inserted = true;
+                    DB::table('activity_logs')->insert(['type' => 'action', 'level' => 'info', 'event' => 'test.event', 'description' => 'concurrent', 'created_at' => now()]);
+                }
+            }
+        });
+        $body = $this->bearer(deviceToken($this->sa))->get('/api/admin/activity-logs/export?event=test.event')->assertOk()->streamedContent();
+        $rows = array_slice(array_map(fn ($l) => str_getcsv($l, ',', '"', ''), array_filter(explode("\r\n", preg_replace('/^\xEF\xBB\xBF/', '', $body)))), 1);
+        $descs = array_column($rows, 4);
+        expect($offset)->toBe(0)->and(count($descs))->toBe(1100)->and(count(array_unique($descs)))->toBe(1100)
+            ->and($descs)->not->toContain('concurrent');
     });
 });

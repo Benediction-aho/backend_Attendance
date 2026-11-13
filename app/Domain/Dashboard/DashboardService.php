@@ -58,13 +58,13 @@ class DashboardService
         $now = $this->calendar->now();
         $today = $this->calendar->workDate($now);
         $status = $this->calendar->dayStatus($user, $today);
-        $attendance = Attendance::query()->where('user_id', $user->id)->whereDate('work_date', $today)->first();
-        $todayTasks = Task::query()->where('user_id', $user->id)->whereDate('work_date', $today)->get();
+        $attendance = Attendance::query()->where('user_id', $user->id)->where('work_date', $today)->first();
+        $todayTasks = Task::query()->where('user_id', $user->id)->where('work_date', $today)->get();
 
         $weekStart = $this->window->weekStart($today);
         $windowDate = $this->window->windowDate($weekStart);
         $weekEnd = Carbon::parse($weekStart)->addDays(6)->toDateString();
-        $weekAttendances = Attendance::query()->where('user_id', $user->id)->whereDate('work_date', '>=', $weekStart)->whereDate('work_date', '<=', $today)->get();
+        $weekAttendances = Attendance::query()->where('user_id', $user->id)->where('work_date', '>=', $weekStart)->where('work_date', '<=', $today)->get();
         $expectedDays = 0;
         for ($d = Carbon::parse($weekStart); $d->toDateString() <= $today; $d->addDay()) {
             $date = $d->toDateString();
@@ -72,8 +72,8 @@ class DashboardService
                 $expectedDays++;
             }
         }
-        $weekTasks = Task::query()->where('user_id', $user->id)->whereDate('work_date', '>=', $weekStart)->whereDate('work_date', '<=', $weekEnd)->get();
-        $weekClients = Client::query()->where('user_id', $user->id)->whereDate('work_date', '>=', $weekStart)->whereDate('work_date', '<=', $weekEnd)->count();
+        $weekTasks = Task::query()->where('user_id', $user->id)->where('work_date', '>=', $weekStart)->where('work_date', '<=', $weekEnd)->get();
+        $weekClients = Client::query()->where('user_id', $user->id)->where('work_date', '>=', $weekStart)->where('work_date', '<=', $weekEnd)->count();
 
         $period = $this->periodContaining($today);
 
@@ -91,7 +91,7 @@ class DashboardService
                 'mission_status' => $attendance?->mission_status,
                 'tasks_planned' => $todayTasks->count(),
                 'tasks_done' => $todayTasks->where('status', 'done')->count(),
-                'clients_count' => Client::query()->where('user_id', $user->id)->whereDate('work_date', $today)->count(),
+                'clients_count' => Client::query()->where('user_id', $user->id)->where('work_date', $today)->count(),
             ],
             'week' => [
                 'week_start' => $weekStart,
@@ -107,9 +107,9 @@ class DashboardService
             'month' => [
                 'period_start' => $period['start'],
                 'period_end' => $period['end'],
-                'presence_days' => Attendance::query()->where('user_id', $user->id)->whereDate('work_date', '>=', $period['start'])->whereDate('work_date', '<=', $today)->count(),
-                'late_count' => Attendance::query()->where('user_id', $user->id)->whereDate('work_date', '>=', $period['start'])->whereDate('work_date', '<=', $today)->where('is_late', true)->count(),
-                'clients_count' => Client::query()->where('user_id', $user->id)->whereDate('work_date', '>=', $period['start'])->whereDate('work_date', '<=', $today)->count(),
+                'presence_days' => Attendance::query()->where('user_id', $user->id)->where('work_date', '>=', $period['start'])->where('work_date', '<=', $today)->count(),
+                'late_count' => Attendance::query()->where('user_id', $user->id)->where('work_date', '>=', $period['start'])->where('work_date', '<=', $today)->where('is_late', true)->count(),
+                'clients_count' => Client::query()->where('user_id', $user->id)->where('work_date', '>=', $period['start'])->where('work_date', '<=', $today)->count(),
             ],
         ];
     }
@@ -121,7 +121,7 @@ class DashboardService
      */
     private function weeklyReportStatus(User $user, string $weekStart, string $windowDate, Carbon $now): array
     {
-        $current = WeeklyReportSubmission::query()->where('user_id', $user->id)->whereDate('week_start', $weekStart)->where('is_current', true)->first();
+        $current = WeeklyReportSubmission::query()->where('user_id', $user->id)->where('week_start', $weekStart)->where('is_current', true)->first();
         $expected = $this->window->isExpected($user, $windowDate);
         $deadline = $this->window->deadlineFor($user, $windowDate);
         $opens = $this->window->opensAt($windowDate);
@@ -160,7 +160,7 @@ class DashboardService
             $weekStart = $this->window->weekStart($today);
             $windowDate = $this->window->windowDate($weekStart);
             $expected = $this->window->expectedEmployees($windowDate)->pluck('id')->all();
-            $received = WeeklyReportSubmission::query()->whereDate('week_start', $weekStart)->where('is_current', true)->pluck('user_id')->intersect($expected)->count();
+            $received = WeeklyReportSubmission::query()->where('week_start', $weekStart)->where('is_current', true)->pluck('user_id')->intersect($expected)->count();
             $out['week'] = [
                 'week_start' => $weekStart,
                 'window_date' => $windowDate,
@@ -177,14 +177,24 @@ class DashboardService
             $month = ['period_start' => $period['start'], 'period_end' => $period['end'], 'to_date' => $today];
             $employees = User::withTrashed()->select('id')->where('role', Role::Employee->value);
             if ($seeLate) {
-                $month['late_count'] = Attendance::query()->whereIn('user_id', $employees)->whereDate('work_date', '>=', $period['start'])
-                    ->whereDate('work_date', '<=', $today)->where('is_late', true)->count();
+                $month['late_count'] = Attendance::query()->whereIn('user_id', $employees)->where('work_date', '>=', $period['start'])
+                    ->where('work_date', '<=', $today)->where('is_late', true)->count();
             }
             if ($seeClients) {
-                $clients = Client::query()->whereIn('user_id', $employees)->whereDate('work_date', '>=', $period['start'])
-                    ->whereDate('work_date', '<=', $today)->orderBy('id')->get();
-                $month['clients_count'] = $clients->count();
-                $month['services_top'] = array_slice(ReportBuilder::services($clients), 0, $this->settings->int('dashboard_top_services', $now));
+                $base = Client::query()->whereIn('user_id', $employees)->where('work_date', '>=', $period['start'])->where('work_date', '<=', $today);
+                $month['clients_count'] = (clone $base)->count();
+                // P6-05: aggregate in SQL instead of loading every client row (same shape/order as ReportBuilder::services:
+                // quantity desc, key asc; label = most used spelling, first seen on a tie).
+                $top = (clone $base)->toBase()->selectRaw('service_key, sum(quantity) as qty')->groupBy('service_key')
+                    ->orderByDesc('qty')->orderBy('service_key')->limit($this->settings->int('dashboard_top_services', $now))->get();
+                $labels = (clone $base)->toBase()->whereIn('service_key', $top->pluck('service_key'))
+                    ->selectRaw('service_key, service, count(*) as n, min(id) as first_id')->groupBy('service_key', 'service')
+                    ->orderByDesc('n')->orderBy('first_id')->get()->groupBy('service_key');
+                $month['services_top'] = $top->map(fn ($r) => [
+                    'service' => (string) $labels->get($r->service_key)?->first()?->service,
+                    'service_key' => (string) $r->service_key,
+                    'quantity' => (int) $r->qty,
+                ])->values()->all();
             }
             $out['month'] = $month;
         }
@@ -210,20 +220,24 @@ class DashboardService
     /** @return array<string, int> */
     private function adminToday(string $today, bool $seeLate, bool $seeMissions): array
     {
-        $attendances = Attendance::query()->whereDate('work_date', $today)
+        $attendances = Attendance::query()->where('work_date', $today)
             ->whereIn('user_id', User::withTrashed()->select('id')->where('role', Role::Employee->value))->get()->keyBy('user_id');
         $employees = User::query()->where('role', Role::Employee->value)->where('status', UserStatus::Active->value)->get()
             ->filter(fn (User $u) => $this->calendar->wasMemberOn($u, $today));
-        $counts = ['expected' => 0, 'checked_in' => $attendances->count(), 'missing' => 0, 'on_leave' => 0, 'remote' => 0, 'not_working' => 0];
+        $statuses = $this->calendar->dayStatuses($employees, $today);
+        // P6-04: checked_in counts only the employees counted in "expected"; other check-ins (remote/day-off
+        // workers, people checking in while not expected) are reported separately. Blocked/deleted accounts never count.
+        $counts = ['expected' => 0, 'checked_in' => 0, 'checked_in_not_expected' => 0, 'missing' => 0, 'on_leave' => 0, 'remote' => 0, 'not_working' => 0];
         foreach ($employees as $u) {
-            $status = $this->calendar->dayStatus($u, $today);
+            $status = $statuses[$u->id];
             if ($status->isExpected()) {
                 $counts['expected']++;
-                if (! $attendances->has($u->id)) {
-                    $counts['missing']++;
-                }
+                $attendances->has($u->id) ? $counts['checked_in']++ : $counts['missing']++;
             } else {
                 $counts['not_working']++;
+                if ($attendances->has($u->id)) {
+                    $counts['checked_in_not_expected']++;
+                }
             }
             if ($status === DayStatus::Leave) {
                 $counts['on_leave']++;
@@ -234,7 +248,7 @@ class DashboardService
         }
         if ($seeLate) {
             $counts['late'] = $attendances->where('is_late', true)->count();
-            $counts['refused_attempts'] = CheckinAttempt::query()->whereDate('work_date', $today)
+            $counts['refused_attempts'] = CheckinAttempt::query()->where('work_date', $today)
                 ->whereIn('user_id', User::withTrashed()->select('id')->where('role', Role::Employee->value))->count();
         }
         if ($seeMissions) {
