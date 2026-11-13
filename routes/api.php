@@ -10,6 +10,7 @@ use App\Http\Controllers\Attendance\LeaveController;
 use App\Http\Controllers\Attendance\WorkScheduleController;
 use App\Http\Controllers\Auth\AuthController;
 use App\Http\Controllers\ClientErrorController;
+use App\Http\Controllers\Dashboard\DashboardController;
 use App\Http\Controllers\FaceIdController;
 use App\Http\Controllers\FileController;
 use App\Http\Controllers\HealthController;
@@ -77,6 +78,7 @@ Route::middleware(['auth:sanctum', EnsureAccountUsable::class])->group(function 
 
         // Tasks, clients and reports (phase 5). Reading is always allowed; every write needs today's
         // check-in on expected days (checked-in, P3-06).
+        Route::get('/me/dashboard', [DashboardController::class, 'employee'])->name('me.dashboard');
         Route::get('/me/tasks', [TaskController::class, 'index'])->name('me.tasks.index');
         Route::get('/me/clients', [ClientController::class, 'index'])->name('me.clients.index');
         Route::get('/clients/services', [ClientController::class, 'suggestions'])->name('clients.services');
@@ -130,6 +132,7 @@ Route::middleware(['auth:sanctum', EnsureAccountUsable::class])->group(function 
         Route::post('/faceid/credentials/{credential}/revoke', [FaceIdController::class, 'revoke'])->whereNumber('credential')->name('admin.faceid.revoke');
 
         Route::get('/activity-logs', [ActivityLogController::class, 'index'])->middleware('can:view-logs')->name('admin.activity-logs.index');
+        Route::get('/dashboard', [DashboardController::class, 'admin'])->name('admin.dashboard');
 
         // Authorization per action in UserPolicy (role + permission tier).
         Route::get('/permissions', [UserController::class, 'permissionCatalog'])->middleware('can:super-admin')->name('admin.permissions.index');

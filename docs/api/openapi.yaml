@@ -425,6 +425,38 @@ paths:
       responses:
         '200': { description: '{ data: [{ id, created_at, type, level, event, description, user{id,name,email,deleted}, actor{id,name}, context, ip, device_id, user_agent }], meta }' }
 
+  # ---------------- Phase 6: dashboards ----------------
+  /me/dashboard:
+    get:
+      summary: Employee dashboard (employees only, else 403). Every figure is computed by the server (Africa/Accra); the client never counts.
+      description: |
+        `today`: day_status, expected, checked_in, checked_out, check_in_at, check_in_type, is_late, mission_status, tasks_planned, tasks_done, clients_count.
+        `week` (Monday → Sunday of the current week, counted up to today): week_start, week_end, presence_days, expected_days_so_far, late_count,
+        tasks_planned, tasks_done, clients_count, weekly_report { status: submitted | not_open | open | missing | not_expected, expected, window_date,
+        opens_at, deadline, submitted_at, is_late, version }.
+        `month` (monthly report period containing today, default 26 → 25, counted up to today): period_start, period_end, presence_days, late_count, clients_count.
+      security: [{ deviceToken: [] }]
+      responses:
+        '200': { description: '{ data: { server_time, work_date, today, week, month } }' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+  /admin/dashboard:
+    get:
+      summary: Admin / super admin dashboard; sections and fields depend on the viewer's tiers (403 for employees).
+      description: |
+        A section or field the viewer is not allowed to see is **absent** (never 0). Super admins get everything.
+        - `today` (any attendance tier, as /admin/attendance/day): expected, checked_in, missing (expected without check-in yet), on_leave, remote,
+          not_working (day off, holiday, leave, weekend); + `late`, `refused_attempts` with view_lateness; + `missions_pending` with approve_mission_checkins.
+          Population: active employees/interns who were members on that day.
+        - `week` (view_reports or receive_weekly_reports): week_start, window_date, closes_at, closed, weekly_reports_received, weekly_reports_expected
+          (received = current report from an expected employee).
+        - `month` (period of the monthly report containing today, default 26 → 25, up to today): period_start, period_end, to_date; + `late_count` with
+          view_lateness; + `clients_count`, `services_top` [{ service, service_key, quantity }] (settings.dashboard_top_services) with view_clients or view_statistics.
+        - `pending`: sign_up_requests (approve_users), faceid_devices (approve_faceid_devices; employees' devices only for admins), missions (approve_mission_checkins).
+      security: [{ deviceToken: [] }]
+      responses:
+        '200': { description: '{ data: { server_time, work_date, today?, week?, month?, pending? } }' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+
   # ---------------- Phase 3: attendance ----------------
   /attendance/today:
     get:

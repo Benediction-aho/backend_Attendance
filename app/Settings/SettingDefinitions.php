@@ -54,6 +54,7 @@ final class SettingDefinitions
             'tasks_max_per_day' => ['type' => 'int', 'default' => 100, 'rules' => ['integer', 'min:1', 'max:1000'], 'group' => 'reports', 'label' => 'Maximum tasks per employee per day'],
             'clients_max_per_day' => ['type' => 'int', 'default' => 200, 'rules' => ['integer', 'min:1', 'max:2000'], 'group' => 'reports', 'label' => 'Maximum client entries per employee per day'],
             'client_quantity_max' => ['type' => 'int', 'default' => 999, 'rules' => ['integer', 'min:1', 'max:100000'], 'group' => 'reports', 'label' => 'Maximum quantity of one client entry'],
+            'dashboard_top_services' => ['type' => 'int', 'default' => 5, 'rules' => ['integer', 'min:1', 'max:50'], 'group' => 'reports', 'label' => 'Number of top client services shown on the admin dashboard'],
 
             // System
             'timezone' => ['type' => 'string', 'default' => 'Africa/Accra', 'rules' => ['timezone'], 'group' => 'system', 'label' => 'Time zone', 'editable' => false],
@@ -74,6 +75,8 @@ final class SettingDefinitions
             'otp_ttl_minutes' => ['type' => 'int', 'default' => 10, 'rules' => ['integer', 'min:1', 'max:60'], 'group' => 'security', 'label' => 'Super admin login code validity (minutes)'],
             'otp_length' => ['type' => 'int', 'default' => 8, 'rules' => ['integer', 'min:6', 'max:12'], 'group' => 'security', 'label' => 'Super admin login code length'],
             'otp_requests_per_hour' => ['type' => 'int', 'default' => 5, 'rules' => ['integer', 'min:1', 'max:60'], 'group' => 'security', 'label' => 'Login code requests per hour (per account and IP)'],
+            'log_export_per_hour' => ['type' => 'int', 'default' => 10, 'rules' => ['integer', 'min:1', 'max:100'], 'group' => 'security', 'label' => 'Activity log CSV exports per super admin per hour'],
+            'log_export_max_rows' => ['type' => 'int', 'default' => 100000, 'rules' => ['integer', 'min:100', 'max:1000000'], 'group' => 'security', 'label' => 'Maximum rows in one activity log CSV export'],
             'otp_max_active_codes' => ['type' => 'int', 'default' => 3, 'rules' => ['integer', 'min:1', 'max:10'], 'group' => 'security', 'label' => 'Super admin login codes valid at the same time'],
             'recovery_link_ttl_minutes' => ['type' => 'int', 'default' => 30, 'rules' => ['integer', 'min:5', 'max:1440'], 'group' => 'security', 'label' => 'Recovery link validity (minutes)'],
             'email_change_ttl_minutes' => ['type' => 'int', 'default' => 60, 'rules' => ['integer', 'min:5', 'max:1440'], 'group' => 'security', 'label' => 'Email change link validity (minutes)'],
