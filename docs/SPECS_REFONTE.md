@@ -85,6 +85,8 @@ Une ou deux pages regroupant **tous les paramètres du système**, modifiables a
 |---|---|
 | Coordonnées GPS du bureau | 5.595223, -0.216703 |
 | Rayon du périmètre de validation du check-in | **50 m** |
+| Incertitude GPS maximale acceptée au check-in (`checkin_max_accuracy_m`) | **100 m** (en intérieur, les iPhone annoncent souvent 50 à 100 m) |
+| Heure d'ouverture du check-in (`checkin_opens_at`) | **06:00** |
 | Nombre maximum de jours off par semaine | **2** |
 | Taille maximale d'un rapport PDF | **10 Mo** |
 | Taille maximale des pièces jointes d'un email | **30 Mo** (au-delà : liens sécurisés) |
@@ -161,6 +163,8 @@ Les changements sensibles passent **par email** (Resend) :
 1. **Périmètre GPS** : l'employé doit être dans le périmètre de **50 m** autour du bureau (précision prise en compte). Le serveur décide.
 2. **Vérification Face ID** : une fois le périmètre validé, l'application demande **Face ID** (ou l'empreinte / la reconnaissance faciale sur Android). Le check-in n'est enregistré qu'après cette vérification. Objectif : empêcher qu'une autre personne pointe à la place de l'employé.
 - Retard à partir de **08:10**.
+- **Précision GPS** : si l'incertitude annoncée par le téléphone dépasse **100 m** (paramètre), le check-in est refusé avec un message indiquant la valeur mesurée, la valeur acceptée et quoi faire (s'approcher d'une fenêtre ou sortir, attendre quelques secondes).
+- **Un seul check-in par jour**, ouvert à partir de **06:00** (paramètre `checkin_opens_at`) : avant cette heure, les check-ins GPS, mission et télétravail sont refusés (« Check-in opens at 6:00 AM »). Après un check-out, un nouveau check-in est refusé jusqu'au lendemain 06:00 (« You already checked in and out today. You can check in again tomorrow from 6:00 AM. »). Le check-in fait par un admin pour un employé n'est pas soumis à cette heure. Le check-out automatique de minuit est inchangé.
 - Sans connexion internet, le check-in est impossible (l'heure vient du serveur) : message demandant de se connecter.
 - Le check-in **mission** et le check-in **télétravail** demandent aussi Face ID (sans contrôle de périmètre).
 

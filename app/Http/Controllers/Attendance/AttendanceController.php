@@ -70,6 +70,8 @@ class AttendanceController
                 'radius_m' => $this->settings->int('checkin_radius_m'),
                 'max_accuracy_m' => $this->settings->int('checkin_max_accuracy_m'),
                 'late_after' => $this->settings->string('late_after'),
+                'checkin_opens_at' => $this->settings->string('checkin_opens_at'),
+                'checkin_open' => $now->gte($this->calendar->at($date, $this->settings->string('checkin_opens_at'))),
                 'end_of_day' => $this->settings->string('end_of_day_time'),
                 'early_checkout_reason_required' => $this->settings->bool('early_checkout_reason_required'),
                 'faceid_required' => $this->settings->bool('faceid_required_for_checkin'),

@@ -117,12 +117,15 @@ describe('automatic check-out at midnight', function () {
         at('2026-11-17 00:00:01');
         $this->getJson('/api/attendance/today')->assertJsonPath('work_date', '2026-11-17')->assertJsonPath('checked_in', false);
         $this->postJson('/api/attendance/check-out')->assertStatus(409)->assertJsonPath('code', 'not_checked_in');
+        gpsCheckIn($this, $a)->assertStatus(422)->assertJsonPath('code', 'checkin_not_open');
+        at('2026-11-17 06:00');
         gpsCheckIn($this, $a)->assertCreated()->assertJsonPath('data.work_date', '2026-11-17');
         expect(Attendance::query()->count())->toBe(2);
     });
 
     it('closes a straggler of an already processed date', function () {
         $a = User::factory()->create();
+        app(SettingsService::class)->set(['checkin_opens_at' => '00:00'], null, Carbon::parse('2026-11-01'));
         at('2026-11-17 00:05');
         $this->artisan('attendance:auto-checkout');
         gpsCheckIn($this, $a);

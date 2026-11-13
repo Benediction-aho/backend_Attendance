@@ -521,6 +521,8 @@ paths:
                       radius_m: { type: integer }
                       max_accuracy_m: { type: integer }
                       late_after: { type: string, example: '08:10' }
+                      checkin_opens_at: { type: string, example: '06:00', description: 'Employee check-in refused before this time (HH:MM)' }
+                      checkin_open: { type: boolean, description: 'false before checkin_opens_at on the current work date' }
                       end_of_day: { type: string, example: '17:00' }
                       early_checkout_reason_required: { type: boolean }
                       faceid_required: { type: boolean }
@@ -533,7 +535,11 @@ paths:
         gps: latitude, longitude, accuracy required. Refused with 422 `low_accuracy` (accuracy_m, max_accuracy_m: retry automatically
         while the position improves) or `out_of_perimeter` (distance_m, radius_m); refusals are recorded for admins.
         mission: reason required, position optional. remote: only on the employee's remote days (422 `not_remote_day`).
-        409 `already_checked_in` once today's attendance exists. The intent expires after checkin_intent_ttl_seconds (default 120).
+        Refused with 422 `checkin_not_open` (opens_at, HH:MM) before checkin_opens_at (default 06:00) for gps, mission and remote;
+        admin on-behalf check-in is not restricted. max_accuracy_m defaults to 100 (checkin_max_accuracy_m); the low_accuracy
+        message states the measured and accepted values and what to do.
+        409 `already_checked_in` once today's attendance exists (one per work date; after a check-out the message says the next
+        check-in is tomorrow from the opening time). The intent expires after checkin_intent_ttl_seconds (default 120).
         When faceid_required_for_checkin is on (default), refused first with 403 `faceid_not_registered` (register on this device),
         `faceid_pending_approval` (new device waiting for an admin) or `faceid_other_device` (registered on another phone).
       security: [{ deviceToken: [] }]
@@ -571,7 +577,7 @@ paths:
                       public_key: { type: object }
         '403': { description: 'faceid_not_registered | faceid_pending_approval | faceid_other_device | employees_only' }
         '409': { description: already_checked_in }
-        '422': { description: 'low_accuracy | out_of_perimeter | not_remote_day | reason_required | location_required | validation' }
+        '422': { description: 'checkin_not_open | low_accuracy | out_of_perimeter | not_remote_day | reason_required | location_required | validation' }
         '429': { $ref: '#/components/responses/TooManyRequests' }
   /attendance/check-in/confirm:
     post:
@@ -728,7 +734,7 @@ paths:
         '200': { description: '{ data: Attendance[], meta }' }
   /admin/users/{id}/check-in:
     post:
-      summary: Fallback check-in on behalf of an employee (checkin_for_employee), with a reason. Logged. 409 already_checked_in.
+      summary: Fallback check-in on behalf of an employee (checkin_for_employee), with a reason. Logged. 409 already_checked_in. Not restricted by checkin_opens_at.
       security: [{ deviceToken: [] }]
       parameters: [{ $ref: '#/components/parameters/UserId' }]
       requestBody: { content: { application/json: { schema: { type: object, required: [reason], properties: { reason: { type: string, minLength: 3, maxLength: 500 } } } } } }

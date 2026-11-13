@@ -82,9 +82,52 @@ it('refuses outside the perimeter with the distance and records the attempt', fu
 
 it('refuses a position that is not precise enough', function () {
     $user = User::factory()->create();
-    gpsCheckIn($this, $user, accuracy: 80)->assertStatus(422)
-        ->assertJsonPath('code', 'low_accuracy')->assertJsonPath('max_accuracy_m', 50);
+    gpsCheckIn($this, $user, accuracy: 120)->assertStatus(422)
+        ->assertJsonPath('code', 'low_accuracy')->assertJsonPath('max_accuracy_m', 100)
+        ->assertJsonPath('message', 'Your GPS position is not precise enough: about 120 m of uncertainty, and the maximum accepted is 100 m. Move near a window or step outside, wait a few seconds, then try again.');
     expect(CheckinAttempt::query()->sole()->outcome)->toBe('low_accuracy');
+});
+
+it('accepts the indoor iPhone accuracy seen on the test server (62-71 m) with the default', function () {
+    gpsCheckIn($this, User::factory()->create(), accuracy: 71)->assertCreated();
+});
+
+it('refuses employee check-ins before checkin_opens_at and allows them from that minute', function (string $type) {
+    $user = User::factory()->create();
+    Sanctum::actingAs($user);
+    $body = $type === 'gps' ? ['type' => 'gps', 'latitude' => OFFICE_LAT, 'longitude' => OFFICE_LNG, 'accuracy' => 5] : ['type' => 'mission', 'reason' => 'Client'];
+    at('2026-11-16 05:59:59');
+    $this->getJson('/api/attendance/today')->assertJsonPath('rules.checkin_open', false)->assertJsonPath('rules.checkin_opens_at', '06:00');
+    $this->postJson('/api/attendance/check-in/intent', $body)->assertStatus(422)
+        ->assertJsonPath('code', 'checkin_not_open')->assertJsonPath('opens_at', '06:00')
+        ->assertJsonPath('message', 'Check-in opens at 6:00 AM.');
+    at('2026-11-16 06:00');
+    $this->getJson('/api/attendance/today')->assertJsonPath('rules.checkin_open', true);
+    $intent = $this->postJson('/api/attendance/check-in/intent', $body)->assertCreated();
+    $this->postJson('/api/attendance/check-in/confirm', ['intent_id' => $intent->json('intent_id')])->assertCreated();
+})->with(['gps', 'mission']);
+
+it('uses the checkin_opens_at setting', function () {
+    app(SettingsService::class)->set(['checkin_opens_at' => '08:00']);
+    at('2026-11-16 07:59');
+    Sanctum::actingAs(User::factory()->create());
+    $this->postJson('/api/attendance/check-in/intent', ['type' => 'mission', 'reason' => 'Client'])->assertStatus(422)
+        ->assertJsonPath('message', 'Check-in opens at 8:00 AM.');
+});
+
+it('refuses a new check-in after check-out until the next day at opening time', function () {
+    $user = User::factory()->create();
+    gpsCheckIn($this, $user)->assertCreated();
+    at('2026-11-16 17:30');
+    $this->postJson('/api/attendance/check-out', ['latitude' => OFFICE_LAT, 'longitude' => OFFICE_LNG, 'accuracy' => 5])->assertOk();
+    $this->postJson('/api/attendance/check-in/intent', ['type' => 'gps', 'latitude' => OFFICE_LAT, 'longitude' => OFFICE_LNG, 'accuracy' => 5])
+        ->assertStatus(409)->assertJsonPath('code', 'already_checked_in')
+        ->assertJsonPath('message', 'You already checked in and out today. You can check in again tomorrow from 6:00 AM.');
+    at('2026-11-17 05:59:59');
+    $this->postJson('/api/attendance/check-in/intent', ['type' => 'gps', 'latitude' => OFFICE_LAT, 'longitude' => OFFICE_LNG, 'accuracy' => 5])
+        ->assertStatus(422)->assertJsonPath('code', 'checkin_not_open');
+    at('2026-11-17 06:00');
+    gpsCheckIn($this, $user)->assertCreated()->assertJsonPath('data.work_date', '2026-11-17');
 });
 
 it('uses the radius and accuracy settings', function () {

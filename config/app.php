@@ -113,7 +113,7 @@ return [
         }
 
         return $key;
-    })(env('APP_KEY')),
+    })(is_string($k = env('APP_KEY')) ? $k : null),
 
     'previous_keys' => [
         ...array_filter(

@@ -130,6 +130,13 @@ describe('admin check-in on behalf', function () {
         expect(ActivityLog::query()->where('event', 'attendance.admin_check_in')->where('actor_id', $admin->id)->where('user_id', $user->id)->exists())->toBeTrue();
     });
 
+    it('is not restricted by checkin_opens_at', function () {
+        $user = User::factory()->create();
+        Sanctum::actingAs(User::factory()->superAdmin()->create());
+        at('2026-11-16 05:30');
+        $this->postJson("/api/admin/users/{$user->id}/check-in", ['reason' => 'Early shift'])->assertCreated();
+    });
+
     it('refuses inactive accounts', function () {
         $user = User::factory()->status(UserStatus::Blocked)->create();
         Sanctum::actingAs(User::factory()->superAdmin()->create());

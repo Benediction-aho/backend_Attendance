@@ -56,7 +56,16 @@ class AttendanceService
         $date = $this->calendar->workDate($now);
 
         if (($existing = $this->forDate($user, $date)) !== null) {
-            throw new ApiError(409, 'You have already checked in today.', 'already_checked_in', ['attendance_id' => $existing->id]);
+            $opensAt = TimeFormat::time($this->settings->string('checkin_opens_at', $now));
+            $message = $existing->check_out_at !== null
+                ? "You already checked in and out today. You can check in again tomorrow from {$opensAt}."
+                : 'You have already checked in today.';
+            throw new ApiError(409, $message, 'already_checked_in', ['attendance_id' => $existing->id]);
+        }
+
+        $opens = $this->settings->string('checkin_opens_at', $now);
+        if ($now->lt($this->calendar->at($date, $opens))) {
+            throw new ApiError(422, 'Check-in opens at '.TimeFormat::time($opens).'.', 'checkin_not_open', ['opens_at' => $opens]);
         }
 
         $distance = $position !== null ? $this->distanceToOffice($position['lat'], $position['lng'], $now) : null;
@@ -70,7 +79,10 @@ class AttendanceService
             $maxAccuracy = $this->settings->int('checkin_max_accuracy_m', $now);
             if ($position['accuracy'] > $maxAccuracy) {
                 $this->refuse($user, $date, 'low_accuracy', $position, $distance, $radius, $maxAccuracy, $deviceId, $ip);
-                throw new ApiError(422, 'Your location is not precise enough yet. Please wait a moment and try again.', 'low_accuracy', [
+                throw new ApiError(422, sprintf(
+                    'Your GPS position is not precise enough: about %d m of uncertainty, and the maximum accepted is %d m. Move near a window or step outside, wait a few seconds, then try again.',
+                    (int) round($position['accuracy']), $maxAccuracy,
+                ), 'low_accuracy', [
                     'accuracy_m' => round($position['accuracy'], 1), 'max_accuracy_m' => $maxAccuracy,
                 ]);
             }

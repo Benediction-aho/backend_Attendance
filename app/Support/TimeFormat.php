@@ -13,7 +13,7 @@ final class TimeFormat
 {
     public static function time(CarbonInterface|string $value): string
     {
-        $time = is_string($value) ? Carbon::createFromFormat('H:i', substr($value, 0, 5)) : $value;
+        $time = is_string($value) ? Carbon::parse('2000-01-01 '.substr($value, 0, 5)) : $value;
 
         return $time->format('g:i A');
     }
