@@ -2,6 +2,7 @@
 
 namespace App\Notifications;
 
+use App\Support\TimeFormat;
 use Illuminate\Notifications\Notification;
 
 /** In-app check-in reminder (stored synchronously: FIABILITE B5). The push copy is a queued job. */
@@ -21,7 +22,7 @@ class CheckinReminder extends Notification
         return [
             'kind' => 'checkin_reminder',
             'title' => 'Time to check in',
-            'body' => "You have not checked in yet today. Lateness starts at {$this->lateAfter}.",
+            'body' => 'You have not checked in yet today. Lateness starts at '.TimeFormat::time($this->lateAfter).'.',
             'path' => '/attendance',
             'work_date' => $this->workDate,
         ];

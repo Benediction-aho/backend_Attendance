@@ -7,6 +7,7 @@ use App\Domain\Reports\WeeklyWindow;
 use App\Models\WeeklyReportSubmission;
 use App\Notifications\ReportNotice;
 use App\Services\ScheduledRunner;
+use App\Support\TimeFormat;
 use Illuminate\Console\Command;
 use Illuminate\Support\Carbon;
 use Illuminate\Support\Facades\DB;
@@ -36,7 +37,7 @@ class WeeklyReportReminder extends Command
         $runner->once('weekly_reminder', 'weekly_reminder:'.$windowDate, $window->reminderAt($windowDate), function () use ($window, $windowDate, $weekStart, &$sent) {
             $submitted = WeeklyReportSubmission::query()->whereDate('week_start', $weekStart)->pluck('user_id')->all();
             $failed = 0;
-            $closes = $window->closesAt($windowDate)->format('H:i');
+            $closes = TimeFormat::time($window->closesAt($windowDate));
             foreach ($window->expectedEmployees($windowDate) as $employee) {
                 if (in_array($employee->id, $submitted, true)) {
                     continue;

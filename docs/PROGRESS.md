@@ -285,3 +285,5 @@ _Not given yet._
 - Switched from native app (Capacitor) to PWA; automatic check-in now based on office Wi-Fi detection.
 - Wi-Fi detection and automatic check-in removed; check-in = GPS perimeter + Face ID (passkey); fixed-time reminder at 08:05.
 - 2026-11-13 – Phase 6 security fixes P6-01…P6-05 (see report "Fixes applied"); admin dashboard 1,775 → 18 queries with 300 employees; export keyset pagination; CSV fully quoted.
+
+- Owner decisions: settings sections mapping **approved**; **12-hour time format** in everything shown to people (`App\Support\TimeFormat`: notifications, emails). API values, stored settings and CSV exports stay 24-hour HH:MM.

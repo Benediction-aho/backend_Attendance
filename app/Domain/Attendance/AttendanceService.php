@@ -13,6 +13,7 @@ use App\Models\User;
 use App\Notifications\StaffAlert;
 use App\Services\ActivityLogger;
 use App\Settings\SettingsService;
+use App\Support\TimeFormat;
 use Illuminate\Support\Carbon;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Notification;
@@ -264,7 +265,7 @@ class AttendanceService
             $this->notifyStaff(Permission::ViewLateness, new StaffAlert(
                 'early_checkout',
                 'Early check-out',
-                "{$user->fullName()} checked out at {$now->format('H:i')}: {$reason}",
+                "{$user->fullName()} checked out at ".TimeFormat::time($now).": {$reason}",
                 ['attendance_id' => $attendance->id, 'user_id' => $user->id],
                 false,
                 '/admin/attendance',

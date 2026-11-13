@@ -2,6 +2,7 @@
 
 namespace App\Mail;
 
+use App\Support\TimeFormat;
 use Illuminate\Support\Carbon;
 
 class IdentificationCodeMail extends SimpleMail
@@ -27,7 +28,7 @@ class IdentificationCodeMail extends SimpleMail
             'actionUrl' => self::frontendUrl('/sign-in'),
             'actionText' => 'Sign in',
             'outro' => [
-                'This code is valid until '.$this->expiresAt->format('l j F Y, H:i').' (Accra time). You will be asked to replace it with your own password after signing in.',
+                'This code is valid until '.TimeFormat::dateTime($this->expiresAt).' (Accra time). You will be asked to replace it with your own password after signing in.',
                 'Never share this code. Our team will never ask you for it.',
             ],
         ];
