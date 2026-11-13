@@ -10,6 +10,7 @@ use App\Enums\Permission;
 use App\Enums\Role;
 use App\Enums\UserStatus;
 use App\Exceptions\ApiError;
+use App\Http\Presenters\EmployeeSummary;
 use App\Models\DailyReport;
 use App\Models\User;
 use App\Models\WeeklyReportSubmission;
@@ -134,7 +135,7 @@ class AdminReportController
     /** @return array<string, mixed> */
     private function userSummary(User $u): array
     {
-        return ['id' => $u->id, 'first_name' => $u->first_name, 'last_name' => $u->last_name, 'employee_type' => $u->employee_type->value, 'job_title' => $u->job_title];
+        return EmployeeSummary::of($u);
     }
 
     /**

@@ -47,8 +47,23 @@ abstract class SimpleMail extends Mailable implements ShouldBeEncrypted, ShouldQ
         );
     }
 
+    /** Public (signed-out) PWA page, e.g. "/sign-in", "/recover?token=…". */
     protected static function frontendUrl(string $path): string
     {
         return rtrim((string) config('app.frontend_url'), '/').'/'.ltrim($path, '/');
+    }
+
+    /**
+     * Signed-in PWA page. Notification paths are app-relative ("/admin/users/5");
+     * the PWA serves them under "/app" (UX34-05).
+     */
+    public static function appUrl(string $path): string
+    {
+        $path = '/'.ltrim($path, '/');
+        if ($path !== '/app' && ! str_starts_with($path, '/app/') && ! str_starts_with($path, '/app?')) {
+            $path = '/app'.($path === '/' ? '' : $path);
+        }
+
+        return self::frontendUrl($path);
     }
 }

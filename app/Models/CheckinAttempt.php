@@ -3,6 +3,7 @@
 namespace App\Models;
 
 use Illuminate\Database\Eloquent\Model;
+use Illuminate\Database\Eloquent\Relations\BelongsTo;
 use Illuminate\Support\Carbon;
 
 /**
@@ -15,6 +16,7 @@ use Illuminate\Support\Carbon;
  * @property string|null $distance_m
  * @property string|null $accuracy_m
  * @property Carbon $created_at
+ * @property-read User|null $user
  */
 class CheckinAttempt extends Model
 {
@@ -25,5 +27,11 @@ class CheckinAttempt extends Model
     protected function casts(): array
     {
         return ['work_date' => 'date', 'created_at' => 'datetime'];
+    }
+
+    /** @return BelongsTo<User, $this> */
+    public function user(): BelongsTo
+    {
+        return $this->belongsTo(User::class)->withTrashed();
     }
 }

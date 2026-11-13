@@ -531,8 +531,8 @@ paths:
                 intent_id: { type: string, format: uuid }
                 assertion: { type: object, description: 'PublicKeyCredential JSON from navigator.credentials.get() (id, rawId, type, response.clientDataJSON/authenticatorData/signature/userHandle, base64url) – e.g. credential.toJSON()' }
       responses:
-        '201': { description: '{ data: Attendance, created: true }' }
-        '200': { description: '{ data: Attendance, created: false }' }
+        '201': { description: '{ data: Attendance, created: true, today: <same body as GET /attendance/today> } – render `today` immediately (UX34-02)' }
+        '200': { description: '{ data: Attendance, created: false, today: <same body as GET /attendance/today> }' }
         '422': { description: intent_invalid | faceid_failed }
   /attendance/check-out:
     post:
@@ -549,7 +549,7 @@ paths:
                 accuracy: { type: number }
                 reason: { type: string, maxLength: 500 }
       responses:
-        '200': { description: '{ data: Attendance }' }
+        '200': { description: '{ data: Attendance, today: <same body as GET /attendance/today> }' }
         '409': { description: not_checked_in | already_checked_out }
         '422': { description: 'reason_required (end_of_day)' }
   /attendance/history:
@@ -616,7 +616,7 @@ paths:
         - { name: from, in: query, schema: { type: string, format: date } }
         - { name: to, in: query, schema: { type: string, format: date } }
       responses:
-        '200': { description: '{ data: [{ id, user_id, start_date, end_date, note, created_by }], meta }' }
+        '200': { description: '{ data: [{ id, user_id, user: EmployeeSummary, start_date, end_date, note, created_by }], meta }' }
   /admin/users/{id}/leaves:
     post:
       summary: Declare a leave for an active employee (manage_leaves). 422 leave_overlap.
@@ -653,7 +653,7 @@ paths:
       security: [{ deviceToken: [] }]
       parameters: [{ name: date, in: query, schema: { type: string, format: date } }]
       responses:
-        '200': { description: '{ date, server_time, data: [{ user: { id, first_name, last_name, job_title, employee_type }, day_status, expected, attendance: Attendance|null }] }' }
+        '200': { description: '{ date, server_time, data: [{ user: EmployeeSummary, day_status, expected, attendance: Attendance|null }] }' }
   /admin/users/{id}/attendance:
     get:
       summary: An employee's attendance history (any attendance tier, employees only).
@@ -679,7 +679,7 @@ paths:
       security: [{ deviceToken: [] }]
       parameters: [{ name: status, in: query, schema: { type: string, enum: [pending, approved, rejected] } }]
       responses:
-        '200': { description: '{ data: (Attendance + user { id, first_name, last_name })[], meta }' }
+        '200': { description: '{ data: (Attendance + user: EmployeeSummary)[], meta }' }
   /admin/attendance/{id}/mission/approve:
     post:
       summary: Approve a pending mission check-in (approve_mission_checkins). 409 mission_already_reviewed.
@@ -703,7 +703,7 @@ paths:
         - { name: user_id, in: query, schema: { type: integer } }
         - { name: date, in: query, schema: { type: string, format: date } }
       responses:
-        '200': { description: '{ data: [{ id, user_id, work_date, outcome: out_of_perimeter|low_accuracy, distance_m, accuracy_m, created_at }], meta }' }
+        '200': { description: '{ data: [{ id, user_id, user: EmployeeSummary, work_date, outcome: out_of_perimeter|low_accuracy, distance_m, accuracy_m, created_at }], meta }' }
   /me/faceid:
     get:
       summary: Face ID status on this device and the employee's credentials (pending/approved). Employees only.
@@ -717,6 +717,8 @@ paths:
                 type: object
                 properties:
                   state: { type: string, enum: [ready, not_registered, pending_approval, other_device] }
+                  can_reregister: { type: boolean, description: 'UX34-01: true when state=ready and no replacement is pending. Offer "Set up Face ID again on this phone" after repeated Face ID failures (passkey lost); call register/options with reregister=true.' }
+                  replacement_pending: { type: boolean, description: 'A new passkey for this phone waits for admin approval; the old one keeps working (if it still exists) until then.' }
                   data: { type: array, items: { allOf: [{ $ref: '#/components/schemas/FaceIdCredential' }, { type: object, properties: { this_device: { type: boolean } } }] } }
   /me/faceid/register/options:
     post:
@@ -724,8 +726,15 @@ paths:
       description: |
         Platform authenticator, userVerification required, attestation none. The challenge is single use, expires after
         faceid_challenge_ttl_seconds (default 120) and is bound to this user and device. 409 `faceid_already_registered` when this
-        device is already ready; 403 `device_required` for a token without device.
+        device is already ready, unless `reregister: true` is sent (UX34-01: passkey lost on the phone). A re-registration
+        creates a **pending** credential on the same device (owner alert email, approvers notified with
+        `reregistration: true`); on approval the old credential is revoked; on rejection the old one stays.
+        403 `device_required` for a token without device.
       security: [{ deviceToken: [] }]
+      requestBody:
+        content:
+          application/json:
+            schema: { type: object, properties: { reregister: { type: boolean } } }
       responses:
         '201':
           description: Options
@@ -773,7 +782,7 @@ paths:
         - { name: status, in: query, schema: { type: string, enum: [pending, approved, revoked] } }
         - { name: user_id, in: query, schema: { type: integer } }
       responses:
-        '200': { description: 'data: FaceIdCredential + user {id, first_name, last_name} + registration {device_id, registered_at, ip, platform, browser, user_agent, device_first_seen_at}; meta' }
+        '200': { description: 'data: FaceIdCredential + user: EmployeeSummary + registration {device_id, replaces_same_device (UX34-01), registered_at, ip, platform, browser, user_agent, device_first_seen_at}; meta' }
         '403': { $ref: '#/components/responses/Forbidden' }
   /admin/faceid/credentials/{id}/approve:
     post:
@@ -963,7 +972,7 @@ paths:
         - { name: date, in: query, schema: { type: string, format: date } }
         - { name: user_id, in: query, schema: { type: integer } }
       responses:
-        '200': { description: 'work_date, data: [{user, day_status, generated_at, tasks_planned, tasks_done, clients_count, services, tasks?, clients?}]' }
+        '200': { description: 'work_date, data: [{user: EmployeeSummary, day_status, generated_at, tasks_planned, tasks_done, clients_count, services, tasks?, clients?}]' }
         '403': { $ref: '#/components/responses/Forbidden' }
   /admin/users/{id}/reports/weekly:
     get:
@@ -981,7 +990,7 @@ paths:
       parameters:
         - { name: date, in: query, schema: { type: string, format: date } }
       responses:
-        '200': { description: 'week_start, window_date, opens_at, closes_at, expected_count, received_count, data: [{user, expected, submission: WeeklySubmission|null}]' }
+        '200': { description: 'week_start, window_date, opens_at, closes_at, expected_count, received_count, data: [{user: EmployeeSummary, expected, submission: WeeklySubmission|null}]' }
         '403': { $ref: '#/components/responses/Forbidden' }
   /admin/reports/weekly/submissions/{id}:
     get:
@@ -1016,6 +1025,16 @@ components:
       description: Rate limited or temporarily blocked. `retry_after_seconds` may be present.
       content: { application/json: { schema: { $ref: '#/components/schemas/Error' } } }
   schemas:
+    EmployeeSummary:
+      type: object
+      description: 'Employee identity in admin lists (UX34-04). email only when the viewer may list user accounts (super admin / manage-users tiers); use job_title + email (or id) to tell homonyms apart.'
+      properties:
+        id: { type: integer }
+        first_name: { type: string }
+        last_name: { type: string }
+        job_title: { type: ['string', 'null'] }
+        employee_type: { type: string }
+        email: { type: string, format: email }
     Task:
       type: object
       properties:

@@ -9,6 +9,7 @@ use App\Enums\Permission;
 use App\Enums\Role;
 use App\Enums\UserStatus;
 use App\Exceptions\ApiError;
+use App\Http\Presenters\EmployeeSummary;
 use App\Models\Attendance;
 use App\Models\CheckinAttempt;
 use App\Models\User;
@@ -47,7 +48,7 @@ class AdminAttendanceController
                 $a = $attendances->get($u->id);
 
                 return [
-                    'user' => ['id' => $u->id, 'first_name' => $u->first_name, 'last_name' => $u->last_name, 'job_title' => $u->job_title, 'employee_type' => $u->employee_type->value],
+                    'user' => EmployeeSummary::of($u),
                     'day_status' => $status->value,
                     'expected' => $status->isExpected(),
                     'attendance' => $a !== null ? $this->presenter->forAdmin($a, $actor) : null,
@@ -86,7 +87,7 @@ class AdminAttendanceController
 
         return response()->json([
             'data' => collect($page->items())->map(fn (Attendance $a) => $this->presenter->forAdmin($a, $actor) + [
-                'user' => $a->user !== null ? ['id' => $a->user->id, 'first_name' => $a->user->first_name, 'last_name' => $a->user->last_name] : null,
+                'user' => $a->user !== null ? EmployeeSummary::of($a->user) : null,
             ]),
             'meta' => ['current_page' => $page->currentPage(), 'last_page' => $page->lastPage(), 'total' => $page->total()],
         ]);
@@ -123,7 +124,7 @@ class AdminAttendanceController
             'user_id' => ['nullable', 'integer'],
             'date' => ['nullable', 'date_format:Y-m-d'],
         ]);
-        $page = CheckinAttempt::query()
+        $page = CheckinAttempt::query()->with('user')
             ->whereIn('user_id', User::withTrashed()->select('id')->where('role', Role::Employee->value))
             ->when($data['user_id'] ?? null, fn ($q, $v) => $q->where('user_id', (int) $v))
             ->when($data['date'] ?? null, fn ($q, $v) => $q->whereDate('work_date', $v))
@@ -133,6 +134,7 @@ class AdminAttendanceController
             'data' => collect($page->items())->map(fn (CheckinAttempt $c) => [
                 'id' => $c->id,
                 'user_id' => $c->user_id,
+                'user' => $c->user !== null ? EmployeeSummary::of($c->user) : null,
                 'work_date' => $c->work_date->toDateString(),
                 'outcome' => $c->outcome,
                 'distance_m' => $c->distance_m !== null ? round((float) $c->distance_m, 1) : null,

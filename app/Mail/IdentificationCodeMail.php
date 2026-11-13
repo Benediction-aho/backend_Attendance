@@ -24,7 +24,7 @@ class IdentificationCodeMail extends SimpleMail
                 'Sign in with your email address and this identification code:',
             ],
             'highlight' => $this->code,
-            'actionUrl' => self::frontendUrl('/login'),
+            'actionUrl' => self::frontendUrl('/sign-in'),
             'actionText' => 'Sign in',
             'outro' => [
                 'This code is valid until '.$this->expiresAt->format('l j F Y, H:i').' (Accra time). You will be asked to replace it with your own password after signing in.',

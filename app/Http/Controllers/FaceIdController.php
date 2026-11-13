@@ -6,6 +6,7 @@ use App\Domain\FaceId\WebAuthnService;
 use App\Enums\Permission;
 use App\Enums\Role;
 use App\Exceptions\ApiError;
+use App\Http\Presenters\EmployeeSummary;
 use App\Models\User;
 use App\Models\WebauthnCredential;
 use Illuminate\Http\JsonResponse;
@@ -27,17 +28,27 @@ class FaceIdController
         $credentials = WebauthnCredential::query()->with('device')->where('user_id', $user->id)
             ->where('status', '!=', WebauthnCredential::REVOKED)->orderByDesc('created_at')->get();
 
+        $state = $this->webauthn->state($user, $deviceId);
+        $replacement = $deviceId !== null && $credentials->contains(fn (WebauthnCredential $c) => $c->status === WebauthnCredential::PENDING && $c->device_id === $deviceId);
+
         return response()->json([
-            'state' => $this->webauthn->state($user, $deviceId),
+            'state' => $state,
+            // UX34-01: a "ready" device whose passkey was lost on the phone can register a new one
+            // (POST /me/faceid/register/options with reregister=true). It stays pending until an admin approves it.
+            'can_reregister' => $state === 'ready' && ! $replacement,
+            'replacement_pending' => $state === 'ready' && $replacement,
             'data' => $credentials->map(fn (WebauthnCredential $c) => $this->present($c) + ['this_device' => $c->device_id !== null && $c->device_id === $deviceId])->values(),
         ]);
     }
 
     public function registrationOptions(Request $request): JsonResponse
     {
+        $data = $request->validate(['reregister' => ['sometimes', 'boolean']]);
         $user = $this->user($request);
         $deviceId = $this->requireDevice($request);
-        if ($this->webauthn->state($user, $deviceId) === 'ready') {
+        // UX34-01: re-registration on the same device is allowed only when explicitly asked for;
+        // the new credential is pending (admin approval) and the old one is revoked on approval.
+        if ($this->webauthn->state($user, $deviceId) === 'ready' && ! ($data['reregister'] ?? false)) {
             throw new ApiError(409, 'Face ID is already registered on this device.', 'faceid_already_registered');
         }
 
@@ -80,7 +91,7 @@ class FaceIdController
 
         return response()->json([
             'data' => collect($page->items())->map(fn (WebauthnCredential $c) => $this->present($c) + $this->registrationDetail($c) + [
-                'user' => $c->user !== null ? ['id' => $c->user->id, 'first_name' => $c->user->first_name, 'last_name' => $c->user->last_name] : null,
+                'user' => $c->user !== null ? EmployeeSummary::of($c->user) : null,
             ]),
             'meta' => ['current_page' => $page->currentPage(), 'last_page' => $page->lastPage(), 'total' => $page->total()],
         ]);
@@ -157,6 +168,9 @@ class FaceIdController
 
         return ['registration' => [
             'device_id' => $c->device_id,
+            // UX34-01: same phone as the currently approved Face ID (passkey lost and set up again).
+            'replaces_same_device' => $c->status === WebauthnCredential::PENDING && $c->device_id !== null
+                && WebauthnCredential::query()->where('user_id', $c->user_id)->where('status', WebauthnCredential::APPROVED)->where('device_id', $c->device_id)->exists(),
             'registered_at' => $c->created_at->toIso8601String(),
             'ip' => $c->registration_ip ?? $c->device?->last_ip,
             'platform' => self::platform($ua),

@@ -29,7 +29,17 @@ class AttendanceController
     /** Today's status, with the server time so the PWA can synchronise its clock. */
     public function today(Request $request): JsonResponse
     {
-        $user = $this->user($request);
+        return response()->json($this->todayPayload($request, $this->user($request)));
+    }
+
+    /**
+     * Same body as GET /attendance/today. Also returned as `today` by confirm and check-out so the
+     * client can render the new state immediately (UX34-02).
+     *
+     * @return array<string, mixed>
+     */
+    private function todayPayload(Request $request, User $user): array
+    {
         $now = $this->calendar->now();
         $date = $this->calendar->workDate($now);
         $status = $this->calendar->dayStatus($user, $date);
@@ -44,7 +54,7 @@ class AttendanceController
             }
         }
 
-        return response()->json([
+        return [
             'server_time' => $now->toIso8601String(),
             'server_timestamp_ms' => (int) $now->valueOf(),
             'timezone' => $this->calendar->timezone(),
@@ -66,7 +76,7 @@ class AttendanceController
             ],
             // ready | not_registered | pending_approval | other_device (for this session's device).
             'faceid_state' => $this->webauthn->state($user, $this->deviceId($request)),
-        ]);
+        ];
     }
 
     /** Step 1: position check (gps) or eligibility (remote, mission). */
@@ -108,9 +118,14 @@ class AttendanceController
             'intent_id' => ['required', 'uuid'],
             'assertion' => ['nullable', 'array'],
         ]);
-        [$attendance, $created] = $this->service->confirm($this->user($request), $data['intent_id'], $data['assertion'] ?? null, $this->deviceId($request));
+        $user = $this->user($request);
+        [$attendance, $created] = $this->service->confirm($user, $data['intent_id'], $data['assertion'] ?? null, $this->deviceId($request));
 
-        return response()->json(['data' => $this->presenter->forEmployee($attendance), 'created' => $created], $created ? 201 : 200);
+        return response()->json([
+            'data' => $this->presenter->forEmployee($attendance),
+            'created' => $created,
+            'today' => $this->todayPayload($request, $user),
+        ], $created ? 201 : 200);
     }
 
     public function checkOut(Request $request): JsonResponse
@@ -121,9 +136,10 @@ class AttendanceController
             'accuracy' => ['nullable', 'numeric', 'min:0', 'max:100000'],
             'reason' => ['nullable', 'string', 'max:500'],
         ]);
-        $attendance = $this->service->checkOut($this->user($request), $this->position($data), $data['reason'] ?? null);
+        $user = $this->user($request);
+        $attendance = $this->service->checkOut($user, $this->position($data), $data['reason'] ?? null);
 
-        return response()->json(['data' => $this->presenter->forEmployee($attendance)]);
+        return response()->json(['data' => $this->presenter->forEmployee($attendance), 'today' => $this->todayPayload($request, $user)]);
     }
 
     public function history(Request $request): JsonResponse

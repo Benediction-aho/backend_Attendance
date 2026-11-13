@@ -6,6 +6,7 @@ use App\Domain\Attendance\WorkCalendar;
 use App\Enums\LogLevel;
 use App\Exceptions\ApiError;
 use App\Http\Controllers\Reports\AdminReportController;
+use App\Http\Presenters\EmployeeSummary;
 use App\Jobs\ForwardWeeklySubmission;
 use App\Mail\WeeklyReportsMail;
 use App\Models\User;
@@ -134,7 +135,7 @@ class WeeklyReportService
             'is_late' => $s->is_late,
             'forwarded_at' => $s->forwarded_at?->toIso8601String(),
             'file_url' => $this->urls->temporaryUrl($s->path),
-        ] + ($withUser ? ['user' => ['id' => $s->user->id, 'first_name' => $s->user->first_name, 'last_name' => $s->user->last_name]] : []);
+        ] + ($withUser ? ['user' => EmployeeSummary::of($s->user)] : []);
     }
 
     /**

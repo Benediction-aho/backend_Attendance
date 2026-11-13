@@ -86,7 +86,7 @@ class WeeklyReportsMail extends SimpleMail
         return [
             'greeting' => 'Hello,',
             'lines' => $this->lines,
-            'actionUrl' => self::frontendUrl('/admin/reports/weekly'),
+            'actionUrl' => self::appUrl('/admin/reports/weekly'),
             'actionText' => 'Open the weekly reports',
         ];
     }

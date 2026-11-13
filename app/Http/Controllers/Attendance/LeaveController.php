@@ -7,6 +7,7 @@ use App\Enums\LogType;
 use App\Enums\Permission;
 use App\Enums\Role;
 use App\Exceptions\ApiError;
+use App\Http\Presenters\EmployeeSummary;
 use App\Models\Leave;
 use App\Models\User;
 use App\Services\ActivityLogger;
@@ -36,7 +37,7 @@ class LeaveController
             'from' => ['nullable', 'date_format:Y-m-d'],
             'to' => ['nullable', 'date_format:Y-m-d'],
         ]);
-        $page = Leave::query()
+        $page = Leave::query()->with('user')
             ->whereIn('user_id', User::withTrashed()->select('id')->where('role', Role::Employee->value))
             ->when($data['user_id'] ?? null, fn ($q, $v) => $q->where('user_id', (int) $v))
             ->when($data['from'] ?? null, fn ($q, $v) => $q->whereDate('end_date', '>=', $v))
@@ -112,6 +113,6 @@ class LeaveController
     {
         $row = ['id' => $l->id, 'start_date' => $l->start_date->toDateString(), 'end_date' => $l->end_date->toDateString(), 'note' => $l->note];
 
-        return $admin ? $row + ['user_id' => $l->user_id, 'created_by' => $l->created_by] : $row;
+        return $admin ? $row + ['user_id' => $l->user_id, 'user' => $l->user !== null ? EmployeeSummary::of($l->user) : null, 'created_by' => $l->created_by] : $row;
     }
 }

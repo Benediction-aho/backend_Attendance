@@ -16,7 +16,7 @@ class StaffAlertMail extends SimpleMail
         return [
             'greeting' => 'Hello,',
             'lines' => [$this->text],
-            'actionUrl' => $this->path !== null ? self::frontendUrl($this->path) : null,
+            'actionUrl' => $this->path !== null ? self::appUrl($this->path) : null,
             'actionText' => 'Open',
         ];
     }

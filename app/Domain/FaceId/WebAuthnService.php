@@ -192,8 +192,10 @@ class WebAuthnService
             throw new ApiError(409, 'This Face ID is already registered.', 'faceid_already_registered');
         }
 
+        $replacesSameDevice = ! $autoApprove && WebauthnCredential::query()->where('user_id', $user->id)
+            ->where('status', WebauthnCredential::APPROVED)->where('device_id', $deviceId)->exists();
         $this->logger->log('faceid.registered', $autoApprove ? 'Face ID registered (first device, approved)' : 'Face ID registered on a new device (pending approval)', LogType::Security, LogLevel::Info, $user, $user, [
-            'credential_id' => $stored->id, 'device_id' => $deviceId, 'status' => $stored->status,
+            'credential_id' => $stored->id, 'device_id' => $deviceId, 'status' => $stored->status, 'reregistration' => $replacesSameDevice,
         ]);
 
         // Security alert to the account owner for every registration (P4-02), first device included.
@@ -212,8 +214,10 @@ class WebAuthnService
                 Notification::send($recipients, new StaffAlert(
                     'faceid_device_request',
                     'New Face ID device to approve',
-                    "{$user->fullName()} registered Face ID on a new device.",
-                    ['credential_id' => $stored->id, 'user_id' => $user->id],
+                    $replacesSameDevice
+                        ? "{$user->fullName()} registered Face ID again on the same phone (the previous passkey no longer works)."
+                        : "{$user->fullName()} registered Face ID on a new device.",
+                    ['credential_id' => $stored->id, 'user_id' => $user->id, 'reregistration' => $replacesSameDevice],
                     false,
                     '/admin/faceid-devices',
                 ));
