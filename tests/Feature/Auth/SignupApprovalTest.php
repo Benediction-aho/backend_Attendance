@@ -289,3 +289,11 @@ it('REL-16: neutralises the e-mail address in the approver alert', function () {
     $this->postJson('/api/auth/register', signupPayload(['email' => 'ama.mensah@example.com']))->assertStatus(202);
     Notification::assertSentTo($approver, StaffAlert::class, fn ($n) => ! str_contains($n->body, 'example.com') && ! str_contains($n->body, '@') && str_contains($n->body, 'ama'));
 });
+
+it('REL-24: accepts an apostrophe in the local part but still refuses a quoted local part', function () {
+    Notification::fake();
+    $approver = User::factory()->admin(Permission::ApproveUsers)->create();
+    $this->postJson('/api/auth/register', signupPayload(['email' => "o'brien@example.com"]))->assertStatus(202);
+    $this->postJson('/api/auth/register', signupPayload(['email' => "\"o'brien\"@example.com"]))->assertUnprocessable()->assertJsonValidationErrors(['email']);
+    Notification::assertSentTo($approver, StaffAlert::class, fn ($n) => ! str_contains($n->body, '@') && ! str_contains($n->body, 'example.com') && ! str_contains($n->body, '://'));
+});

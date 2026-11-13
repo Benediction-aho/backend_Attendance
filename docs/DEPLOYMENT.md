@@ -189,3 +189,13 @@ bypasses the cap. If an attacker keeps the cap used up while the super admin has
    then writes down who did it and why (the unlock itself is not logged from tinker).
    Look at the `auth.recovery_contention` critical entries to identify the attacking addresses.
 3. Afterwards, add a second super admin (promote an eligible admin) so step 1 is available next time.
+
+### 3.7 File URLs and the frontend CSP (REL-23)
+`App\Services\FileUrls::temporaryUrl()` decides what the browser receives for photos and PDFs:
+- `PRIVATE_FILES_DISK=local`: an **API-signed URL** on `APP_URL` (`/api/files/...?...&signature=`), served by the API.
+- `PRIVATE_FILES_DISK=s3` (Render, REL-07): a **direct pre-signed Supabase Storage URL**, e.g.
+  `https://<project-ref>.storage.supabase.co/storage/v1/s3/...` (host of `AWS_ENDPOINT`), not proxied by the API.
+So the frontend CSP (`frontend_Attendance/vercel.json`, owned by attendance-frontend) must allow that storage origin in
+`img-src` (profile photos) and `connect-src` (PDF downloads fetched by the app), and list the **final API origin** in
+`connect-src`/`img-src` once the production domain is known. Today: `https://ynspiijfjpumatmszmhx.storage.supabase.co`
+and `https://attendance-api-1xgl.onrender.com`. Update both whenever `AWS_ENDPOINT` or `APP_URL` changes.

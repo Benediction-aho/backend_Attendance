@@ -105,9 +105,9 @@ Scripts added: `tests/security/release_fixtures.sh` (users of every role/tier th
 | REL-18 | Scheduler tick: wrong-token path measurably slower than an unknown route | Info | Fixed for timing – verified; regression REL-22 |
 | REL-19 | Several `X-Forwarded-For` header lines: the first one is used | Info | Not reproducible locally (php -S keeps only the first line); verify live (REL-14) |
 | REL-20 | Recovery from a new device can still be starved (by design) | Info | Accepted risk – documented (DEPLOYMENT.md §3.6) |
-| REL-22 | Scheduler wrong-token refusals no longer counted nor logged (`defer` skipped on 404) | Low | Open (new, final re-test) |
-| REL-23 | Frontend CSP: no storage host in `img-src`/`connect-src`, API host hard-coded | Info | Open (new, final re-test) |
-| REL-24 | Sign-up e-mail pattern refuses valid addresses with `'` | Info | Open (new, final re-test) |
+| REL-22 | Scheduler wrong-token refusals no longer counted nor logged (`defer` skipped on 404) | Low | Fixed (backend) |
+| REL-23 | Frontend CSP: no storage host in `img-src`/`connect-src`, API host hard-coded | Info | Documented (backend, DEPLOYMENT.md §3.7) – CSP change open (frontend) |
+| REL-24 | Sign-up e-mail pattern refuses valid addresses with `'` | Info | Fixed (backend) |
 | REL-21 | Global sign-up cap can be exhausted from many IPs | Info | Accepted risk – document (new, re-test) |
 | REL-14 | Live test environment not reachable from sandbox | Info | Blocked |
 
@@ -205,6 +205,12 @@ Regression: route × role/tier matrix (35 routes × 25 callers) identical to the
 
 ### REL-24 – Sign-up e-mail pattern refuses valid addresses with an apostrophe — Info
 - `o'brien@relsec.test` → 422. Legitimate but rare; add `'` to the local-part class if needed (it is not a link character).
+
+## Fixes applied after final re-test (attendance-backend, 2026-11-13)
+
+- **REL-22** – `defer(...)->always()` in `SchedulerTickController`: counting and the `ops.scheduler_tick_refused` log now run after the 404 too. Test through the HTTP kernel and middleware: 10 wrong tokens → 10 log rows, then the right token from the same IP → 404 and the scheduler not run; another IP → 204. The REL-18 test now calls the controller directly: 404 with no query before the answer, one deferred callback queued.
+- **REL-23** – Checked: with `PRIVATE_FILES_DISK=s3` the browser receives **direct pre-signed Supabase Storage URLs** (not proxied); with `local`, API-signed URLs on `APP_URL`. Documented in `DEPLOYMENT.md` §3.7: the frontend CSP must allow the storage origin (`img-src`, `connect-src`) and the final API origin. The frontend change is left to attendance-frontend.
+- **REL-24** – Apostrophe allowed in the local part (`o'brien@example.com` → 202); quoted local parts still refused (`"o'brien"@example.com` → 422); the neutralised alert contains no `@`, domain or `://`. Tests added.
 
 ## Tests passed
 

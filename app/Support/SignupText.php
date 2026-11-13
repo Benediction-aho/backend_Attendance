@@ -16,8 +16,8 @@ final class SignupText
     /** Letters, digits, spaces and simple punctuation. */
     public const JOB_TITLE_PATTERN = '/^[\pL\pM\d][\pL\pM\d\'’.,&\/()+# -]*$/u';
 
-    /** REL-16: plain address only (no quoted local part, no spaces, no brackets). */
-    public const EMAIL_PATTERN = '/^[A-Za-z0-9._%+\-]+@[A-Za-z0-9](?:[A-Za-z0-9\-]*[A-Za-z0-9])?(?:\.[A-Za-z0-9](?:[A-Za-z0-9\-]*[A-Za-z0-9])?)*\.[A-Za-z]{2,}$/';
+    /** REL-16/REL-24: plain address only (apostrophe allowed; no quoted local part, no spaces, no brackets). */
+    public const EMAIL_PATTERN = '/^[A-Za-z0-9._%+\-\']+@[A-Za-z0-9](?:[A-Za-z0-9\-]*[A-Za-z0-9])?(?:\.[A-Za-z0-9](?:[A-Za-z0-9\-]*[A-Za-z0-9])?)*\.[A-Za-z]{2,}$/';
 
     /** Anything that a mail client could turn into a link. */
     public const LINK_PATTERN = '/(:\/\/|www\.|\.[\pL\d]|@|\[|\]|<|>)/iu';

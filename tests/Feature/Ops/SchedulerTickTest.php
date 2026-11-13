@@ -1,9 +1,14 @@
 <?php
 
+use App\Http\Controllers\Ops\SchedulerTickController;
 use App\Models\ActivityLog;
+use App\Services\ActivityLogger;
 use App\Settings\SettingsService;
+use Illuminate\Http\Request;
+use Illuminate\Support\Defer\DeferredCallbackCollection;
 use Illuminate\Support\Facades\Artisan;
 use Illuminate\Support\Facades\DB;
+use Symfony\Component\HttpKernel\Exception\HttpException;
 
 it('is disabled when no token is configured', function () {
     config(['services.scheduler.tick_token' => '']);
@@ -55,24 +60,36 @@ it('REL-09: is not subject to the general API limiter (no 429 leaks its existenc
     }
 });
 
-it('REL-18: a wrong token does no database work before the answer is sent', function () {
+it('REL-18: a wrong token does no database work before the answer; counting and logging are deferred', function () {
     config(['services.scheduler.tick_token' => str_repeat('a', 48)]);
+    $request = Request::create('/api/ops/scheduler-tick', 'POST', server: ['HTTP_X_SCHEDULER_TOKEN' => str_repeat('b', 48)]);
     DB::enableQueryLog();
     DB::flushQueryLog();
 
-    $this->postJson('/api/ops/scheduler-tick', [], ['X-Scheduler-Token' => str_repeat('b', 48)])->assertNotFound();
+    $status = null;
+    try {
+        app(SchedulerTickController::class)($request, app(ActivityLogger::class));
+    } catch (HttpException $e) {
+        $status = $e->getStatusCode();
+    }
 
-    expect(DB::getQueryLog())->toBe([])
-        ->and(ActivityLog::query()->where('event', 'ops.scheduler_tick_refused')->count())->toBe(0);
+    expect($status)->toBe(404)->and(DB::getQueryLog())->toBe([])
+        ->and(app(DeferredCallbackCollection::class)->count())->toBe(1);
 });
 
-it('REL-18: the refusal is still logged once the response is sent', function () {
+it('REL-22: wrong tokens are counted and logged after the 404 through the real HTTP kernel', function () {
     config(['services.scheduler.tick_token' => str_repeat('a', 48)]);
-    $this->postJson('/api/ops/scheduler-tick', [], ['X-Scheduler-Token' => str_repeat('b', 48)])->assertNotFound();
-    expect(ActivityLog::query()->where('event', 'ops.scheduler_tick_refused')->count())->toBe(0);
+    Artisan::spy();
 
-    // Deferred callbacks run once the response is sent (withoutDefer runs them inline, as after the response).
-    $this->withoutDefer();
-    $this->postJson('/api/ops/scheduler-tick', [], ['X-Scheduler-Token' => str_repeat('b', 48)])->assertNotFound();
-    expect(ActivityLog::query()->where('event', 'ops.scheduler_tick_refused')->count())->toBe(1);
+    for ($i = 0; $i < 10; $i++) {
+        $this->postJson('/api/ops/scheduler-tick', [], ['X-Scheduler-Token' => str_repeat('b', 48)])->assertNotFound();
+    }
+
+    expect(ActivityLog::query()->where('event', 'ops.scheduler_tick_refused')->count())->toBe(10);
+    $this->postJson('/api/ops/scheduler-tick', [], ['X-Scheduler-Token' => str_repeat('a', 48)])->assertNotFound();
+    Artisan::shouldNotHaveReceived('call');
+
+    // Another address is not affected.
+    $this->withServerVariables(['REMOTE_ADDR' => '198.51.100.9'])
+        ->postJson('/api/ops/scheduler-tick', [], ['X-Scheduler-Token' => str_repeat('a', 48)])->assertNoContent();
 });

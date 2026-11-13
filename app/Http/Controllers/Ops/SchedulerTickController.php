@@ -42,7 +42,7 @@ class SchedulerTickController extends Controller
             defer(function () use ($key, $logger) {
                 RateLimiter::hit($key, 60);
                 $logger->log('ops.scheduler_tick_refused', 'Scheduler tick refused (missing or wrong token).', LogType::Security, LogLevel::Warning);
-            });
+            })->always(); // REL-22: deferred callbacks are skipped on 4xx answers unless "always".
             abort(404);
         }
         // Too many wrong tokens from this address recently: even the right one is refused for a minute.
