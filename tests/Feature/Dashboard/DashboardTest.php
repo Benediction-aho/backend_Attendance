@@ -103,7 +103,7 @@ describe('admin dashboard', function () {
     it('gives the super admin every section', function () {
         Sanctum::actingAs(User::factory()->superAdmin()->create());
         $d = $this->getJson('/api/admin/dashboard')->assertOk()->json('data');
-        expect($d['today'])->toBe(['expected' => 3, 'checked_in' => 2, 'checked_in_not_expected' => 0, 'missing' => 1, 'on_leave' => 1, 'remote' => 1, 'not_working' => 1,
+        expect($d['today'])->toBe(['expected' => 3, 'checked_in' => 2, 'checked_in_not_expected' => 0, 'missing' => 1, 'on_leave' => 1, 'remote' => 1, 'not_working' => 1, 'day_off' => 0, 'holiday' => 0,
             'late' => 1, 'refused_attempts' => 1, 'missions_pending' => 1])
             ->and($d['week'])->toMatchArray(['week_start' => '2026-11-16', 'window_date' => '2026-11-20', 'weekly_reports_received' => 0, 'weekly_reports_expected' => 4, 'closed' => false])
             ->and($d['month'])->toMatchArray(['period_start' => '2026-10-26', 'period_end' => '2026-11-25', 'late_count' => 3, 'clients_count' => 4])

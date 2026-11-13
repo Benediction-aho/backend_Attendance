@@ -38,8 +38,12 @@ class AdminReportController
         $users = User::query()->where('role', Role::Employee->value)
             ->when(isset($data['user_id']), fn ($q) => $q->whereKey($data['user_id']), fn ($q) => $q->where('status', UserStatus::Active->value))
             ->orderByRaw('upper(last_name), upper(first_name), id')->get();
-        $statuses = $this->calendar->dayStatuses($users, $date);
         $snapshots = DailyReport::query()->where('work_date', $date)->whereIn('user_id', $users->pluck('id'))->get()->keyBy('user_id');
+        // UX6-08: an employee who had not joined yet on that date is not part of the day (unless data exists for it).
+        if (! isset($data['user_id'])) {
+            $users = $users->filter(fn (User $u) => $snapshots->has($u->id) || $this->calendar->wasMemberOn($u, $date))->values();
+        }
+        $statuses = $this->calendar->dayStatuses($users, $date);
 
         return response()->json(['work_date' => $date, 'data' => $users->map(fn (User $u) => [
             'user' => $this->userSummary($u),

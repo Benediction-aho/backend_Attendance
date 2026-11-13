@@ -54,7 +54,18 @@ class AppServiceProvider extends ServiceProvider
         RateLimiter::for('dashboard', fn (Request $request) => Limit::perMinute(app(SettingsService::class)->int('dashboard_requests_per_minute'))
             ->by('dashboard:'.($request->user('sanctum')?->getAuthIdentifier() ?? $request->ip())));
         RateLimiter::for('log-export', fn (Request $request) => Limit::perHour(app(SettingsService::class)->int('log_export_per_hour'))
-            ->by('log-export:'.($request->user('sanctum')?->getAuthIdentifier() ?? $request->ip())));
+            ->by('log-export:'.($request->user('sanctum')?->getAuthIdentifier() ?? $request->ip()))
+            // UX6-06: say when the next export is possible.
+            ->response(function (Request $request, array $headers) {
+                $seconds = max(1, (int) ($headers['Retry-After'] ?? 60));
+                $minutes = (int) ceil($seconds / 60);
+
+                return response()->json([
+                    'message' => "You have reached the hourly limit of CSV exports. Try again in {$minutes} minute".($minutes > 1 ? 's' : '').'.',
+                    'code' => 'too_many_exports',
+                    'retry_after_seconds' => $seconds,
+                ], 429, $headers);
+            }));
         // Sliding device sessions (FIABILITE B3): a token unused for longer than the idle period stops working.
         // Checked before Sanctum refreshes last_used_at.
         Sanctum::authenticateAccessTokensUsing(function (PersonalAccessToken $token, bool $isValid): bool {

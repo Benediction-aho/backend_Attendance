@@ -63,7 +63,7 @@ class DashboardService
 
         $weekStart = $this->window->weekStart($today);
         $windowDate = $this->window->windowDate($weekStart);
-        $weekEnd = Carbon::parse($weekStart)->addDays(6)->toDateString();
+        $weekEnd = $this->window->weekEnd($weekStart);
         $weekAttendances = Attendance::query()->where('user_id', $user->id)->where('work_date', '>=', $weekStart)->where('work_date', '<=', $today)->get();
         $expectedDays = 0;
         for ($d = Carbon::parse($weekStart); $d->toDateString() <= $today; $d->addDay()) {
@@ -163,6 +163,7 @@ class DashboardService
             $received = WeeklyReportSubmission::query()->where('week_start', $weekStart)->where('is_current', true)->pluck('user_id')->intersect($expected)->count();
             $out['week'] = [
                 'week_start' => $weekStart,
+                'week_end' => $this->window->weekEnd($weekStart),
                 'window_date' => $windowDate,
                 'closes_at' => $this->window->closesAt($windowDate)->toIso8601String(),
                 'closed' => $now->gte($this->window->closesAt($windowDate)),
@@ -227,7 +228,7 @@ class DashboardService
         $statuses = $this->calendar->dayStatuses($employees, $today);
         // P6-04: checked_in counts only the employees counted in "expected"; other check-ins (remote/day-off
         // workers, people checking in while not expected) are reported separately. Blocked/deleted accounts never count.
-        $counts = ['expected' => 0, 'checked_in' => 0, 'checked_in_not_expected' => 0, 'missing' => 0, 'on_leave' => 0, 'remote' => 0, 'not_working' => 0];
+        $counts = ['expected' => 0, 'checked_in' => 0, 'checked_in_not_expected' => 0, 'missing' => 0, 'on_leave' => 0, 'remote' => 0, 'not_working' => 0, 'day_off' => 0, 'holiday' => 0];
         foreach ($employees as $u) {
             $status = $statuses[$u->id];
             if ($status->isExpected()) {
@@ -244,6 +245,13 @@ class DashboardService
             }
             if ($status === DayStatus::Remote) {
                 $counts['remote']++;
+            }
+            // UX6-03: not_working = on_leave + day_off + holiday (day_off includes weekly non-working days).
+            if ($status === DayStatus::DayOff || $status === DayStatus::NonWorking) {
+                $counts['day_off']++;
+            }
+            if ($status === DayStatus::Holiday) {
+                $counts['holiday']++;
             }
         }
         if ($seeLate) {

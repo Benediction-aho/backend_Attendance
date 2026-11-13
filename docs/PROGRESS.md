@@ -5,6 +5,14 @@ Updated by the agents at the end of every work session.
 ## Current phase
 **Phase 5 – Tasks, clients and reports: backend done – ready for backend-security-tester** (focus below). Phase 4 backend: no open finding.
 
+### Phase 6 UX fixes, server side (2026-11-13) – `frontend_Attendance/docs/reports/phase-6-ux.md`
+- UX6-03: `/admin/dashboard` `today` now also returns `day_off` (personal day off or weekly non-working day) and `holiday`; `not_working` = on_leave + day_off + holiday (kept, not breaking). **For attendance-frontend:** show "Day off" from `day_off` (not `not_working`), and show `checked_in_not_expected`.
+- UX6-05: CORS exposes `Content-Disposition` and `Retry-After` (the CSV file name is now readable cross-origin).
+- UX6-06: CSV "Device" column = device name, else "<browser> on <platform>" (e.g. "Safari on iPhone"), else "Unknown device"; export 429 = `{message: "...Try again in N minutes.", code: too_many_exports, retry_after_seconds}` + `Retry-After`.
+- UX6-07: dashboard week is Monday → Friday everywhere: `/me/dashboard` `week.week_end` is now Friday (was Sunday; contract change), `/admin/dashboard` `week` gains `week_end`. Use these fields for labels.
+- UX6-08: `/admin/reports/daily?date=` only lists employees who had joined by that date (approved_at/created_at), or who have a generated daily report for it.
+- Tests: `tests/Feature/Ux/Phase6UxFixesTest.php`; full suite green (492), pint and phpstan clean. openapi updated.
+
 ### Phase 6 security fixes (2026-11-13) – `docs/reports/phase-6-security.md`
 - P6-01/02 CSV export: every field quoted, formula triggers neutralized at field start, after leading whitespace and after `;`/`,`, NFKC-normalized. P6-03: keyset export (`lazyByIdDesc`) from a frozen max id. P6-04: `today.checked_in` among expected only + new `checked_in_not_expected` (additive, for attendance-frontend). P6-05: `WorkCalendar::dayStatuses()` batch API (dashboard, reminders, weekly window, admin daily/attendance day), `GROUP BY` services_top, `throttle:dashboard` (new setting `dashboard_requests_per_minute`, default 30 – 429 possible on both dashboards). Admin dashboard: 18 queries / ~0.1 s with 300 employees (was 1,775 / ~1 s). No Critical/High open; ready for a backend-security-tester re-check.
 

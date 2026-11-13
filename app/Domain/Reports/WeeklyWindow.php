@@ -29,6 +29,12 @@ class WeeklyWindow
         return Carbon::parse($date, $this->calendar->timezone())->startOfWeek(Carbon::MONDAY)->toDateString();
     }
 
+    /** Friday of the week starting on $weekStart: the same Monday → Friday period as the weekly report (UX6-07). */
+    public function weekEnd(string $weekStart): string
+    {
+        return Carbon::parse($weekStart)->addDays(4)->toDateString();
+    }
+
     /** Report day of the week starting on $weekStart. */
     public function windowDate(string $weekStart): string
     {

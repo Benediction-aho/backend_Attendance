@@ -431,10 +431,11 @@ paths:
       description: |
         Same filters as /admin/activity-logs (no per_page). Streamed (text/csv; charset=UTF-8, UTF-8 BOM, attachment
         `activity_log_YYYY-MM-DD_HHMMSS.csv`), newest first (by id; a snapshot of the rows existing when the export starts), capped at settings.log_export_max_rows. Columns: Date (Africa/Accra),
-        Type, Level, Event, Description, User, User email, Actor, IP, Device, User agent, Context (JSON). Every field is enclosed in
+        Type, Level, Event, Description, User, User email, Actor, IP, Device (readable label: device name, else "<browser> on <platform>" from the user agent; never an internal id), User agent, Context (JSON). Every field is enclosed in
         double quotes, lines end with CRLF; text is NFKC-normalized and a ' is inserted before = + - @ tab CR LF at the field start
         (also after leading whitespace) and after any `;` or `,` (CSV injection, any locale). Each export is logged (security event `logs.exported`, filters and row count).
-        Rate limited to settings.log_export_per_hour per super admin (429).
+        Rate limited to settings.log_export_per_hour per super admin: 429 {message, code: too_many_exports, retry_after_seconds} + Retry-After header.
+        CORS exposes Content-Disposition and Retry-After.
       security: [{ deviceToken: [] }]
       parameters:
         - { name: user_id, in: query, schema: { type: integer } }
@@ -456,7 +457,7 @@ paths:
       summary: Employee dashboard (employees only, else 403). Every figure is computed by the server (Africa/Accra); the client never counts.
       description: |
         `today`: day_status, expected, checked_in, checked_out, check_in_at, check_in_type, is_late, mission_status, tasks_planned, tasks_done, clients_count.
-        `week` (Monday → Sunday of the current week, counted up to today): week_start, week_end, presence_days, expected_days_so_far, late_count,
+        `week` (Monday → Friday of the current week, the same period as the weekly report; week_end = Friday; counted up to today): week_start, week_end, presence_days, expected_days_so_far, late_count,
         tasks_planned, tasks_done, clients_count, weekly_report { status: submitted | not_open | open | missing | not_expected, expected, window_date,
         opens_at, deadline, submitted_at, is_late, version }.
         `month` (monthly report period containing today, default 26 → 25, counted up to today): period_start, period_end, presence_days, late_count, clients_count.
@@ -472,9 +473,9 @@ paths:
         A section or field the viewer is not allowed to see is **absent** (never 0). Super admins get everything.
         - `today` (any attendance tier, as /admin/attendance/day): expected, checked_in (among the expected only, so checked_in + missing = expected),
           checked_in_not_expected (members checked in on a day they were not expected; blocked/deleted accounts never count), missing (expected without check-in yet), on_leave, remote,
-          not_working (day off, holiday, leave, weekend); + `late`, `refused_attempts` with view_lateness; + `missions_pending` with approve_mission_checkins.
+          day_off (personal day off or weekly non-working day), holiday, not_working (= on_leave + day_off + holiday, kept for compatibility; UX6-03); + `late`, `refused_attempts` with view_lateness; + `missions_pending` with approve_mission_checkins.
           Population: active employees/interns who were members on that day.
-        - `week` (view_reports or receive_weekly_reports): week_start, window_date, closes_at, closed, weekly_reports_received, weekly_reports_expected
+        - `week` (view_reports or receive_weekly_reports): week_start, week_end (Friday), window_date, closes_at, closed, weekly_reports_received, weekly_reports_expected
           (received = current report from an expected employee).
         - `month` (period of the monthly report containing today, default 26 → 25, up to today): period_start, period_end, to_date; + `late_count` with
           view_lateness; + `clients_count`, `services_top` [{ service, service_key, quantity }] (settings.dashboard_top_services) with view_clients or view_statistics.
@@ -1026,7 +1027,7 @@ paths:
         '429': { $ref: '#/components/responses/TooManyRequests' }
   /admin/reports/daily:
     get:
-      summary: Daily reports of active employees (or one user_id). Tier view_reports; `tasks` only with view_tasks, `clients` only with view_clients.
+      summary: Daily reports of active employees who had joined by that date (approved_at/created_at, or with a generated report for it; UX6-08), or one user_id. Tier view_reports; `tasks` only with view_tasks, `clients` only with view_clients.
       security: [{ deviceToken: [] }]
       parameters:
         - { name: date, in: query, schema: { type: string, format: date } }

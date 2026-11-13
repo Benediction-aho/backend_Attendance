@@ -65,6 +65,8 @@ class ActivityLogController
         $tz = (string) config('app.timezone');
         $name = 'activity_log_'.Carbon::now($tz)->format('Y-m-d_His').'.csv';
 
+        $query->with('device');
+
         return response()->streamDownload(function () use ($query, $max, $tz) {
             $out = fopen('php://output', 'w');
             if ($out === false) {
@@ -82,7 +84,7 @@ class ActivityLogController
                     $log->created_at->setTimezone($tz)->format('Y-m-d H:i:s'),
                     $log->type->value, $log->level->value, $log->event, $log->description,
                     $log->user?->fullName(), $log->user?->email, $log->actor?->fullName(),
-                    $log->ip, $log->device_id, $log->user_agent,
+                    $log->ip, self::deviceLabel($log), $log->user_agent,
                     $log->context ? json_encode($log->context, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES) : '',
                 ]));
                 if (++$written % 500 === 0) {
@@ -91,6 +93,47 @@ class ActivityLogController
             }
             fclose($out);
         }, $name, ['Content-Type' => 'text/csv; charset=UTF-8', 'Cache-Control' => 'no-store']);
+    }
+
+    /** UX6-06: a readable device label (name, or platform and browser from the user agent) instead of an internal id. */
+    public static function deviceLabel(ActivityLog $log): string
+    {
+        if ($log->device_id === null) {
+            return '';
+        }
+        $device = $log->device;
+        if ($device?->name !== null && $device->name !== '') {
+            return $device->name;
+        }
+        $ua = ($device !== null ? $device->user_agent : null) ?? $log->user_agent ?? '';
+        $label = trim(self::browser($ua).' on '.self::platform($ua));
+
+        return $label === 'Unknown browser on Unknown device' ? 'Unknown device' : $label;
+    }
+
+    private static function platform(string $ua): string
+    {
+        return match (true) {
+            str_contains($ua, 'iPhone') => 'iPhone',
+            str_contains($ua, 'iPad') => 'iPad',
+            str_contains($ua, 'Android') => 'Android',
+            str_contains($ua, 'Windows') => 'Windows',
+            str_contains($ua, 'Mac OS X') || str_contains($ua, 'Macintosh') => 'Mac',
+            str_contains($ua, 'Linux') => 'Linux',
+            default => 'Unknown device',
+        };
+    }
+
+    private static function browser(string $ua): string
+    {
+        return match (true) {
+            str_contains($ua, 'Edg/') => 'Edge',
+            str_contains($ua, 'SamsungBrowser') => 'Samsung Internet',
+            str_contains($ua, 'Firefox') || str_contains($ua, 'FxiOS') => 'Firefox',
+            str_contains($ua, 'Chrome') || str_contains($ua, 'CriOS') => 'Chrome',
+            str_contains($ua, 'Safari') => 'Safari',
+            default => 'Unknown browser',
+        };
     }
 
     /**

@@ -15,6 +15,7 @@ use LogicException;
  * @property int $id
  * @property int|null $user_id
  * @property int|null $actor_id
+ * @property-read Device|null $device
  * @property LogType $type
  * @property LogLevel $level
  * @property string $event
@@ -52,5 +53,11 @@ class ActivityLog extends Model
     public function actor(): BelongsTo
     {
         return $this->belongsTo(User::class, 'actor_id')->withTrashed();
+    }
+
+    /** @return BelongsTo<Device, $this> */
+    public function device(): BelongsTo
+    {
+        return $this->belongsTo(Device::class);
     }
 }
