@@ -97,3 +97,8 @@ Batch calendar regression check: new script `tests/security/phase6_calendar_diff
 | P6-06 | Low | Open (new) |
 
 No Critical/High finding open.
+
+
+## P6-06 fix
+
+- `ActivityLogController::cell()` now also neutralizes a trigger character preceded by quotes/whitespace after `;` or `,` (regex `([;,][\s"']*)(?=[=+\-@\t\r\n])`). Regression cases `z;"=1`, `z,"@x`, `z; '=1` added to `tests/Feature/Logs/ActivityLogTest.php`. Status: **Fixed** (pending tester confirmation).

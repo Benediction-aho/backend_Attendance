@@ -122,7 +122,7 @@ class ActivityLogController
             $s = "'".$s;
         }
         // After a list separator of any locale (`;` or `,`), optional whitespace, then a trigger.
-        $s = (string) preg_replace('/([;,]\s*)(?=[=+\-@\t\r\n])/u', "$1'", $s);
+        $s = (string) preg_replace('/([;,][\s"\']*)(?=[=+\-@\t\r\n])/u', "$1'", $s);
 
         return $s;
     }

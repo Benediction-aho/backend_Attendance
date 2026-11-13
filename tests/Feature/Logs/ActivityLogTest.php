@@ -206,6 +206,9 @@ describe('CSV export hardening (phase 6 security)', function () {
         ["\u{FF1D}1+1", "'=1+1"],
         ["\t1", "'\t1"],
         ['plain text', 'plain text'],
+        ['z;"=1', "z;\"'=1"],
+        ['z,"@x', "z,\"'@x"],
+        ["z; '=1", "z; ''=1"],
     ]);
 
     it('P6-01 writes every field enclosed in quotes', function () {
