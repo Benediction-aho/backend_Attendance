@@ -2,6 +2,7 @@
 
 namespace App\Console\Commands;
 
+use App\Services\AccountService;
 use App\Services\AtomicLimiter;
 use App\Services\ScheduledRunner;
 use App\Settings\SettingsService;
@@ -18,7 +19,7 @@ class PurgeActivityLogs extends Command
 
     protected $description = 'Delete activity logs older than the configured retention period';
 
-    public function handle(ScheduledRunner $runner, SettingsService $settings): int
+    public function handle(ScheduledRunner $runner, SettingsService $settings, AccountService $accounts): int
     {
         $today = Carbon::now()->startOfDay();
         $deleted = 0;
@@ -32,6 +33,11 @@ class PurgeActivityLogs extends Command
         });
 
         AtomicLimiter::prune();
+        // REL-03: unanswered sign-up requests do not pile up (idempotent: only rows older than the retention).
+        $expired = $accounts->purgeStalePending();
+        if ($expired > 0) {
+            $this->info("Removed {$expired} unanswered sign-up requests.");
+        }
         $this->info($ran ? "Deleted {$deleted} log entries." : 'Already done today.');
 
         return self::SUCCESS;

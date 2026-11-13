@@ -93,6 +93,15 @@ class SettingsController
             ? Carbon::createFromFormat('Y-m-d', $data['effective_from'])?->startOfDay()
             : Carbon::now();
 
+        // REL-13: check-in must open before lateness starts (values effective at that date, new ones included).
+        if (array_key_exists('checkin_opens_at', $values) || array_key_exists('late_after', $values)) {
+            $opens = (string) ($values['checkin_opens_at'] ?? $this->settings->string('checkin_opens_at', $effective));
+            $late = (string) ($values['late_after'] ?? $this->settings->string('late_after', $effective));
+            if ($opens >= $late) {
+                throw ValidationException::withMessages(['values.checkin_opens_at' => ['Check-in must open before the time lateness starts ('.$late.').']]);
+            }
+        }
+
         $this->settings->set($values, $actor, $effective);
 
         $this->logger->log('settings.updated', 'Configuration changed: '.implode(', ', array_keys($values)), level: LogLevel::Warning, actor: $actor, context: [

@@ -17,7 +17,7 @@ final class SettingDefinitions
      * Settings that only a super admin may change or see, whatever the admin's section permissions:
      * they decide who receives confidential data or what admins can see (privilege-related).
      */
-    public const SUPER_ADMIN_ONLY = ['monthly_report_recipient_ids', 'logs_admins_see_super_admin_events', 'timezone'];
+    public const SUPER_ADMIN_ONLY = ['monthly_report_recipient_ids', 'logs_admins_see_super_admin_events', 'timezone', 'super_admin_promotion_requires_tier'];
 
     /** Section of each group; a setting may override it with its own 'section'. */
     private const GROUP_SECTIONS = ['attendance' => 'attendance', 'reports' => 'reports', 'security' => 'security', 'system' => 'security'];
@@ -121,6 +121,11 @@ final class SettingDefinitions
             'session_idle_days' => ['type' => 'int', 'default' => 30, 'rules' => ['integer', 'min:1', 'max:365'], 'group' => 'security', 'label' => 'Device session expires after inactivity (days)'],
             'signup_requests_per_hour' => ['type' => 'int', 'default' => 50, 'rules' => ['integer', 'min:1', 'max:1000'], 'group' => 'security', 'label' => 'Sign-up requests per hour per IP (the whole office shares one IP)'],
             'signup_requests_per_email_per_hour' => ['type' => 'int', 'default' => 3, 'rules' => ['integer', 'min:1', 'max:20'], 'group' => 'security', 'label' => 'Sign-up requests per hour per email'],
+            'signup_requests_global_per_hour' => ['type' => 'int', 'default' => 200, 'rules' => ['integer', 'min:1', 'max:10000'], 'group' => 'security', 'label' => 'Sign-up requests per hour in total, all IPs together (flood protection)'],
+            'signup_alert_emails_per_hour' => ['type' => 'int', 'default' => 5, 'rules' => ['integer', 'min:0', 'max:100'], 'group' => 'security', 'label' => 'Sign-up alert emails per hour to approvers (beyond: one summary email, then in-app notifications only)'],
+            'pending_signup_retention_days' => ['type' => 'int', 'default' => 30, 'rules' => ['integer', 'min:1', 'max:365'], 'group' => 'security', 'label' => 'Unanswered sign-up requests are removed after (days)'],
+            'recovery_links_sent_per_hour' => ['type' => 'int', 'default' => 3, 'rules' => ['integer', 'min:1', 'max:20'], 'group' => 'security', 'label' => 'Recovery links emailed per super admin per hour (a known device is never refused)'],
+            'super_admin_promotion_requires_tier' => ['type' => 'bool', 'default' => true, 'rules' => ['boolean'], 'group' => 'security', 'label' => 'Only an admin holding "Eligible for promotion to super admin" can be made super admin'],
             'api_requests_per_minute' => ['type' => 'int', 'default' => 120, 'rules' => ['integer', 'min:30', 'max:10000'], 'group' => 'security', 'label' => 'API requests per minute per user/IP'],
         ];
     }

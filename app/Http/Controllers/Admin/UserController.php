@@ -60,6 +60,10 @@ class UserController
 
     public function store(Request $request): JsonResponse
     {
+        // REL-10: authorize before validating, so a caller without the right never learns the expected fields.
+        $requestedRole = $request->input('role');
+        Gate::authorize('create', [User::class, (is_string($requestedRole) ? Role::tryFrom($requestedRole) : null) ?? Role::Employee]);
+
         $data = $request->validate([
             'email' => ['required', 'string', 'email:rfc', 'max:254'],
             'first_name' => ['required', 'string', 'max:100'],

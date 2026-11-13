@@ -10,6 +10,7 @@ info:
     the token on the device (IndexedDB/localStorage) and deletes it on logout or on a 401.
     A 401 with `code: account_blocked` means the session was ended because the account was blocked, locked or deleted.
     Network or 5xx errors must never log the user out; only a 401 does.
+    Any non-multipart body larger than MAX_REQUEST_BODY_KB (default 128 KB) is refused with 413 `payload_too_large` (REL-06).
 servers:
   - url: http://localhost:8000/api
 paths:
@@ -70,7 +71,7 @@ paths:
         '200': { description: 'data[] {key, old_value, new_value, effective_from, changed_at, changed_by{id,name}} + sections + meta' }
   /auth/register:
     post:
-      summary: Public sign-up request (no password). Same 202 answer whether or not the email is already used. Rate limited per IP (settings.signup_requests_per_hour).
+      summary: Public sign-up request (no password). Same 202 answer whether or not the email is already used. Rate limited per IP (settings.signup_requests_per_hour), per email and globally (settings.signup_requests_global_per_hour, REL-03). Names - letters, spaces, hyphens, apostrophes, dots followed by a space; job title - letters, digits, spaces and simple punctuation; anything link-like ("://", "www.", a dot glued to a word, "@", brackets) is refused with 422. Unanswered requests are removed after settings.pending_signup_retention_days.
       requestBody:
         required: true
         content:
@@ -138,8 +139,8 @@ paths:
         '429': { description: 'too_many_code_requests (UX2-07): retry_after_seconds + Retry-After header; same for unknown emails' }
   /auth/recovery:
     post:
-      summary: Ask for a recovery link (super admin whose sign-in is locked or temporarily blocked). Always 202.
-      requestBody: { required: true, content: { application/json: { schema: { type: object, required: [email], properties: { email: { type: string } } } } } }
+      summary: 'Ask for a recovery link (super admin whose sign-in is locked or temporarily blocked). Always 202. Counted per (account, IP) and per IP; links actually emailed are capped per account (settings.recovery_links_sent_per_hour) except for a request sent with the `device_id` of a device the super admin already signed in on (REL-02). Non-breaking: `device_id` is optional; the PWA should send the same id as for /auth/login.'
+      requestBody: { required: true, content: { application/json: { schema: { type: object, required: [email], properties: { email: { type: string }, device_id: { type: string, maxLength: 200, nullable: true } } } } } }
       responses:
         '202': { description: '{ message }' }
   /auth/recovery/confirm:
@@ -403,13 +404,14 @@ paths:
         '200': { description: '{ message, data: User }' }
   /admin/users/{id}/role:
     put:
-      summary: Change role / promote (super admin; never on oneself; the last active super admin cannot be demoted). Ends the account's sessions.
+      summary: 'Change role / promote (super admin; never on oneself; the last active super admin cannot be demoted). Ends the account''s sessions. REL-08 - promotion to super_admin is allowed only for an admin holding promote_to_super_admin (setting super_admin_promotion_requires_tier, default true), else 422 not_eligible_for_super_admin.' 
       security: [{ deviceToken: [] }]
       parameters: [{ $ref: '#/components/parameters/UserId' }]
       requestBody: { required: true, content: { application/json: { schema: { type: object, required: [role], properties: { role: { type: string, enum: [employee, admin, super_admin] } } } } } }
       responses:
         '200': { description: '{ message, data: User }' }
         '409': { description: last_super_admin or not_active }
+        '422': { description: not_eligible_for_super_admin or validation error }
   /admin/activity-logs:
     get:
       summary: Activity, security, automatic and error logs (super admin, or admin with view_logs). Read-only. Newest first. Entries about super admin accounts are returned to super admins only, unless settings.logs_admins_see_super_admin_events is true.

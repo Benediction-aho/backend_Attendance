@@ -6,6 +6,7 @@ use App\Models\ActivityLog;
 use App\Models\LoginCode;
 use App\Models\User;
 use App\Settings\SettingsService;
+use Illuminate\Hashing\BcryptHasher;
 use Illuminate\Support\Carbon;
 use Illuminate\Support\Facades\Hash;
 use Illuminate\Support\Facades\Mail;
@@ -243,4 +244,92 @@ it('still issues a code to a known device of the super admin when strangers fill
 
     $this->withServerVariables(['REMOTE_ADDR' => '192.0.2.50'])
         ->postJson('/api/auth/login', loginPayload('boss@example.com', $code, 'owner-phone-000000001'))->assertOk();
+});
+
+function countingHasher(): object
+{
+    $counter = new class(['rounds' => 4]) extends BcryptHasher
+    {
+        public int $makes = 0;
+
+        public function make(#[SensitiveParameter] $value, array $options = []): string
+        {
+            $this->makes++;
+
+            return parent::make($value, $options);
+        }
+    };
+    Hash::extend('counting', fn () => $counter);
+    config(['hashing.driver' => 'counting']);
+
+    return $counter;
+}
+
+it('REL-01: costs one hash on every path, including when the active-code cap is reached', function () {
+    User::factory()->create(['email' => 'emp@example.com']);
+    $counter = countingHasher();
+    $ask = fn (string $email, string $ip) => $this->withServerVariables(['REMOTE_ADDR' => $ip])
+        ->postJson('/api/auth/super-admin/code', ['email' => $email])->assertStatus(202);
+
+    foreach (['ghost@example.com', 'emp@example.com', 'boss@example.com'] as $i => $email) {
+        $before = $counter->makes;
+        $ask($email, '198.51.100.'.($i + 1));
+        expect($counter->makes - $before)->toBe(1);
+    }
+    // Two more IPs fill the cap (3 valid codes), then every further request takes the refused path.
+    $ask('boss@example.com', '198.51.100.20');
+    $ask('boss@example.com', '198.51.100.21');
+    expect(LoginCode::query()->whereNull('used_at')->count())->toBe(3);
+    $before = $counter->makes;
+    $ask('boss@example.com', '198.51.100.22');
+    expect($counter->makes - $before)->toBe(1)
+        ->and(LoginCode::query()->whereNull('used_at')->count())->toBe(3);
+});
+
+it('REL-01: recovery requests cost one hash whether or not a link is sent', function () {
+    $counter = countingHasher();
+    foreach (['ghost@example.com', 'boss@example.com'] as $email) {
+        $before = $counter->makes;
+        $this->postJson('/api/auth/recovery', ['email' => $email])->assertStatus(202);
+        expect($counter->makes - $before)->toBe(1);
+    }
+});
+
+it('REL-02: strangers on other IPs cannot use up the recovery of a locked super admin', function () {
+    exhaustLogins($this, 'boss@example.com');
+    Mail::fake();
+    // 20 IPs x 4 requests: the account+IP quota applies per IP, the sent cap bounds the e-mails.
+    for ($ip = 1; $ip <= 20; $ip++) {
+        for ($k = 0; $k < 4; $k++) {
+            $this->withServerVariables(['REMOTE_ADDR' => '203.0.113.'.$ip])
+                ->postJson('/api/auth/recovery', ['email' => 'boss@example.com'])->assertStatus(202);
+        }
+    }
+    Mail::assertQueuedCount(3);
+    expect(ActivityLog::query()->where('event', 'auth.recovery_contention')->where('level', 'critical')->exists())->toBeTrue();
+
+    // The owner's own (known) device still gets a link.
+    deviceToken($this->sa, 'owner-phone-000000001');
+    $this->withServerVariables(['REMOTE_ADDR' => '198.51.100.50'])
+        ->postJson('/api/auth/recovery', ['email' => 'boss@example.com', 'device_id' => 'owner-phone-000000001'])->assertStatus(202);
+    Mail::assertQueuedCount(4);
+
+    // A stranger's unknown device does not.
+    $this->withServerVariables(['REMOTE_ADDR' => '198.51.100.51'])
+        ->postJson('/api/auth/recovery', ['email' => 'boss@example.com', 'device_id' => 'stranger-0000000001'])->assertStatus(202);
+    Mail::assertQueuedCount(4);
+});
+
+it('REL-02: requests that send nothing do not consume the link quota', function () {
+    Mail::fake();
+    // Not locked: 4 requests from 4 IPs send nothing...
+    for ($ip = 1; $ip <= 4; $ip++) {
+        $this->withServerVariables(['REMOTE_ADDR' => '203.0.113.'.$ip])->postJson('/api/auth/recovery', ['email' => 'boss@example.com'])->assertStatus(202);
+    }
+    Mail::assertNothingQueued();
+    exhaustLogins($this, 'boss@example.com');
+    Mail::fake();
+    // ...so once locked, the owner still gets a link.
+    $this->withServerVariables(['REMOTE_ADDR' => '198.51.100.9'])->postJson('/api/auth/recovery', ['email' => 'boss@example.com'])->assertStatus(202);
+    Mail::assertQueued(RecoveryLinkMail::class);
 });

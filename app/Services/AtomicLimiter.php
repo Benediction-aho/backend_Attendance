@@ -15,6 +15,14 @@ class AtomicLimiter
     /** Counts one attempt and returns true while the count stays within $max for the window. */
     public static function hit(string $key, int $max, int $decaySeconds): bool
     {
+        $hits = self::increment($key, $decaySeconds);
+
+        return $hits >= 1 && $hits <= $max;
+    }
+
+    /** Counts one attempt atomically and returns the number of attempts in the current window (this one included). */
+    public static function increment(string $key, int $decaySeconds): int
+    {
         $now = Carbon::now();
         $hits = DB::scalar(<<<'SQL'
 INSERT INTO rate_limit_counters (key, hits, expires_at) VALUES (?, 1, ?)
@@ -24,7 +32,7 @@ ON CONFLICT (key) DO UPDATE SET
 RETURNING hits
 SQL, [self::key($key), $now->copy()->addSeconds($decaySeconds), $now, $now]);
 
-        return is_numeric($hits) && (int) $hits >= 1 && (int) $hits <= $max;
+        return is_numeric($hits) ? (int) $hits : 0;
     }
 
     /** Gives back an attempt that turned out not to count (e.g. a successful sign-in). */

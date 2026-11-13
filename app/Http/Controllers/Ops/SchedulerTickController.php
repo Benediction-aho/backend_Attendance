@@ -9,6 +9,7 @@ use App\Services\ActivityLogger;
 use Illuminate\Http\Request;
 use Illuminate\Http\Response;
 use Illuminate\Support\Facades\Artisan;
+use Illuminate\Support\Facades\RateLimiter;
 
 /**
  * Runs the Laravel scheduler once, for hosts without a permanent scheduler process
@@ -20,12 +21,21 @@ use Illuminate\Support\Facades\Artisan;
  */
 class SchedulerTickController extends Controller
 {
+    /** Calls per minute and per IP; a cron calls once a minute. */
+    private const MAX_PER_MINUTE = 10;
+
     public function __invoke(Request $request, ActivityLogger $logger): Response
     {
         $expected = (string) config('services.scheduler.tick_token', '');
-        if ($expected === '') {
+        // REL-09: wrong method, disabled endpoint and too many calls all look like an unknown route (404).
+        if ($expected === '' || ! $request->isMethod('POST')) {
             abort(404);
         }
+        $key = 'scheduler-tick:'.$request->ip();
+        if (RateLimiter::tooManyAttempts($key, self::MAX_PER_MINUTE)) {
+            abort(404);
+        }
+        RateLimiter::hit($key, 60);
 
         $given = (string) $request->header('X-Scheduler-Token', '');
         if (strlen($given) < 32 || ! hash_equals($expected, $given)) {

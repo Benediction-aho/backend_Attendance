@@ -20,7 +20,7 @@ One image for all roles and environments (`Dockerfile`, see `docs/DOCKER.md`); o
 ## 2. Required variables (names only)
 Values live in the host's secret settings, never in Git.
 
-- App: `APP_NAME`, `APP_ENV`, `APP_KEY`, `APP_DEBUG` (=false), `APP_URL`, `FRONTEND_URL`, `CORS_ALLOWED_ORIGINS`, `TRUSTED_PROXIES`, `LOG_CHANNEL` (=stderr), `LOG_LEVEL`
+- App: `APP_NAME`, `APP_ENV`, `APP_KEY`, `APP_DEBUG` (=false), `APP_URL`, `FRONTEND_URL`, `CORS_ALLOWED_ORIGINS`, `TRUSTED_PROXIES`, `MAX_REQUEST_BODY_KB` (=128), `LOG_CHANNEL` (=stderr), `LOG_LEVEL`
 - Role: `CONTAINER_ROLE` (`app` | `worker` | `scheduler`), `RUN_MIGRATIONS` (true on `app` only), `PORT` (Render sets it; image default 8080)
 - Database: `DB_CONNECTION` (=pgsql), `DB_HOST`, `DB_PORT`, `DB_DATABASE`, `DB_USERNAME`, `DB_PASSWORD`, `DB_SSLMODE` (=require),
   `DB_APP_ROLE`, `DB_OWNER_USERNAME`, `DB_OWNER_PASSWORD` (separate database roles, see 2.1)
@@ -102,9 +102,13 @@ the **Supavisor pooler** (Supabase dashboard > Connect):
    - Repository `backend_Attendance`, branch = dev branch for test, Dockerfile path `./Dockerfile`.
    - Env: all variables of section 2, plus `CONTAINER_ROLE=app`, `RUN_MIGRATIONS=true`.
    - Health check path: `/api/health`.
-   - `TRUSTED_PROXIES=*`: Render's load balancer terminates TLS and its internal IPs are not fixed; the
-     container is only reachable through that proxy, so trusting all proxies is safe here and needed for
-     correct client IPs (rate limiting, logs) and `https` URLs.
+   - `TRUSTED_PROXIES=*`: Render's load balancer terminates TLS and its internal IPs are not fixed. In this
+     application `*` means **the immediate peer only** (`REMOTE_ADDR`, i.e. Render's proxy), not "every
+     address" as in stock Laravel (REL-05): the client IP is the right-most `X-Forwarded-For` entry, the one
+     Render's proxy appends; anything a client puts on the left is ignored. Only `X-Forwarded-For` and
+     `X-Forwarded-Proto` are read (`X-Forwarded-Host/Port/Prefix` never are), and every generated URL is built
+     from `APP_URL` (forced root URL and scheme). If another proxy/CDN is ever put in front of Render, list its
+     ranges explicitly, e.g. `TRUSTED_PROXIES=REMOTE_ADDR,<cdn-cidr-1>,<cdn-cidr-2>`. Verify with section 3.4.
    - Auto-deploy on push: on.
 2. **Background worker** `attendance-worker`: same repo/Dockerfile, `CONTAINER_ROLE=worker`, `RUN_MIGRATIONS=false`.
    Render restarts it on each deploy (picks up the new code).
@@ -114,6 +118,12 @@ the **Supavisor pooler** (Supabase dashboard > Connect):
 4. Use an **Environment Group** for the shared variables, attached to all three services.
 5. Custom domain (test): optional; CORS `CORS_ALLOWED_ORIGINS` must list the Vercel preview origin.
 6. Once live, set the frontend `VITE_API_URL` on Vercel to `https://<api-host>/api` and redeploy.
+
+Private files (REL-07): `PRIVATE_FILES_DISK=s3` (Supabase Storage, private bucket) is set in `render.yaml`;
+enter `AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY` and `AWS_BUCKET` on each service. With `local`, files
+uploaded on the web container would be invisible to the worker and the scheduler and lost on every deploy.
+Exception: the free-plan setup of section 3.3 runs a single API container (no worker, no scheduler process), so
+`local` "works" there, but files are still lost on every deploy/restart; use `s3` as soon as the bucket exists.
 
 Free-plan note: free web services sleep after inactivity and workers are not free; the scheduler and
 reminders need an always-on paid instance (Starter) for meaningful tests.
@@ -149,4 +159,20 @@ For tests on Render's free plan (owner decision; production will move to the com
 - Scheduler: an external cron service (e.g. cron-job.org, free) calls `POST /api/ops/scheduler-tick` every
   minute with header `X-Scheduler-Token: <SCHEDULER_TICK_TOKEN>`. The endpoint runs `schedule:run` once; every
   task is idempotent and catches up, so missed or duplicate ticks are safe. Without `SCHEDULER_TICK_TOKEN` the
-  endpoint answers 404. The per-minute call also keeps the free service and the free Supabase project awake.
+  endpoint answers 404; any other method, a wrong token and more than 10 calls per minute from one IP also get 404
+(REL-09). The per-minute call also keeps the free service and the free Supabase project awake.
+
+### 3.4 Client IP and URL check (REL-05) – run after the first deploy and after any infrastructure change
+1. From a known address, send two requests with a forged header:
+   `curl -s -o /dev/null -X POST https://<api-host>/api/auth/login -H 'X-Forwarded-For: 203.0.113.77' -H 'Content-Type: application/json' -d '{"email":"nobody@example.com","password":"x","device_id":"check-ip-000000000001"}'`
+2. In `activity_logs` (latest `auth.login_failed` rows), the IP must be **your real public address**, never
+   `203.0.113.77`. If it is the forged value, the proxy overwrites nothing: set `TRUSTED_PROXIES` to an empty value
+   and open a question. If it is an address of Render/Cloudflare shared by everyone, a second proxy hop exists:
+   list its ranges in `TRUSTED_PROXIES` (with `REMOTE_ADDR`).
+3. `curl -s -H 'X-Forwarded-Host: evil.example' https://<api-host>/api/health` changes nothing; signed file links
+   always start with `APP_URL`.
+4. Record the date and result here.
+
+### 3.5 Request body limit (REL-06)
+`MAX_REQUEST_BODY_KB` (default 128) refuses any non-multipart body above that size with 413 before it is parsed.
+Uploads (weekly PDF, profile photo) are multipart and keep their own limits (settings + `post_max_size`).

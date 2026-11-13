@@ -164,3 +164,23 @@ it('filters the history to the admin sections', function () {
     $res = $this->getJson('/api/admin/settings/history')->assertOk()->assertJsonPath('sections', ['security']);
     expect(collect($res->json('data'))->pluck('key')->all())->toBe(['otp_length']);
 });
+
+it('REL-13: refuses a check-in opening time that is not before the lateness time', function (array $values) {
+    Sanctum::actingAs(User::factory()->superAdmin()->create());
+
+    $this->putJson('/api/admin/settings', ['values' => $values])->assertUnprocessable()->assertJsonValidationErrors(['values.checkin_opens_at']);
+    app()->forgetScopedInstances();
+    expect(app(SettingsService::class)->string('checkin_opens_at'))->toBe('06:00')
+        ->and(app(SettingsService::class)->string('late_after'))->toBe('08:10');
+})->with([
+    'opens after late' => [['checkin_opens_at' => '12:00', 'late_after' => '08:10']],
+    'equal' => [['checkin_opens_at' => '08:10']],
+    'late moved before opening' => [['late_after' => '05:30']],
+]);
+
+it('REL-13: accepts a consistent pair, alone or together', function () {
+    Sanctum::actingAs(User::factory()->superAdmin()->create());
+
+    $this->putJson('/api/admin/settings', ['values' => ['checkin_opens_at' => '07:00']])->assertOk();
+    $this->putJson('/api/admin/settings', ['values' => ['checkin_opens_at' => '09:00', 'late_after' => '09:30']])->assertOk();
+});

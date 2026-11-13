@@ -10,6 +10,7 @@ use App\Models\ActivityLog;
 use App\Models\LoginAttempt;
 use App\Models\User;
 use App\Services\AccountService;
+use App\Settings\SettingsService;
 use Illuminate\Support\Facades\Hash;
 use Illuminate\Support\Facades\Mail;
 
@@ -201,6 +202,7 @@ it('sets admin permissions (super admin only) and logs added/removed tiers', fun
 
 it('promotes an employee to admin and an admin to super admin', function () {
     actingDevice($this, $this->sa)->putJson("/api/admin/users/{$this->employee->id}/role", ['role' => 'admin'])->assertOk()->assertJsonPath('data.role', 'admin');
+    actingDevice($this, $this->sa)->putJson("/api/admin/users/{$this->employee->id}/permissions", ['permissions' => ['promote_to_super_admin']])->assertOk();
     actingDevice($this, $this->sa)->putJson("/api/admin/users/{$this->employee->id}/role", ['role' => 'super_admin'])->assertOk();
 
     $promoted = $this->employee->refresh();
@@ -224,4 +226,32 @@ it('lists the permission catalogue to super admins only', function () {
 it('never returns secrets in user payloads', function () {
     $json = json_encode(actingDevice($this, $this->sa)->getJson('/api/admin/users')->json());
     expect($json)->not->toContain('"password"')->not->toContain('$2y$')->not->toContain('remember_token');
+});
+
+it('REL-08: only an admin holding the promotion tier can become super admin', function () {
+    $admin = User::factory()->admin(Permission::ViewReports)->create();
+
+    actingDevice($this, $this->sa)->putJson("/api/admin/users/{$this->employee->id}/role", ['role' => 'super_admin'])
+        ->assertStatus(422)->assertJsonPath('code', 'not_eligible_for_super_admin');
+    actingDevice($this, $this->sa)->putJson("/api/admin/users/{$admin->id}/role", ['role' => 'super_admin'])
+        ->assertStatus(422)->assertJsonPath('code', 'not_eligible_for_super_admin');
+    expect($admin->refresh()->role)->toBe(Role::Admin)->and($this->employee->refresh()->role)->toBe(Role::Employee);
+
+    $eligible = User::factory()->admin(Permission::PromoteToSuperAdmin)->create();
+    actingDevice($this, $this->sa)->putJson("/api/admin/users/{$eligible->id}/role", ['role' => 'super_admin'])->assertOk();
+    expect($eligible->refresh()->role)->toBe(Role::SuperAdmin);
+});
+
+it('REL-08: the promotion tier requirement can be switched off by a super admin setting', function () {
+    app(SettingsService::class)->set(['super_admin_promotion_requires_tier' => false]);
+
+    actingDevice($this, $this->sa)->putJson("/api/admin/users/{$this->employee->id}/role", ['role' => 'super_admin'])->assertOk();
+});
+
+it('REL-10: refuses user creation to a caller without the right before validating the body', function () {
+    actingDevice($this, $this->employee)->postJson('/api/admin/users', [])->assertForbidden()->assertJsonMissingPath('errors');
+    $admin = User::factory()->admin(Permission::CreateUsers)->create();
+    actingDevice($this, $admin)->postJson('/api/admin/users', ['role' => 'admin'])->assertForbidden()->assertJsonMissingPath('errors');
+    actingDevice($this, $admin)->postJson('/api/admin/users', ['role' => ['x']])->assertUnprocessable();
+    actingDevice($this, $admin)->postJson('/api/admin/users', [])->assertUnprocessable()->assertJsonValidationErrors(['email']);
 });

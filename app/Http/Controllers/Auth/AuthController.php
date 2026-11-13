@@ -15,6 +15,7 @@ use App\Services\Auth\LoginService;
 use App\Services\Auth\RecoveryService;
 use App\Services\Auth\SuperAdminCodeService;
 use App\Settings\SettingsService;
+use App\Support\SignupText;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Validation\Rule;
@@ -34,11 +35,23 @@ class AuthController
 
         $data = $request->validate([
             'email' => ['required', 'string', 'email:rfc', 'max:254'],
-            'first_name' => ['required', 'string', 'max:100'],
-            'last_name' => ['required', 'string', 'max:100'],
+            'first_name' => ['required', 'string', 'max:100', 'regex:'.SignupText::NAME_PATTERN, 'not_regex:'.SignupText::LINK_PATTERN],
+            'last_name' => ['required', 'string', 'max:100', 'regex:'.SignupText::NAME_PATTERN, 'not_regex:'.SignupText::LINK_PATTERN],
             'employee_type' => ['required', Rule::in(['intern', 'employee'])],
-            'job_title' => ['required', 'string', 'max:150'],
+            'job_title' => ['required', 'string', 'max:150', 'regex:'.SignupText::JOB_TITLE_PATTERN, 'not_regex:'.SignupText::LINK_PATTERN],
+        ], [
+            'first_name.regex' => 'Use letters, spaces, hyphens, apostrophes and dots only.',
+            'first_name.not_regex' => 'Use letters, spaces, hyphens, apostrophes and dots only (a dot must be followed by a space).',
+            'last_name.regex' => 'Use letters, spaces, hyphens, apostrophes and dots only.',
+            'last_name.not_regex' => 'Use letters, spaces, hyphens, apostrophes and dots only (a dot must be followed by a space).',
+            'job_title.regex' => 'Use letters, digits, spaces and simple punctuation only.',
+            'job_title.not_regex' => 'Links are not allowed in the job title.',
         ]);
+        // REL-03: global cap, whatever the number of source IPs (counted once the request is well formed).
+        $globalKey = 'signup-global';
+        if (! AtomicLimiter::hit($globalKey, $settings->int('signup_requests_global_per_hour'), 3600)) {
+            $this->tooManySignups(AtomicLimiter::availableIn($globalKey));
+        }
         $emailKey = 'signup-email:'.LockoutService::accountKey($data['email']);
         if (! AtomicLimiter::hit($emailKey, $settings->int('signup_requests_per_email_per_hour'), 3600)) {
             $this->tooManySignups(AtomicLimiter::availableIn($emailKey));
@@ -97,8 +110,11 @@ class AuthController
 
     public function requestRecovery(Request $request, SuperAdminCodeService $codes): JsonResponse
     {
-        $data = $request->validate(['email' => ['required', 'string', 'max:254']]);
-        $codes->requestRecovery($data['email'], (string) $request->ip());
+        $data = $request->validate([
+            'email' => ['required', 'string', 'max:254'],
+            'device_id' => ['nullable', 'string', 'max:200'],
+        ]);
+        $codes->requestRecovery($data['email'], (string) $request->ip(), $data['device_id'] ?? null);
 
         return response()->json(['message' => 'If a recovery link can be sent for this email, you will receive it shortly.'], 202);
     }

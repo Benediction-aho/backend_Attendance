@@ -28,7 +28,8 @@ use App\Http\Middleware\EnsureEmployee;
 use Illuminate\Support\Facades\Route;
 
 Route::get('/health', HealthController::class)->name('health');
-Route::post('/ops/scheduler-tick', SchedulerTickController::class)->middleware('throttle:10,1')->name('ops.scheduler-tick');
+// REL-09: any method, own throttle inside the controller: every refusal is a 404, like an unknown route.
+Route::any('/ops/scheduler-tick', SchedulerTickController::class)->withoutMiddleware('throttle:api')->name('ops.scheduler-tick');
 
 // Signed, short-lived links to private files (local disk only; S3 uses pre-signed URLs).
 Route::get('/files/{path}', [FileController::class, 'show'])->where('path', '[A-Za-z0-9/_.-]+')->name('files.show');

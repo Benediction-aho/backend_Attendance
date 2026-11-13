@@ -31,22 +31,52 @@ class SuperAdminCodeService
         private readonly RecoveryService $recovery,
     ) {}
 
-    /** Recovery link request: sent only to a super admin whose sign-in is locked. Same answer otherwise. */
-    public function requestRecovery(string $email, string $ip): void
+    /**
+     * Recovery link request: sent only to a super admin whose sign-in is locked. Same answer (and similar cost) otherwise.
+     *
+     * REL-02: requests are counted per (account, IP) and per IP, so a stranger cannot use up the owner's quota from
+     * another address. Links actually emailed are capped per account (`recovery_links_sent_per_hour`); the cap only
+     * counts real sends. A request from a device the super admin has already signed in on is not held back by that cap,
+     * so an attacker can never starve the owner. Contention is logged as critical.
+     */
+    public function requestRecovery(string $email, string $ip, ?string $deviceId = null): void
     {
         $perHour = $this->settings->int('otp_requests_per_hour');
-        $accountKey = 'recovery:'.LockoutService::accountKey($email);
+        $accountKey = 'recovery:'.LockoutService::accountKey($email).':'.hash('sha256', $ip);
         $ipKey = 'otp-ip:'.$ip;
         $withinAccount = AtomicLimiter::hit($accountKey, $perHour, 3600);
         $withinIp = AtomicLimiter::hit($ipKey, $perHour * 4, 3600);
         if (! $withinAccount || ! $withinIp) {
+            Hash::make('timing-equaliser');
+
             return;
         }
 
         $user = User::findByEmail($email);
-        if ($user !== null && $user->isSuperAdmin() && $this->lockout->hasLockOrBlock($user)) {
-            $this->recovery->send($user);
+        if ($user === null || ! $user->isSuperAdmin() || ! $this->lockout->hasLockOrBlock($user)) {
+            Hash::make('timing-equaliser');
+
+            return;
         }
+
+        $sentKey = 'recovery-sent:'.$user->id;
+        if (! AtomicLimiter::hit($sentKey, $this->settings->int('recovery_links_sent_per_hour'), 3600)) {
+            if (! $this->isKnownDevice($user, $deviceId)) {
+                $this->logger->security('auth.recovery_contention', 'Recovery link not sent: too many links requested for this account in the last hour', LogLevel::Critical, $user);
+                Hash::make('timing-equaliser');
+
+                return;
+            }
+            $this->logger->security('auth.recovery_contention', 'Recovery link cap reached: link sent anyway to a known device of the account', LogLevel::Critical, $user);
+        }
+
+        $this->recovery->send($user);
+    }
+
+    private function isKnownDevice(User $user, ?string $deviceId): bool
+    {
+        return $deviceId !== null && $deviceId !== '' && $user->devices()
+            ->where('identifier_hash', Device::hashIdentifier($deviceId))->whereNotNull('first_login_at')->exists();
     }
 
     /** Keyed lookup of a one-time code (HMAC with the app key): finds the code without trying every hash. */
@@ -91,8 +121,7 @@ class SuperAdminCodeService
         $minutes = $this->settings->int('otp_ttl_minutes');
         $maxActive = $this->settings->int('otp_max_active_codes');
 
-        $knownDevice = $deviceId !== null && $deviceId !== '' && $user->devices()
-            ->where('identifier_hash', Device::hashIdentifier($deviceId))->whereNotNull('first_login_at')->exists();
+        $knownDevice = $this->isKnownDevice($user, $deviceId);
         $evicted = false;
 
         $created = DB::transaction(function () use ($user, $code, $minutes, $ip, $maxActive, $knownDevice, &$evicted) {
@@ -130,6 +159,8 @@ class SuperAdminCodeService
         });
 
         if (! $created) {
+            // REL-01: same cost as the paths that hash a new code, so timing never tells a super admin apart.
+            Hash::make('timing-equaliser');
             $this->logger->security('auth.login_code_throttled', 'One-time code request refused: too many valid codes', LogLevel::Warning, $user);
 
             return;

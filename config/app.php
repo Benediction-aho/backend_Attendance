@@ -59,6 +59,9 @@ return [
     // Comma-separated proxy IPs/CIDRs, or "*" behind a trusted load balancer. Empty = trust none.
     'trusted_proxies' => env('TRUSTED_PROXIES', ''),
 
+    // REL-06: largest non-multipart request body accepted (KB); uploads keep their own per-route limits.
+    'max_body_kb' => (int) env('MAX_REQUEST_BODY_KB', 128),
+
     /*
     |--------------------------------------------------------------------------
     | Application Timezone

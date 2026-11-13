@@ -15,6 +15,7 @@ use Illuminate\Support\Carbon;
 use Illuminate\Support\Facades\Gate;
 use Illuminate\Support\Facades\RateLimiter;
 use Illuminate\Support\Facades\Route;
+use Illuminate\Support\Facades\URL;
 use Illuminate\Support\ServiceProvider;
 use Laravel\Sanctum\PersonalAccessToken;
 use Laravel\Sanctum\Sanctum;
@@ -37,6 +38,13 @@ class AppServiceProvider extends ServiceProvider
      */
     public function boot(): void
     {
+        // REL-05: generated URLs (signed file links, ...) always use APP_URL, never the request's Host header.
+        $root = (string) config('app.url');
+        if ($root !== '') {
+            URL::forceRootUrl($root);
+            URL::forceScheme(str_starts_with($root, 'https://') ? 'https' : 'http');
+        }
+
         // Numeric ids only (anything else is a plain 404, never a database error).
         Route::pattern('user', '[0-9]{1,18}');
 

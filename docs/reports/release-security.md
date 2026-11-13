@@ -87,22 +87,37 @@ Scripts added: `tests/security/release_fixtures.sh` (users of every role/tier th
 
 | ID | Title | Severity | Status |
 |---|---|---|---|
-| REL-01 | Super admin enumeration by timing (`/auth/super-admin/code`) | Medium | Open |
-| REL-02 | Recovery quota exhaustible by anyone | Medium | Open |
-| REL-03 | Sign-up flood e-mails all approvers; text injection | Medium | Open |
-| REL-04 | No security headers on the frontend (clickjacking, no CSP) | Medium | Open |
-| REL-05 | `TRUSTED_PROXIES=*` trusts all forwarded headers (verify on Render) | Medium | Open |
-| REL-06 | Large JSON bodies parsed before throttling | Low | Open |
-| REL-07 | `PRIVATE_FILES_DISK` missing from `render.yaml` | Low | Open |
-| REL-08 | `promote_to_super_admin` not enforced | Info | Open |
-| REL-09 | Scheduler endpoint existence (405/429) | Info | Open |
-| REL-10 | Validation before authorization on user creation | Info | Open |
-| REL-11 | Dev-only npm advisories | Info | Open |
-| REL-12 | Tailwind version comment | Info | Open |
-| REL-13 | `checkin_opens_at` vs `late_after` consistency | Info | Open |
+| REL-01 | Super admin enumeration by timing (`/auth/super-admin/code`) | Medium | Fixed (backend) |
+| REL-02 | Recovery quota exhaustible by anyone | Medium | Fixed (backend) |
+| REL-03 | Sign-up flood e-mails all approvers; text injection | Medium | Fixed (backend) |
+| REL-04 | No security headers on the frontend (clickjacking, no CSP) | Medium | Open (frontend) |
+| REL-05 | `TRUSTED_PROXIES=*` trusts all forwarded headers (verify on Render) | Medium | Fixed (backend) |
+| REL-06 | Large JSON bodies parsed before throttling | Low | Fixed (backend) |
+| REL-07 | `PRIVATE_FILES_DISK` missing from `render.yaml` | Low | Fixed (backend) |
+| REL-08 | `promote_to_super_admin` not enforced | Info | Fixed (backend) |
+| REL-09 | Scheduler endpoint existence (405/429) | Info | Fixed (backend) |
+| REL-10 | Validation before authorization on user creation | Info | Fixed (backend) |
+| REL-11 | Dev-only npm advisories | Info | Open (frontend) |
+| REL-12 | Tailwind version comment | Info | Open (frontend) |
+| REL-13 | `checkin_opens_at` vs `late_after` consistency | Info | Fixed (backend) |
 | REL-14 | Live test environment not reachable from sandbox | Info | Blocked |
 
 Critical: 0 · High: 0 · Medium: 5 · Low: 2 · Info: 7. Previously open P0-01 (legacy v1 password in git history, owner action) still applies.
+
+## Fixes applied (attendance-backend, 2026-11-13)
+
+All backend findings fixed with Pest regression tests; full suite green, PHPStan clean. REL-04, REL-11, REL-12 belong to the frontend repository; REL-14 still has to be run from an allowed network.
+
+- **REL-01** – `SuperAdminCodeService::request()`: the "too many valid codes" path now runs the same `Hash::make('timing-equaliser')`; `requestRecovery()` also costs exactly one hash on every path (throttled, unknown, not locked, cap reached, link sent). Tests: counting hasher – exactly 1 make for unknown e-mail, employee, super admin, and super admin after the active-code cap (`SuperAdminLoginTest` "REL-01 …").
+- **REL-02** – Recovery requests counted per (account, IP) + per IP (key `recovery:<account>:<sha256(ip)>`); new setting `recovery_links_sent_per_hour` (3) caps links actually e-mailed per account, incremented only when a link is due to be sent; a request carrying the `device_id` of a known device of the super admin bypasses the cap; contention logged as `auth.recovery_contention` (critical). `POST /auth/recovery` accepts optional `device_id`. Tests: 20 IPs × 4 requests on a locked super admin → 3 e-mails + critical log; known device still gets a link, unknown device does not; requests made while not locked consume nothing.
+- **REL-03** – Global cap `signup_requests_global_per_hour` (200, counted once the request is well formed); approver e-mails bounded by `signup_alert_emails_per_hour` (5): the next request triggers one summary e-mail ("Many new account requests"), the rest are in-app notifications only; names restricted to letters/spaces/`-'.` and job title to letters/digits/simple punctuation, anything link-like (`://`, `www.`, a dot glued to a word, `@`, brackets, `<>`) refused with 422; text is also neutralised (`App\Support\SignupText::neutralize`) before it is put in an e-mail; pending requests older than `pending_signup_retention_days` (30) are removed by the hourly purge (same as a rejection: status deleted + soft delete, e-mail free again, `user.signup_expired` logged). Tests: global cap across IPs + reset after an hour; 6 sign-ups with limit 2 → 2 e-mails, 1 summary, 4 in-app only; 9 injection payloads refused; real names (accents, apostrophes, `J. `) accepted; purge (idempotent, active accounts untouched). Captcha not added (question Q10 in PROGRESS.md).
+- **REL-05** – Root cause found while fixing: stock Laravel `TrustProxies` turns `*` into "trust 0.0.0.0/0", so the **left-most** (client-chosen) `X-Forwarded-For` entry became the client IP even behind an appending proxy. `App\Http\Middleware\TrustProxies` now maps `*` to `REMOTE_ADDR` (the immediate peer only): the client IP is the entry Render's proxy appends. Trusted headers restricted to `X-Forwarded-For | X-Forwarded-Proto`; `URL::forceRootUrl(APP_URL)` + scheme forced from APP_URL. `render.yaml` comment and `docs/DEPLOYMENT.md` §3.2 + new §3.4 (verification procedure on Render, what to do if a second hop such as a CDN exists). Tests: `X-Forwarded-For: 203.0.113.1, 198.51.100.44` from proxy 10.1.2.3 → client IP 198.51.100.44; forged `X-Forwarded-Host/Proto/Port/Prefix` never appear in a signed URL. Still to verify live (REL-14).
+- **REL-06** – New first global middleware `LimitRequestBody` (after `SecurityHeaders`, before CORS/proxies/control-character scan/throttle): non-multipart body with `Content-Length` (or measured raw size when absent) above `MAX_REQUEST_BODY_KB` (config `app.max_body_kb`, default 128 KB – largest legitimate field is 16 384 characters) → 413 `payload_too_large` without decoding. Multipart uploads keep their per-route limits. Tests: 70 KB JSON to `/auth/login` → 413 with and without Content-Length, no login attempt recorded; normal login still 401; multipart photo upload with a 5 MB Content-Length is not refused by the middleware.
+- **REL-07** – `render.yaml`: `PRIVATE_FILES_DISK=s3`, `AWS_DEFAULT_REGION`, `AWS_ENDPOINT`, `AWS_USE_PATH_STYLE_ENDPOINT` in the shared group, `AWS_ACCESS_KEY_ID`/`AWS_SECRET_ACCESS_KEY`/`AWS_BUCKET` as `sync: false` on web, worker and scheduler. `DEPLOYMENT.md` note: the free-plan setup (single API container, §3.3) technically works with `local` but loses files on every deploy; use `s3` as soon as the bucket exists. No boot assertion (it would break the single-container free plan and local development).
+- **REL-08** – Enforced: promotion to super admin requires the target to be an admin holding `promote_to_super_admin` → otherwise 422 `not_eligible_for_super_admin`. Configurable by a super admin only (`super_admin_promotion_requires_tier`, default true). Tests: employee and tier-less admin refused (role unchanged), eligible admin promoted, setting off → allowed.
+- **REL-09** – Route is `Route::any` without the general `throttle:api`; the controller answers 404 for any method other than POST, when disabled, for a wrong token and once its own per-IP limit (10/min) is reached – no 405, no 429. Tests: GET/PUT/PATCH/DELETE → same JSON as an unknown route; 15 bad calls then a valid token → 404, scheduler not run; 40 calls with a low `api_requests_per_minute` → always 404.
+- **REL-10** – `POST /admin/users` authorizes (role read from input, default employee) before validating. Tests: employee with empty body → 403 without `errors`; `create_users` admin asking for an admin → 403; valid caller with empty body → 422.
+- **REL-13** – `PUT /admin/settings` refuses `checkin_opens_at >= late_after` (each value taken from the request or from the value effective at the change date) with 422 on `values.checkin_opens_at`. Tests: opens after late, equal, `late_after` moved before opening → 422 and nothing stored; consistent changes accepted.
 
 ## Tests passed
 

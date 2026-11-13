@@ -4,6 +4,7 @@ use App\Enums\LogLevel;
 use App\Enums\LogType;
 use App\Exceptions\ApiExceptionRenderer;
 use App\Http\Middleware\EnsureCheckedInToday;
+use App\Http\Middleware\LimitRequestBody;
 use App\Http\Middleware\RejectControlCharacters;
 use App\Http\Middleware\SecurityHeaders;
 use App\Http\Middleware\TrustProxies;
@@ -25,6 +26,8 @@ return Application::configure(basePath: dirname(__DIR__))
         commands: __DIR__.'/../routes/console.php',
     )
     ->withMiddleware(function (Middleware $middleware): void {
+        // REL-06: oversized bodies are refused before any parsing (SecurityHeaders still wraps the answer).
+        $middleware->prepend(LimitRequestBody::class);
         $middleware->prepend(SecurityHeaders::class);
         $middleware->replace(Illuminate\Http\Middleware\TrustProxies::class, TrustProxies::class);
         $middleware->append(RejectControlCharacters::class);

@@ -7,6 +7,8 @@ use App\Models\ActivityLog;
 use App\Models\User;
 use App\Notifications\StaffAlert;
 use App\Services\AtomicLimiter;
+use App\Settings\SettingsService;
+use App\Support\SignupText;
 use Illuminate\Support\Carbon;
 use Illuminate\Support\Facades\Hash;
 use Illuminate\Support\Facades\Mail;
@@ -182,4 +184,88 @@ it('runs the full journey: sign-up, approval, login with code, forced change, th
     $this->guest()->postJson('/api/auth/login', loginPayload('ama.mensah@example.com', $code, 'phone-of-ama-00000001'))->assertStatus(401);
     $this->postJson('/api/auth/login', loginPayload('ama.mensah@example.com', 'Kente-2026-gold', 'phone-of-ama-00000001'))
         ->assertOk()->assertJsonPath('must_change_password', false);
+});
+
+it('REL-03: caps sign-ups globally per hour, whatever the source IP', function () {
+    app(SettingsService::class)->set(['signup_requests_global_per_hour' => 3]);
+    for ($i = 1; $i <= 3; $i++) {
+        $this->withServerVariables(['REMOTE_ADDR' => '203.0.113.'.$i])
+            ->postJson('/api/auth/register', signupPayload(['email' => "p{$i}@example.com"]))->assertStatus(202);
+    }
+    $this->withServerVariables(['REMOTE_ADDR' => '203.0.113.99'])
+        ->postJson('/api/auth/register', signupPayload(['email' => 'p4@example.com']))->assertStatus(429)->assertJsonPath('code', 'too_many_requests');
+    expect(User::query()->where('status', 'pending')->count())->toBe(3);
+
+    Carbon::setTestNow(Carbon::now()->addMinutes(61));
+    $this->withServerVariables(['REMOTE_ADDR' => '203.0.113.99'])
+        ->postJson('/api/auth/register', signupPayload(['email' => 'p4@example.com']))->assertStatus(202);
+});
+
+it('REL-03: e-mails approvers for the first requests of the hour, then one summary, then in-app only', function () {
+    Notification::fake();
+    app(SettingsService::class)->set(['signup_alert_emails_per_hour' => 2]);
+    $approver = User::factory()->admin(Permission::ApproveUsers)->create();
+
+    for ($i = 1; $i <= 6; $i++) {
+        $this->withServerVariables(['REMOTE_ADDR' => '203.0.113.'.$i])
+            ->postJson('/api/auth/register', signupPayload(['email' => "p{$i}@example.com"]))->assertStatus(202);
+    }
+
+    $mailed = 0;
+    $inAppOnly = 0;
+    Notification::assertSentTo($approver, StaffAlert::class, function ($n, $channels) use (&$mailed, &$inAppOnly) {
+        if ($n->kind === 'signup_request') {
+            in_array('mail', $channels, true) ? $mailed++ : $inAppOnly++;
+        }
+
+        return true;
+    });
+    expect($mailed)->toBe(2)->and($inAppOnly)->toBe(4);
+    Notification::assertSentToTimes($approver, StaffAlert::class, 7);
+    Notification::assertSentTo($approver, StaffAlert::class, fn ($n, $channels) => $n->kind === 'signup_request_digest' && in_array('mail', $channels, true));
+});
+
+it('REL-03: refuses links and markup in names and job title', function (array $override, string $field) {
+    $this->postJson('/api/auth/register', signupPayload($override))->assertUnprocessable()->assertJsonValidationErrors([$field]);
+    expect(User::query()->count())->toBe(0);
+})->with([
+    'markdown link' => [['first_name' => '[URGENT: verify your account](https://evil.example/login)'], 'first_name'],
+    'url in job title' => [['job_title' => 'Your password expires, sign in at https://evil.example'], 'job_title'],
+    'bare domain' => [['job_title' => 'Visit evil.example now'], 'job_title'],
+    'www' => [['last_name' => 'www.example'], 'last_name'],
+    'www in title' => [['job_title' => 'Officer www.example'], 'job_title'],
+    'domain in name' => [['last_name' => 'Mensah.evil'], 'last_name'],
+    'email in job title' => [['job_title' => 'write to x@evil.example'], 'job_title'],
+    'html' => [['job_title' => '<a href=x>Sales</a>'], 'job_title'],
+    'digits in name' => [['first_name' => 'Ama2'], 'first_name'],
+]);
+
+it('REL-03: accepts real names and job titles', function () {
+    $this->postJson('/api/auth/register', signupPayload([
+        'first_name' => "Kwame-Akwasi O'Neil", 'last_name' => 'J. Ntiamoah Ébo', 'job_title' => 'Sales & Marketing Officer (Field), Grade 2',
+    ]))->assertStatus(202);
+});
+
+it('REL-03: neutralises any link-like text before it reaches an e-mail', function () {
+    expect(SignupText::neutralize('see https://evil.example/login or www.evil.example [x](y) a@b.c'))
+        ->not->toContain('://')->not->toContain('www.')->not->toContain('evil.example')->not->toContain('[')->not->toContain('@');
+});
+
+it('REL-03: removes sign-up requests left unanswered beyond the configured retention', function () {
+    Notification::fake();
+    app(SettingsService::class)->set(['pending_signup_retention_days' => 30]);
+    $old = User::factory()->create(['status' => UserStatus::Pending, 'created_at' => Carbon::now()->subDays(31)]);
+    $recent = User::factory()->create(['status' => UserStatus::Pending, 'created_at' => Carbon::now()->subDays(29)]);
+    $activeOld = User::factory()->create(['created_at' => Carbon::now()->subDays(400)]);
+
+    $this->artisan('attendance:purge-logs')->assertSuccessful();
+    $this->artisan('attendance:purge-logs')->assertSuccessful();
+
+    expect(User::query()->find($old->id))->toBeNull()
+        ->and(User::withTrashed()->find($old->id)->status)->toBe(UserStatus::Deleted)
+        ->and(User::query()->find($recent->id))->not->toBeNull()
+        ->and(User::query()->find($activeOld->id))->not->toBeNull()
+        ->and(ActivityLog::query()->where('event', 'user.signup_expired')->count())->toBe(1);
+    // The email is free again.
+    $this->postJson('/api/auth/register', signupPayload(['email' => $old->email]))->assertStatus(202);
 });

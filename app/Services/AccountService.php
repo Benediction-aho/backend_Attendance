@@ -16,6 +16,8 @@ use App\Notifications\StaffAlert;
 use App\Services\Auth\IdentificationCodeService;
 use App\Services\Auth\LockoutService;
 use App\Services\Auth\SessionRevoker;
+use App\Settings\SettingsService;
+use App\Support\SignupText;
 use Illuminate\Database\QueryException;
 use Illuminate\Support\Carbon;
 use Illuminate\Support\Facades\DB;
@@ -33,6 +35,7 @@ class AccountService
         private readonly ActivityLogger $logger,
         private readonly SuperAdminGuard $guard,
         private readonly LockoutService $lockout,
+        private readonly SettingsService $settings,
     ) {}
 
     /**
@@ -64,16 +67,68 @@ class AccountService
 
         $this->logger->log('user.signup_requested', 'Sign-up request received', user: $user, actor: $user);
 
+        $this->alertApprovers($user);
+
+        return $user;
+    }
+
+    /**
+     * REL-03: every approver gets an in-app notification; e-mails are bounded whatever the number of requests:
+     * the first `signup_alert_emails_per_hour` requests of the hour are e-mailed one by one, the next one triggers a
+     * single summary e-mail, the rest are in-app only. Sign-up text is neutralised so it can never become a link.
+     */
+    private function alertApprovers(User $user): void
+    {
         $approvers = User::query()->holdingPermission(Permission::ApproveUsers)->get();
+        $perHour = $this->settings->int('signup_alert_emails_per_hour');
+        $slot = AtomicLimiter::increment('signup-alert-mail', 3600);
+
+        $name = SignupText::neutralize($user->fullName());
+        $jobTitle = SignupText::neutralize((string) $user->job_title);
         Notification::send($approvers, new StaffAlert(
             'signup_request',
             'New account request',
-            "{$user->fullName()} ({$user->email}, {$user->job_title}) wants to create an account.",
+            "{$name} ({$user->email}, {$jobTitle}) wants to create an account.",
             ['user_id' => $user->id],
+            withEmail: $slot <= $perHour,
             path: '/admin/users/'.$user->id,
         ));
 
-        return $user;
+        if ($slot === $perHour + 1) {
+            $this->logger->security('auth.signup_alert_digest', 'Many sign-up requests this hour: further alerts are in-app only', LogLevel::Warning);
+            Notification::send($approvers, new StaffAlert(
+                'signup_request_digest',
+                'Many new account requests',
+                "More than {$perHour} account requests were received in the last hour. Further requests this hour are listed in the app only. Please review the pending requests.",
+                [],
+                path: '/admin/users',
+            ));
+        }
+    }
+
+    /** REL-03: removes sign-up requests nobody answered within `pending_signup_retention_days`. */
+    public function purgeStalePending(): int
+    {
+        $cutoff = Carbon::now()->subDays($this->settings->int('pending_signup_retention_days'));
+        $count = 0;
+        User::query()->where('status', UserStatus::Pending->value)->where('created_at', '<', $cutoff)
+            ->orderBy('id')->each(function (User $user) use (&$count) {
+                DB::transaction(function () use ($user, &$count) {
+                    $locked = User::query()->whereKey($user->id)->lockForUpdate()->first();
+                    if ($locked === null || $locked->status !== UserStatus::Pending) {
+                        return;
+                    }
+                    $locked->status = UserStatus::Deleted;
+                    $locked->save();
+                    $locked->delete();
+                    $count++;
+                });
+            });
+        if ($count > 0) {
+            $this->logger->log('user.signup_expired', "Unanswered sign-up requests removed: {$count}", LogType::Action, LogLevel::Info, context: ['count' => $count]);
+        }
+
+        return $count;
     }
 
     public function approve(User $user, User $by): User
@@ -219,6 +274,11 @@ class AccountService
         }
         if (! $user->isActive()) {
             throw new ApiError(409, 'Only an active account can change role.', 'not_active');
+        }
+        // REL-08: the "Eligible for promotion to super admin" tier is enforced (setting, on by default).
+        if ($role === Role::SuperAdmin && $this->settings->bool('super_admin_promotion_requires_tier')
+            && ! ($user->role === Role::Admin && $user->hasPermission(Permission::PromoteToSuperAdmin))) {
+            throw new ApiError(422, 'Only an admin marked as eligible for promotion to super admin can become super admin.', 'not_eligible_for_super_admin');
         }
         $old = $user->role;
         DB::transaction(function () use ($user, $role) {
