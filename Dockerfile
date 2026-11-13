@@ -16,6 +16,12 @@ RUN composer dump-autoload --no-dev --optimize --classmap-authoritative --no-scr
 FROM ${PHP_IMAGE} AS runtime
 
 RUN install-php-extensions pdo_pgsql pgsql intl bcmath zip opcache pcntl gd \
+    && apt-get update && apt-get install -y --no-install-recommends libcap2-bin \
+    # The official image gives frankenphp the cap_net_bind_service file capability (to bind :80).
+    # Hosts that run containers with no-new-privileges (Render) refuse to exec such a binary
+    # ("Operation not permitted"). We listen on 8080, so the capability is not needed.
+    && setcap -r /usr/local/bin/frankenphp \
+    && apt-get purge -y libcap2-bin && apt-get autoremove -y \
     && rm -rf /var/lib/apt/lists/*
 
 COPY docker/php.ini /usr/local/etc/php/conf.d/zz-app.ini
