@@ -26,7 +26,8 @@ class MonthlyReportService
     ) {}
 
     /**
-     * Period of the report sent in $month (YYYY-MM): report day of the previous month → report day of $month, inclusive.
+     * Period of the report sent in $month (YYYY-MM): report day of the previous month → the day before the report day in $month,
+     * both inclusive (default 26 → 25), so consecutive reports never count a day twice.
      *
      * @return array{start: string, end: string}
      */
@@ -39,7 +40,7 @@ class MonthlyReportService
         $day = $this->settings->int('monthly_report_day', $end->copy()->setTime(12, 0));
         $start = $end->copy()->subMonthNoOverflow()->day($day);
 
-        return ['start' => $start->toDateString(), 'end' => $end->copy()->day($day)->toDateString()];
+        return ['start' => $start->toDateString(), 'end' => $end->copy()->day($day)->subDay()->toDateString()];
     }
 
     public static function fileName(string $month): string

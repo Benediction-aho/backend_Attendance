@@ -32,11 +32,14 @@ function client(User $u, string $date, string $service, int $qty = 1): void
     Client::query()->create(['user_id' => $u->id, 'work_date' => $date, 'name' => 'C', 'service' => $service, 'service_key' => Client::serviceKey($service), 'quantity' => $qty]);
 }
 
-it('covers the 26th of the previous month to the 26th of the current month inclusive', function () {
+it('covers the 26th of the previous month to the 25th of the current month inclusive (no day counted twice)', function () {
     $s = app(MonthlyReportService::class);
-    expect($s->period('2026-11'))->toBe(['start' => '2026-10-26', 'end' => '2026-11-26'])
-        ->and($s->period('2027-01'))->toBe(['start' => '2026-12-26', 'end' => '2027-01-26'])
-        ->and($s->period('2027-03'))->toBe(['start' => '2027-02-26', 'end' => '2027-03-26'])
+    expect($s->period('2026-11'))->toBe(['start' => '2026-10-26', 'end' => '2026-11-25'])
+        ->and($s->period('2027-01'))->toBe(['start' => '2026-12-26', 'end' => '2027-01-25'])
+        ->and($s->period('2027-03'))->toBe(['start' => '2027-02-26', 'end' => '2027-03-25'])
+        ->and($s->period('2026-12'))->toBe(['start' => '2026-11-26', 'end' => '2026-12-25'])
+        ->and($s->period('2028-03'))->toBe(['start' => '2028-02-26', 'end' => '2028-03-25'])
+        ->and($s->period('2027-02'))->toBe(['start' => '2027-01-26', 'end' => '2027-02-25'])
         ->and(MonthlyReportService::fileName('2026-10'))->toBe('Rapport_de_performance_Octobre_2026.pdf')
         ->and(MonthlyReportService::fileName('2026-08'))->toBe('Rapport_de_performance_Aout_2026.pdf');
 });
@@ -45,17 +48,17 @@ it('computes rows from known data (lateness, clients, services grouped)', functi
     $ngari = User::factory()->create(['first_name' => 'Ludmilla', 'last_name' => 'Ngari']);
     $fofana = User::factory()->create(['first_name' => 'Fosty', 'last_name' => 'Fofana']);
     $blocked = User::factory()->status(UserStatus::Blocked)->create(['first_name' => 'Old', 'last_name' => 'Aaa']);
-    foreach (['2026-10-25', '2026-10-26', '2026-11-02', '2026-11-26', '2026-11-27'] as $d) {
+    foreach (['2026-10-25', '2026-10-26', '2026-11-02', '2026-11-25', '2026-11-26'] as $d) {
         attend($ngari, $d, true);
     }
     attend($fofana, '2026-11-03', false);
     client($ngari, '2026-10-26', 'Residence Permit');
-    client($ngari, '2026-11-26', 'residence  permit', 1);
+    client($ngari, '2026-11-25', 'residence  permit', 1);  // 25th included
     client($ngari, '2026-11-10', 'Visa', 3);
     client($ngari, '2026-10-25', 'Visa', 9);   // before the period
-    client($ngari, '2026-11-27', 'Visa', 9);   // after the period
+    client($ngari, '2026-11-26', 'Visa', 9);   // 26th belongs to the next report
 
-    $rows = app(ReportBuilder::class)->monthlyRows('2026-10-26', '2026-11-26');
+    $rows = app(ReportBuilder::class)->monthlyRows('2026-10-26', '2026-11-25');
     expect(array_column($rows, 'employee'))->toBe(['FOFANA Fosty', 'NGARI Ludmilla'])
         ->and($rows[1]['late'])->toBe(3)->and($rows[1]['clients'])->toBe(3)
         ->and($rows[1]['services'])->toBe([
@@ -92,8 +95,8 @@ it('is sent on the 26th at 19:00 to super admins and selected admins only, once,
     app(SettingsService::class)->set(['monthly_report_recipient_ids' => [$selected->id]]);
     DB::table('settings')->where('key', 'monthly_report_recipient_ids')->update(['value' => json_encode([$selected->id, $blockedSelected->id, $employee->id])]);
     app(SettingsService::class)->flush();
-    attend($employee, '2026-11-26', true);
-    client($employee, '2026-11-26', 'Residence Permit', 2);
+    attend($employee, '2026-11-25', true);
+    client($employee, '2026-11-25', 'Residence Permit', 2);
 
     at('2026-11-26 18:59:59');
     $this->artisan('reports:monthly')->assertSuccessful();
@@ -142,5 +145,6 @@ it('uses the configured day and time', function () {
     at('2026-11-20 20:30');
     $this->artisan('reports:monthly')->assertSuccessful();
     Mail::assertQueuedCount(1);
-    expect(MonthlyReport::query()->where('month', '2026-11')->value('period_start')->toDateString())->toBe('2026-10-20');
+    expect(MonthlyReport::query()->where('month', '2026-11')->value('period_start')->toDateString())->toBe('2026-10-20')
+        ->and(MonthlyReport::query()->where('month', '2026-11')->value('period_end')->toDateString())->toBe('2026-11-19');
 });

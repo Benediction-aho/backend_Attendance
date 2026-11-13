@@ -5,6 +5,10 @@ Updated by the agents at the end of every work session.
 ## Current phase
 **Phase 5 – Tasks, clients and reports: backend done – ready for backend-security-tester** (focus below). Phase 4 backend: no open finding.
 
+### Monthly report period change (2026-11-13, owner decision)
+- Monthly report now covers the **26th of the previous month to the 25th of the current month, inclusive** (no day counted twice). `MonthlyReportService::period()` ends on (report day − 1); still driven by `monthly_report_day` (default 26), so the stored `period_start`/`period_end` and PDF/email labels follow. Generation stays on the 26th at `monthly_report_time` (19:00); catch-up unchanged. No API contract change.
+- Tests: boundaries (25th included, 26th excluded, previous 26th included), Dec→Jan rollover, February (incl. leap year), configured day 20 → 20 Oct–19 Nov. SPECS section 7 updated in both repos.
+
 ### Phase 5 UX fixes, server side (2026-11-13) – `frontend_Attendance/docs/reports/phase-5-ux.md`
 - **UX5-02**: "expected" in past runs uses the population of that date: `WorkCalendar::wasMemberOn` (approved_at, else created_at, on or before the date) + day status (leave/day off/holiday). Applied to the weekly close/catch-up, reminder and admin weekly page, the daily report catch-up, and the monthly rows (accounts that joined after the period are left out unless they have data). Limit: a deactivated account is judged by its current status (no status history yet).
 - **UX5-03**: the close email lists "Not received (N):" then one bullet per employee: `MENSAH Ama – Accountant`, plus `(email)` for recipients allowed to list accounts. The in-app notification body now says only "Not received: N." **For attendance-frontend**: `GET /admin/reports/weekly` adds `missing: EmployeeSummary[]` (additive) – render one per line, collapse after ~10.
@@ -194,6 +198,7 @@ See `README.md` (PHP + local PostgreSQL, or `docker compose up --build`).
 - Backend test host: Render approved by the owner (account to create); Render procedure ready in `docs/DEPLOYMENT.md` (backend repo).
 
 ## Blocked / questions for the owner
+- Monthly report time: the period now ends on the 25th, so the report could be sent on the morning of the 26th. The default stays 19:00 (setting `monthly_report_time`, editable by the super admin). Change the default?
 - (UX5-08) Monthly PDF: a disambiguator line (job title) is added under same-name employees only. Keep it, or follow the template strictly?
 Phase 3 business questions (safe default implemented, configurable where possible):
 - **Q10 – GPS accuracy rule**: the check-in is refused while the reported accuracy is worse than `checkin_max_accuracy_m` (50 m), then accepted if the measured position is within the radius (50 m). Stricter alternative: require distance + accuracy ≤ radius (often impossible indoors). Confirm.

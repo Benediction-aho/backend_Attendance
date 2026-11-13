@@ -247,8 +247,8 @@ Les changements sensibles passent **par email** (Resend) :
 
 ### Rapport mensuel automatique (le 26 de chaque mois)
 - Généré automatiquement **le 26 de chaque mois**, à partir des check-in / check-out et des clients enregistrés.
-- **Période couverte : du 26 du mois précédent au 26 du mois en cours, inclus** (choix validé : le 26 figure dans les deux rapports).
-- Pour que la journée du 26 soit complète, le rapport est généré et envoyé **le 26 au soir** (heure paramétrable dans la configuration).
+- **Période couverte : du 26 du mois précédent au 25 du mois en cours, inclus** (décision du propriétaire : aucun jour n'est compté deux fois ; le 26 du mois en cours appartient au rapport suivant).
+- Le rapport est généré et envoyé **le 26** (heure paramétrable dans la configuration ; la période se terminant le 25, l'envoi pourrait se faire dès le matin du 26).
 - Envoyé sous forme de **fichier PDF** joint à l'email.
 - **Modèle de référence** : `modeles/Rapport_de_performance_Octobre_2026.pdf`. Le PDF généré doit le reproduire :
   - en-tête : « ASSISTANCE GHANA » (bleu) / « by GIMA Services » (orange) ;
