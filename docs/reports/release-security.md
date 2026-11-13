@@ -1,0 +1,139 @@
+# Pre-release security audit – Assistance Ghana Attendance v2
+
+- Date: 2026-11-13 · Tester: `backend-security-tester` · Branch `claude/upbeat-noether-f7defe`
+- Scope A (local, aggressive): Laravel API in production mode (`APP_ENV=production APP_DEBUG=false`, `MAIL_MAILER=log`, dedicated DB `attendance_relsec`), `php artisan serve` on ports 8282 (main), 8283 (PHP limits of `docker/php.ini`), 8284 (`TRUSTED_PROXIES=*` as in `render.yaml`), 8285 (`QUEUE_CONNECTION=database` as online). Several source IPs simulated with `curl --interface 127.0.0.x`.
+- Scope B: production build of the frontend (`vite build`, `VITE_API_URL=https://api.example.invalid/api`) and its hosting configuration.
+- Scope C (deployed test environment, passive): **not executed** – this sandbox's egress proxy refuses CONNECT to both `attendance-api-1xgl.onrender.com` and `attendance.assistanceghana.com` (403 `connect_rejected`, policy denial). No request reached the test environment. See REL-15 for the checklist to run from an allowed network.
+- No real email was sent (log mailer). No application code modified.
+
+Scripts added: `tests/security/release_fixtures.sh` (users of every role/tier through the API), `tests/security/release_matrix.sh` (route × role/tier matrix), `tests/security/release_faceid.php` (Face ID + check-in abuse over HTTP with a software authenticator). Other commands are reproduced inline below.
+
+## Findings
+
+### REL-01 – Super admin e-mail enumeration through response time of `POST /api/auth/super-admin/code` — Medium
+- File: `app/Services/Auth/SuperAdminCodeService.php::request()`.
+- Steps (server with `QUEUE_CONNECTION=database`, like online): send the same request for a candidate e-mail from successive source IPs (each IP stays under the per-IP limit):
+  ```bash
+  t(){ curl -s -o /dev/null -w "%{time_total}\n" --interface 127.0.1.$2 -X POST localhost:8285/api/auth/super-admin/code \
+       -H 'Accept: application/json' -H 'Content-Type: application/json' -d "{\"email\":\"$1\"}"; }
+  for i in $(seq 1 12); do t sa1@relsec.test $i; t nobody$i@relsec.test $((i+100)); t e1@relsec.test $((i+200)); done
+  ```
+- Observed (seconds): unknown e-mail avg **0.251**, employee e-mail avg **0.249**, super admin: 0.48, 0.26, 0.28, then **0.035 – 0.043** for every further request. Once `otp_max_active_codes` (3) valid codes exist, the transaction returns `false` and the function returns without any bcrypt; the other paths run `Hash::make` (~220 ms). Four requests from four IPs are enough to tell whether an address belongs to a super admin. Same body (202) in every case, so only timing leaks.
+- Expected: identical cost on every path (security.md: identical messages and similar timing).
+- Fix: on the `! $created` path (and any other early return after the limiter) run the same `Hash::make('timing-equaliser')`; add a test with a counting hasher (1 make on every path), like P1-02 for login.
+
+### REL-02 – Recovery link quota is per account only: anyone can exhaust a locked super admin's recovery — Medium
+- File: `SuperAdminCodeService::requestRecovery()` – key `recovery:<account>` (no IP component), `otp_requests_per_hour` (5).
+- Steps: `for ip in $(seq 30 49); do for k in 1 2 3 4; do curl -s -o /dev/null -w "%{http_code}\n" --interface 127.0.0.$ip -X POST localhost:8282/api/auth/recovery -H 'Accept: application/json' -H 'Content-Type: application/json' -d '{"email":"sa1@relsec.test"}'; done; done | sort | uniq -c` → 80 × 202, but only **5** "Restore access to your account" mails were produced for the whole hour, whatever the source IP. The quota is consumed even while the super admin is not locked and even by requests that send nothing.
+- Impact: the recovery link is the only self-service way out for a super admin whose sign-in is locked (3rd series, or new phone after the unknown-device bucket was locked by an attacker: 15 failed codes from unknown devices). An attacker who keeps sending 5 requests per hour (from any IP) keeps the legitimate super admin from ever receiving a link; with a single super admin, the account is unrecoverable without database access.
+- Expected: a stranger cannot use up the owner's quota (same principle already applied to sign-in codes, P1-05).
+- Fix: count per (account, IP) like `request()`, plus a global per-account cap on links actually **sent** (not on requests), only incremented when a link is emailed; let a request from a known device of the account bypass/evict; log contention as critical.
+
+### REL-03 – Sign-up flood: every request e-mails every approver, per-IP limit only, attacker text in trusted e-mails — Medium
+- Files: `AuthController::register`, `AccountService::register` (StaffAlert "New account request" to every holder of `approve_users` + super admins).
+- Steps: 60 sign-ups from 127.0.0.1 → 49 × 202 then 429, **98 e-mails** to the 2 approvers; from another source IP (`--interface 127.0.0.2`) the next sign-up is accepted immediately. With `TRUSTED_PROXIES=*` and no appending proxy (port 8284), `X-Forwarded-For: 203.0.113.N` gives a fresh quota per request (see REL-05).
+  Content injection: `first_name` = `[URGENT: verify your account](https://evil.example/login)`, `job_title` = `Your password expires, sign in at https://evil.example` → mail body "… wants to create an account" contains the attacker URL verbatim (HTML escaped, but mail clients auto-link bare URLs), sent from the company's own domain.
+- Impact: an attacker with a pool of IPs (or a botnet) can flood the approvers' mailboxes from the official sender (deliverability/reputation of the Resend domain, real requests drowned), fill the `users` table with pending rows (no global cap, no expiry of pending requests) and use the trusted sender for phishing text.
+- Expected: bounded number of alert e-mails whatever the number of source IPs.
+- Fix: global cap `signup_requests_global_per_hour`; above a small threshold (e.g. 5 pending in 1 h) send one digest notification instead of one e-mail per request; reject URLs/`http`/`www.`/`[`/`](` in names and job title (letters, spaces, `-'.` only for names); purge pending requests older than N days; optionally a proof-of-work/captcha on sign-up.
+
+### REL-04 – Frontend hosting configuration has no security headers (clickjacking, no CSP) — Medium
+- Files: `frontend_Attendance/vercel.json` (only `Cache-Control` for `/sw.js`), `index.html` (no CSP meta).
+- Observed (config + build): no `Content-Security-Policy`, no `frame-ancestors`/`X-Frame-Options`, no `Referrer-Policy`, no `Permissions-Policy`, no `X-Content-Type-Options` on the PWA. Live headers could not be checked (REL-15).
+- Impact: the admin screens (approve users, settings, revoke Face ID, check-in on behalf) can be framed by any site → clickjacking; no defence-in-depth if an XSS ever appears (the bearer token lives in IndexedDB and would be readable).
+- Fix (vercel.json `headers` for `/(.*)`): `Content-Security-Policy: default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob: https://<storage-host>; connect-src 'self' https://<api-host>; worker-src 'self'; manifest-src 'self'; frame-ancestors 'none'; base-uri 'none'; form-action 'self'; object-src 'none'`, `X-Frame-Options: DENY`, `Referrer-Policy: no-referrer` (recovery / e-mail-change links carry `?token=`), `Permissions-Policy: camera=(), microphone=(), geolocation=(self), payment=()`, `X-Content-Type-Options: nosniff`, `Strict-Transport-Security: max-age=31536000; includeSubDomains`. Same on whatever host serves the final domain.
+
+### REL-05 – `TRUSTED_PROXIES="*"` in `render.yaml` trusts every forwarded header — Medium (must be verified on Render)
+- Files: `render.yaml` (`TRUSTED_PROXIES: "*"`), `app/Http/Middleware/TrustProxies.php` (default header set: For, Host, Port, Proto, Prefix).
+- Steps (port 8284, `TRUSTED_PROXIES=*`, client connects directly):
+  - `X-Forwarded-For: 203.0.113.1/2/3` → three sign-ups accepted while 127.0.0.1 is already at 429: every per-IP limit (login IP limit, sign-up, OTP, recovery) is keyed on a client-chosen value when nothing in front appends/overwrites the header.
+  - `X-Forwarded-Host: evil.example` + `X-Forwarded-Proto: https` → `GET /admin/reports/weekly/submissions/2` returns `https://evil.example/api/files/...?...&signature=…` (signed URLs and any `url()` built from the request use the attacker host).
+- On Render the result depends on how its edge builds `X-Forwarded-For` (append vs. overwrite, Cloudflare in front or not). With '*' Laravel trusts only `REMOTE_ADDR`, so it is safe **only if** the edge appends the real client IP as the last element. Not verifiable from this sandbox.
+- Fix: verify on the test service (two requests with a forged `X-Forwarded-For`, compare the IP written in `activity_logs`); restrict the trusted headers to `X-Forwarded-For | X-Forwarded-Proto` (`$headers` in `TrustProxies`, drop Host/Port/Prefix); force the root URL (`URL::forceRootUrl(config('app.url'))`, `URL::forceScheme('https')`) so links never depend on request headers; document the result in `DEPLOYMENT.md`.
+
+### REL-06 – Multi-megabyte JSON bodies parsed by global middleware before any throttle — Low
+- File: `RejectControlCharacters` (global, runs before `throttle:api`), `docker/php.ini` `post_max_size = 22M`, `memory_limit = 256M`.
+- Steps (port 8283, php.ini limits of the image): 18 MB JSON object with 1.2 M keys to `POST /api/auth/login` (unauthenticated) → 401 after **3.2 s** of CPU in one worker; a 17.5 MB array → 413 after 3.4 s. The body is fully decoded and walked recursively before the per-IP limiter runs, so throttling gives no protection.
+- Impact: a few parallel uploads saturate the small number of PHP workers / memory of a starter instance (availability). Bandwidth-bound, hence Low.
+- Fix: reject `Content-Length` > 64 KB for JSON requests (except the upload routes, which are multipart) in a first global middleware or at the web server (`request_body` max in Caddy per path); run the limiter before input inspection.
+
+### REL-07 – `render.yaml` does not set `PRIVATE_FILES_DISK` (files on ephemeral, per-container disk) — Low
+- `config/filesystems.php` defaults to `local`; `DEPLOYMENT.md` §2 says online must be `s3` (Supabase Storage). The blueprint defines web, worker and scheduler as separate containers: with `local`, weekly PDFs/photos uploaded on the web container are not visible to the worker (forwarding e-mails) or the scheduler (monthly report), and are lost on each deploy. Integrity/availability of reports, plus local signed URLs depend on REL-05.
+- Fix: add `PRIVATE_FILES_DISK=s3` and the `AWS_*` keys (`sync: false`) to the blueprint, or assert at boot in production that the private disk is not `local`.
+
+### REL-08 – Permission `promote_to_super_admin` is never enforced — Info
+- `app/Enums/Permission.php` only; `PUT /admin/users/6/role {"role":"super_admin"}` by a super admin on an admin **without** that tier → 200. Matches open question Q3 but the tier is currently decorative. Either enforce it (target must hold it) or remove it from the catalogue.
+
+### REL-09 – Scheduler tick endpoint discloses its existence — Info
+- Wrong/missing token → 404 (good), but `GET /api/ops/scheduler-tick` → **405** and the 11th POST in a minute → **429**, both distinguishable from an unknown route. Fix: register the route only when `SCHEDULER_TICK_TOKEN` is set, and use `match(['get','post'])` returning 404 for GET. Positive checks: valid token → 204, 3 ticks in a row → no duplicate run, token in query string ignored, wrong tokens logged.
+
+### REL-10 – Validation before authorization on `POST /api/admin/users` — Info
+- An employee posting an empty body gets 422 with the list of required fields instead of 403 (with a valid body: 403). Minor schema disclosure. Fix: `authorize()` first.
+
+### REL-11 – Dependencies — Info
+- `composer audit`: no advisory. `npm audit` (frontend): 14 (2 low, 12 moderate), **all dev-only** (eslint/typescript-eslint/minimatch, workbox-build/glob, deepmerge); `npm audit --omit=dev`: 0. Update when convenient.
+
+### REL-12 – Tailwind version in the CSS bundle — Info
+- `dist/assets/*.css` starts with `/*! tailwindcss v4.3.5 | MIT License | https://tailwindcss.com */`. Harmless; strip with the CSS minifier's comment option if "no library mentions" is a requirement.
+
+### REL-13 – `checkin_opens_at` may be later than `late_after` — Info
+- `PUT /admin/settings {"checkin_opens_at":"12:00","late_after":"08:10"}` → 200: every check-in would be late. Add a cross-field rule (`checkin_opens_at < late_after`).
+
+### REL-14 – Test environment headers/files not verified — Info (blocked)
+- Egress proxy of this sandbox: `CONNECT attendance-api-1xgl.onrender.com:443` and `attendance.assistanceghana.com:443` → 403 policy denial. To run from an allowed network (≤ 20 requests, no brute force):
+  `curl -sI https://attendance-api-1xgl.onrender.com/api/health`; `curl -s -o /dev/null -w '%{http_code}\n' $API/{.env,.git/config,composer.json,storage/logs/laravel.log,telescope,horizon,api/documentation,phpinfo.php,sanctum/csrf-cookie}` (all 404 JSON expected); `curl -s -X POST $API/api/ops/scheduler-tick` (404); `curl -s -X POST $API/api/auth/login -H 'Content-Type: application/json' -d '{"email":'` (422 JSON, no trace); `curl -sI -X OPTIONS $API/api/auth/login -H 'Origin: https://evil.example' -H 'Access-Control-Request-Method: POST'` (allow-origin must stay the frontend origin); `curl -sI https://attendance.assistanceghana.com/` (REL-04 headers, HSTS); `curl -s -o /dev/null -w '%{http_code}' https://attendance.assistanceghana.com/assets/<hash>.js.map` (404); `testssl.sh`/SSL Labs for TLS. Also REL-05 verification.
+
+## Summary
+
+| ID | Title | Severity | Status |
+|---|---|---|---|
+| REL-01 | Super admin enumeration by timing (`/auth/super-admin/code`) | Medium | Open |
+| REL-02 | Recovery quota exhaustible by anyone | Medium | Open |
+| REL-03 | Sign-up flood e-mails all approvers; text injection | Medium | Open |
+| REL-04 | No security headers on the frontend (clickjacking, no CSP) | Medium | Open |
+| REL-05 | `TRUSTED_PROXIES=*` trusts all forwarded headers (verify on Render) | Medium | Open |
+| REL-06 | Large JSON bodies parsed before throttling | Low | Open |
+| REL-07 | `PRIVATE_FILES_DISK` missing from `render.yaml` | Low | Open |
+| REL-08 | `promote_to_super_admin` not enforced | Info | Open |
+| REL-09 | Scheduler endpoint existence (405/429) | Info | Open |
+| REL-10 | Validation before authorization on user creation | Info | Open |
+| REL-11 | Dev-only npm advisories | Info | Open |
+| REL-12 | Tailwind version comment | Info | Open |
+| REL-13 | `checkin_opens_at` vs `late_after` consistency | Info | Open |
+| REL-14 | Live test environment not reachable from sandbox | Info | Blocked |
+
+Critical: 0 · High: 0 · Medium: 5 · Low: 2 · Info: 7. Previously open P0-01 (legacy v1 password in git history, owner action) still applies.
+
+## Tests passed
+
+Authentication / lockout
+- 5 wrong codes on one device → 4 × 401 then 429 `login_blocked` 600 s; unknown e-mail gets exactly the same sequence (no enumeration by lockout); identical messages.
+- Password change: the other device's token → 401 immediately, the current one kept; logout revokes the token; block → `account_blocked` 401 at once; admin code regeneration revokes the user's tokens; deletion revokes.
+- Super admin codes: 140 requests from 20 IPs → only 15 codes e-mailed; without a known device the active-code cap refuses silently (202). Recovery link: single use (replay 422), every earlier link invalid after use, 64-char token, link built from `FRONTEND_URL` (a forged `Host`/`X-Forwarded-Host` never changes e-mail links). E-mail change: single use, old address notified, other sessions kept.
+- No secret (password, identification code, OTP, recovery/e-mail tokens) found in `activity_logs` (404 rows) nor in the application log outside the log-mailer bodies.
+
+Authorization (matrix in `tests/security/release_matrix.sh`, 35 routes × employee, admin without tier, 22 single-tier admins, super admin)
+- Every admin route 403 for employees and tier-less admins; each tier opens only its routes (`view_logs` → logs only, export super admin only, the three settings tiers → settings read/write of their own section only: cross-section writes 403, `timezone` and `logs_admins_see_super_admin_events` super admin only); security settings bounded (otp ≥ 6, password ≥ 8, TTLs, limits).
+- Tiered admins cannot act on admins/super admins/self (block, delete, code, check-in on behalf, leaves, schedules); `create_users` cannot create admins; permissions sent for an employee are dropped.
+- Last super admin: demote/block/delete/permissions on the only one → 403; two super admins demoting or deleting each other in parallel (5 rounds) → always ≥ 1 active super admin.
+- IDOR: other users' tasks/clients (PATCH/DELETE) → 404, other users' notifications → 404 and unchanged, `user_id` in queries/bodies ignored, other users' submissions/credentials → 403.
+- Mass assignment: `role`, `status`, `permissions`, `email`, `must_change_password` in `PATCH /me` ignored; `check_in_at`, `is_late`, `work_date`, `user_id` in intents and on-behalf check-ins ignored (server time used); task `user_id`/`work_date`/`completed_at` ignored.
+
+Business rules / Face ID
+- Out of perimeter (410 km) 422; accuracy 101 m / 5000 m 422; negative, `NaN`, `1e400`, arrays 422; check-in gate before check-in (`checkin_required`); one check-in per day (409 `already_checked_in`); `checkin_opens_at` bounds validated.
+- Face ID: no assertion, other user's credential, wrong origin, no UV → 422 and the intent is burnt; intent confirmed with another user's token → 422; replay of a valid assertion → idempotent 200 `created:false`, no second record; 10 parallel confirms → 1 × 201 + 9 × 200, one attendance; revoked credential → `faceid_not_registered`; new device → `faceid_pending_approval`; `approve_faceid_devices` cannot revoke an approved credential (super admin only).
+- Races: 20 parallel creations with `tasks_max_per_day`/`clients_max_per_day` = 5 → exactly 5 each.
+- Scheduled jobs run twice in parallel: no error, no duplicate.
+
+Files / input
+- Weekly PDF: HTML polyglot, `/J#61vaScript`, `/Launch`, ObjStm-compressed catalog + JavaScript, `/URI` → 422 `pdf_active_content`; MZ header and PHP → `invalid_pdf`; `/Encrypt` → `pdf_encrypted`; 25 MB → 413; client name `../../../../etc/x.pdf.php` stored only as display name, file stored as `weekly-reports/<user>/<week>/<uuid>.pdf`.
+- Signed file URLs: valid 200 (attachment, sandbox CSP), path swap / bumped `expires` / missing signature / `..%2f` → 404.
+- Photos: SVG with script, PNG header + PHP, 20000 × 20000 PNG bomb → 422.
+- SQL-like input in login → 401; invalid JSON / type confusion (`{"$ne":1}`, arrays) → 422; 100 000-level nested JSON → 422; NUL/control characters → 422 (P5-01).
+- XSS payloads stored raw and returned as JSON (frontend renders as text, no `dangerouslySetInnerHTML` in `src/`); e-mail HTML escapes attacker text.
+
+Information disclosure (local, production mode)
+- `/.env`, `/.git/config`, `/composer.json`, `/storage/logs/laravel.log`, `/telescope`, `/horizon`, `/api/documentation`, `/phpinfo.php`, `/vendor/autoload.php`, `/sanctum/csrf-cookie`, path traversal → JSON 404; 405 and malformed input without stack trace; no `X-Powered-By`/`Server`; strict API headers (CSP `default-src 'none'`, XFO DENY, nosniff, `no-store`); no cookie; CORS fixed to the frontend origin (foreign `Origin` never echoed, no credentials).
+
+Frontend bundle
+- No source maps or `sourceMappingURL`; no `console.*` left; no secret/API key/JWT/private key; only the configured API URL; service worker precaches static assets only (`runtimeCaching: []`, `/api/` denied from navigation fallback); token in IndexedDB (not localStorage/cookies/URLs); URL tokens removed from the address bar on load; in-app return path validated (no open redirect); React's own `innerHTML` only.
