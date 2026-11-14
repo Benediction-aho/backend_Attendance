@@ -19,6 +19,8 @@ use App\Http\Controllers\NotificationController;
 use App\Http\Controllers\Ops\SchedulerTickController;
 use App\Http\Controllers\ProfileController;
 use App\Http\Controllers\PushSubscriptionController;
+use App\Http\Controllers\Reports\ActivityReportController;
+use App\Http\Controllers\Reports\AdminActivityReportController;
 use App\Http\Controllers\Reports\AdminReportController;
 use App\Http\Controllers\Reports\ClientController;
 use App\Http\Controllers\Reports\ReportController;
@@ -89,6 +91,7 @@ Route::middleware(['auth:sanctum', EnsureAccountUsable::class])->group(function 
         Route::get('/me/reports/daily', [ReportController::class, 'daily'])->name('me.reports.daily');
         Route::get('/me/reports/weekly', [ReportController::class, 'weekly'])->name('me.reports.weekly');
         Route::get('/me/reports/weekly/submission', [ReportController::class, 'submissionStatus'])->name('me.reports.weekly.submission');
+        Route::get('/me/reports/activity', [ActivityReportController::class, 'index'])->name('me.reports.activity.index');
         Route::middleware(['checked-in', 'throttle:attendance'])->group(function () {
             Route::post('/me/tasks', [TaskController::class, 'store'])->name('me.tasks.store');
             Route::patch('/me/tasks/{task}', [TaskController::class, 'update'])->whereNumber('task')->name('me.tasks.update');
@@ -97,6 +100,9 @@ Route::middleware(['auth:sanctum', EnsureAccountUsable::class])->group(function 
             Route::patch('/me/clients/{client}', [ClientController::class, 'update'])->whereNumber('client')->name('me.clients.update');
             Route::delete('/me/clients/{client}', [ClientController::class, 'destroy'])->whereNumber('client')->name('me.clients.destroy');
             Route::post('/me/reports/weekly/submission', [ReportController::class, 'submit'])->name('me.reports.weekly.submit');
+            // Activity reports: a PDF sent at any time, apart from the weekly report.
+            Route::post('/me/reports/activity', [ActivityReportController::class, 'store'])->name('me.reports.activity.store');
+            Route::delete('/me/reports/activity/{report}', [ActivityReportController::class, 'destroy'])->whereNumber('report')->name('me.reports.activity.destroy');
         });
 
         // Face ID (WebAuthn passkeys).
@@ -131,6 +137,8 @@ Route::middleware(['auth:sanctum', EnsureAccountUsable::class])->group(function 
         Route::get('/reports/weekly', [AdminReportController::class, 'weekly'])->name('admin.reports.weekly');
         Route::get('/reports/weekly/submissions/{submission}', [AdminReportController::class, 'submission'])->whereNumber('submission')->name('admin.reports.weekly.submission');
         Route::get('/users/{user}/reports/weekly', [AdminReportController::class, 'userWeekly'])->name('admin.users.reports.weekly');
+        Route::get('/reports/activity', [AdminActivityReportController::class, 'index'])->name('admin.reports.activity.index');
+        Route::get('/reports/activity/{report}', [AdminActivityReportController::class, 'show'])->whereNumber('report')->name('admin.reports.activity.show');
 
         Route::get('/faceid/credentials', [FaceIdController::class, 'index'])->name('admin.faceid.index');
         Route::post('/faceid/credentials/{credential}/approve', [FaceIdController::class, 'approve'])->whereNumber('credential')->name('admin.faceid.approve');

@@ -102,6 +102,9 @@ Une ou deux pages regroupant **tous les paramètres du système**, modifiables a
 | Nombre maximum de jours off par semaine | **2** |
 | Taille maximale d'un rapport PDF | **10 Mo** |
 | Taille maximale des pièces jointes d'un email | **30 Mo** (au-delà : liens sécurisés) |
+| Rapports d'activité par personne et par jour (`activity_reports_per_day`) | **5** |
+| Délai pendant lequel l'auteur peut supprimer un rapport d'activité (`activity_report_delete_minutes`) | **30 min** |
+| Email aux lecteurs à chaque rapport d'activité (`activity_report_email`) | **désactivé** (notification dans l'application toujours) |
 | Durée de conservation des journaux | **12 mois** |
 | Jours fériés | liste à remplir |
 | Heure de début du retard | **08:10** |
@@ -269,6 +272,18 @@ Les changements sensibles passent **par email** (Resend) :
   - chaque destinataire reçoit les chiffres et les rapports des personnes qu'il a le droit de voir : un **super admin** ceux des employés et des admins, un **admin autorisé** ceux des employés seulement (jamais le rapport d'un autre admin, ni le sien).
 - **Retardataires** : quand un employé envoie son rapport après 17:00, il est transmis **directement** aux personnes autorisées à le voir (application + email). Le rapport en retard d'un **admin** est transmis aux **super admins** seulement.
 
+### Rapport d'activité (envoi libre, à tout moment) – demande du propriétaire, 2026-11-14
+
+- Un bouton permet d'**envoyer un rapport quand on en a besoin**, sans attendre le vendredi : le compte rendu d'une activité, de quelque chose qui a été fait, transmis directement.
+- Il **ne remplace pas** le rapport hebdomadaire du vendredi et **n'est pas compté** dans « reçus / manquants » ni dans le rapport mensuel.
+- **Qui** : toute personne qui pointe (employés, stagiaires, admins à partir de leur date de début). N'importe quel jour, à n'importe quelle heure ; comme pour les tâches et les clients, l'envoi exige le check-in du jour les jours où la personne est attendue.
+- **Contenu** : un **titre** obligatoire (150 caractères au plus, texte simple, sans lien ni adresse email), une **note** facultative (1000 caractères au plus) et **un PDF**, avec les mêmes contrôles et la même taille maximale que le rapport hebdomadaire (vrai PDF, sans mot de passe, sans contenu actif). Stockage privé, liens temporaires.
+- **Limite** : **5 rapports d'activité par personne et par jour** (paramètre `activity_reports_per_day`) ; un rapport supprimé compte quand même.
+- **L'auteur** voit la liste de ses rapports d'activité (du plus récent au plus ancien) et peut en **supprimer** un seulement dans les **30 minutes** qui suivent l'envoi (paramètre `activity_report_delete_minutes`, 0 = jamais). Pas de modification.
+- **Lecteurs** : les personnes qui peuvent lire les rapports hebdomadaires de l'auteur : les super admins pour tout le monde ; les admins autorisés à voir les rapports (ou à recevoir les rapports hebdomadaires) pour les employés seulement. Le rapport d'un admin n'est lu que par les super admins. Page d'administration : liste (filtres par période et par personne) et téléchargement.
+- **Notification** à chaque envoi : dans l'application pour ces lecteurs ; par email seulement si le paramètre `activity_report_email` est activé (désactivé par défaut).
+- L'envoi et la suppression sont inscrits au journal d'activité.
+
 ### Rapport mensuel automatique (le 26 de chaque mois)
 - Généré automatiquement **le 26 de chaque mois**, à partir des check-in / check-out et des clients enregistrés.
 - **Période couverte : du 26 du mois précédent au 25 du mois en cours, inclus** (décision du propriétaire : aucun jour n'est compté deux fois ; le 26 du mois en cours appartient au rapport suivant).
@@ -312,6 +327,7 @@ Les changements sensibles passent **par email** (Resend) :
 | Rappel : rapport hebdomadaire pas encore envoyé (vendredi 16:30) | Employés concernés | Notification push + application |
 | Fin de la fenêtre d'envoi du vendredi (17:00) | Super admin + admins autorisés à voir les rapports | Application + email (avec les rapports reçus) |
 | Rapport hebdomadaire envoyé en retard | Super admin + admins autorisés à voir les rapports (super admins seulement si l'auteur est un admin) | Application + email |
+| Rapport d'activité envoyé | Super admin + admins autorisés à voir les rapports (super admins seulement si l'auteur est un admin) | Application (+ email si le paramètre est activé) |
 | Rapport mensuel du 26 | Super admin + admins sélectionnés | Email (rapport) + notification dans l'application |
 
 ## 9. Accès

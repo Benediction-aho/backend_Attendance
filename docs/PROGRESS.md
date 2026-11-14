@@ -254,6 +254,15 @@ Admins track attendance (2026-11-14) – questions (safe default implemented):
 - **Q33 – Activity log**: an admin holding "View logs" no longer sees the attendance entries (check-in/out, Face ID, working week, leave, weekly report) about admin accounts; other entries about admins are unchanged. Confirm.
 - **Q34 – Who changes the start date**: `admin_attendance_starts_on` is reserved to super admins (hidden from admins holding "Settings – Attendance"), because it decides what admins themselves must do. Confirm.
 
+Activity reports (2026-11-14) – questions (safe default implemented, the starred ones are settings of the reports section):
+- **Q35 – Who sends**: anyone who tracks attendance, any day and time; the upload needs today's check-in on expected days (same rule as tasks and clients). Confirm.
+- **Q36 – Content**: mandatory title (150 characters, no link or e-mail address), optional note (1000), one PDF with the weekly report's checks and size limit. Confirm.
+- **Q37 – Daily limit***: `activity_reports_per_day` = 5 per person (a deleted report still counts). Confirm the number.
+- **Q38 – Deletion***: the author can delete a report within `activity_report_delete_minutes` = 30 after sending (0 = never); no edit. Confirm.
+- **Q39 – Readers**: the people who may read the author's weekly reports: super admins, and for an employee the admins holding "View reports" or "Receive weekly reports"; an admin's report is read by super admins only. Confirm (or restrict to "View reports" only).
+- **Q40 – Notification***: in-app to those readers at each upload; e-mail only when `activity_report_email` is on (default off). Confirm.
+- **Q41 – Monthly report**: activity reports are not counted in it. A line "Activity reports: n" was not added because the monthly PDF must stay identical to the template (4 columns, nothing added). Say if a count is wanted and where.
+
 Phase 6 business questions (safe default implemented, configurable where possible):
 - **Q28 – Dashboard tiers**: today's counts (expected, checked in, missing, on leave, remote) need any attendance tier; `late` and refused attempts need `view_lateness`; month-to-date clients and top services need `view_clients` or `view_statistics`; month late count needs `view_lateness`; weekly "N of M" needs `view_reports` or `receive_weekly_reports`; pending counts need the matching approval tier. Confirm, or name other tiers (e.g. should `view_statistics` also show lateness totals?).
 - **Q29 – Log CSV export**: super admins only (not `view_logs` admins), capped at `log_export_max_rows` (100,000), `log_export_per_hour` (10). Confirm.
@@ -354,4 +363,25 @@ Code (one notion each):
 Limits / interpretations (also in the questions above): the role is judged as it is today (no role history): a person promoted to super admin leaves the attendance lists, including past days (rows are kept in the database); an admin's attendance log entries are hidden from "View logs" admins (Q33); the monthly PDF for admin recipients is the employees-only version (Q32); the `reports.weekly_closed` log entry no longer carries the received/expected figures (they would include admins).
 
 Tests: `tests/Feature/Attendance/AdminsTrackAttendanceTest.php` (30 tests: setting and migration, every employee feature as an admin, admin on another admin / on self / super admin never expected, nothing before the go-live date, setting empty = off, alerts, totals per viewer, weekly and monthly reports, logs). Tests start with the setting empty (the migration stamps the real date) and turn it on with `adminsTrackFrom()`.
+
+## 2026-11-14 – Activity reports sent at any time (owner request)
+
+**Status: backend done on the development branch, committed locally, NOT pushed. Ready for backend-security-tester (upload abuse, IDOR on delete/show, reader tiers, admin authors) and for attendance-frontend.**
+
+- A PDF with a title (and an optional note) sent whenever needed. It never replaces nor counts as the weekly Friday report (not in "received/missing", not in the monthly report).
+- Table `activity_reports` (migration `2026_11_24_100000_create_activity_reports_table`, new table only, reversible; soft delete: the row is kept for the daily limit and the audit trail, the file is removed). Files on the private disk under `activity-reports/<user>/<date>/<uuid>.pdf`, served through `FileUrls` (temporary links, attachment).
+- The PDF checks and storage are shared with the weekly report in one class, `App\Domain\Reports\PdfUpload` (the weekly upload now uses it; no behaviour change).
+- New settings (reports section, editable by `manage_settings_reports` admins and super admins): `activity_reports_per_day` (int, default 5, 1–50), `activity_report_delete_minutes` (int, default 30, 0–1440, 0 = never), `activity_report_email` (bool, default false).
+- Activity log: `reports.activity_submitted`, `reports.activity_deleted`.
+
+**API for attendance-frontend** (`docs/api/openapi.yaml` 0.7.0):
+- `GET /api/me/reports/activity?page=&per_page=` (default 20, max 100) → `{data: ActivityReport[], meta: {current_page, last_page, total}, limits: {per_day, sent_today, remaining_today, delete_minutes, max_size_mb}}`. Accounts that track attendance (else 403 `employees_only`).
+- `POST /api/me/reports/activity` multipart `title` (required, ≤ 150), `note` (optional, ≤ 1000), `file` (one PDF) → 201 `{data: ActivityReport}`. Errors: 403 `checkin_required` | `employees_only`; 422 validation (`errors.title`, `errors.note`, `errors.file`), `invalid_pdf`, `pdf_encrypted`, `pdf_active_content`, `too_many_activity_reports` (+ `limit`); 429.
+- `DELETE /api/me/reports/activity/{id}` → 204. Errors: 403 `checkin_required`; 404 (unknown, someone else's, already deleted); 422 `delete_window_closed`.
+- `GET /api/admin/reports/activity?from=&to=&user_id=&page=&per_page=` (default 25, max 100) → `{data: ActivityReport[], meta}`; tier `view_reports` or `receive_weekly_reports` (403 otherwise); admins see employees' reports only, super admins also admins'.
+- `GET /api/admin/reports/activity/{id}` → `{data: ActivityReport}` with a fresh `file_url`; 403 without the tier; 404 unknown/deleted/not readable by the caller.
+- `ActivityReport`: `id, title, note, work_date, file_name, size_bytes, submitted_at, file_url` + author view `can_delete, delete_until` / reader view `user` (EmployeeSummary with `role`).
+- Notification (in-app, push copy as usual): `kind: activity_report`, `title: "Activity report from <First Last>"`, `body`, `path: /admin/reports/activity/{id}`, `activity_report_id`, `user_id`.
+
+Tests: `tests/Feature/Reports/ActivityReportTest.php` (36 tests: sending, validation, check-in gate, daily limit, own list, deletion window, reader tiers and filters, authorization negatives – employee on someone else's, admin without the tier, admin on another admin's and on their own in the admin pages –, settings).
 

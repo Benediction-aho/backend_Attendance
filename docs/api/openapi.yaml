@@ -2,7 +2,7 @@
 openapi: 3.1.0
 info:
   title: Assistance Ghana Attendance API
-  version: 0.6.0
+  version: 0.7.0
   description: |
     Authentication: **Bearer device tokens only** (Sanctum personal access tokens, one per device).
     The API sets no cookie and has no CSRF/session endpoint. After login the client receives
@@ -1084,6 +1084,75 @@ paths:
         '200': { description: 'data: WeeklySubmission + user + versions[] + week {clients_count, services, clients}' }
         '403': { $ref: '#/components/responses/Forbidden' }
         '404': { description: not found }
+  /me/reports/activity:
+    get:
+      summary: The caller's own activity reports, newest first (accounts tracking attendance; 0.7.0).
+      description: An activity report is a PDF with a title sent at any time. It never replaces nor counts as the weekly Friday report.
+      security: [{ deviceToken: [] }]
+      parameters:
+        - { name: page, in: query, schema: { type: integer, minimum: 1 } }
+        - { name: per_page, in: query, schema: { type: integer, minimum: 1, maximum: 100, default: 20 } }
+      responses:
+        '200': { description: 'data: ActivityReport[] (author view: can_delete, delete_until; no user); meta: {current_page, last_page, total}; limits: {per_day, sent_today, remaining_today, delete_minutes, max_size_mb}' }
+        '403': { description: employees_only }
+    post:
+      summary: Send an activity report (multipart). Any day, any time. Needs today's check-in on expected days. The readers are notified at once.
+      description: |
+        Same PDF checks and size limit as the weekly report (report_pdf_max_mb). At most activity_reports_per_day (5) per person per work
+        date, deleted ones included. Readers = the people who may read the author's weekly reports: super admins, and – when the author
+        is an employee – admins holding view_reports or receive_weekly_reports. They get an in-app notification
+        (kind `activity_report`, path `/admin/reports/activity/{id}`, data `activity_report_id`, `user_id`); an e-mail too only when the
+        setting activity_report_email is on.
+      security: [{ deviceToken: [] }]
+      requestBody:
+        content:
+          multipart/form-data:
+            schema:
+              type: object
+              required: [title, file]
+              properties:
+                title: { type: string, maxLength: 150, description: 'Plain text; no link, e-mail address, "<", ">", "[" or "]" (422 on title). Spaces are collapsed.' }
+                note: { type: string, maxLength: 1000, description: Optional plain text. }
+                file: { type: string, format: binary, description: One PDF. }
+      responses:
+        '201': { description: 'data: ActivityReport (author view)' }
+        '403': { description: checkin_required | employees_only }
+        '422': { description: 'validation (errors.title | errors.note | errors.file – size or missing) | invalid_pdf | pdf_encrypted | pdf_active_content | too_many_activity_reports (limit)' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+  /me/reports/activity/{id}:
+    delete:
+      summary: Delete one's own activity report within activity_report_delete_minutes (30) after sending. No edit. Needs today's check-in on expected days.
+      security: [{ deviceToken: [] }]
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: integer } }
+      responses:
+        '204': { description: Deleted (the file is removed; readers no longer see it). }
+        '403': { description: checkin_required | employees_only }
+        '404': { description: Unknown id, someone else's report, or already deleted. }
+        '422': { description: 'delete_window_closed (too late, or deletion switched off with 0 minutes)' }
+  /admin/reports/activity:
+    get:
+      summary: Activity reports the caller may read (view_reports or receive_weekly_reports; admins – employees only; super admins – employees and admins), newest first.
+      security: [{ deviceToken: [] }]
+      parameters:
+        - { name: from, in: query, schema: { type: string, format: date }, description: Work date of sending, inclusive. }
+        - { name: to, in: query, schema: { type: string, format: date }, description: 'Inclusive; must not be before from.' }
+        - { name: user_id, in: query, schema: { type: integer }, description: Author. }
+        - { name: page, in: query, schema: { type: integer, minimum: 1 } }
+        - { name: per_page, in: query, schema: { type: integer, minimum: 1, maximum: 100, default: 25 } }
+      responses:
+        '200': { description: 'data: ActivityReport[] (reader view: user EmployeeSummary; no can_delete); meta: {current_page, last_page, total}' }
+        '403': { description: Missing tier. }
+  /admin/reports/activity/{id}:
+    get:
+      summary: One activity report with a fresh temporary download link (file_url).
+      security: [{ deviceToken: [] }]
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: integer } }
+      responses:
+        '200': { description: 'data: ActivityReport (reader view)' }
+        '403': { description: Missing tier. }
+        '404': { description: 'Unknown or deleted report, or a report the caller may not read (an admin author for an admin).' }
 components:
   securitySchemes:
     deviceToken:
@@ -1121,6 +1190,20 @@ components:
         employee_type: { type: string }
         employee_type_other: { type: ['string', 'null'] }
         email: { type: string, format: email }
+    ActivityReport:
+      type: object
+      properties:
+        id: { type: integer }
+        title: { type: string }
+        note: { type: ['string', 'null'] }
+        work_date: { type: string, format: date, description: Server work date of sending (Africa/Accra). }
+        file_name: { type: string, description: Name given by the author, sanitised; display only. }
+        size_bytes: { type: integer }
+        submitted_at: { type: string, format: date-time }
+        file_url: { type: ['string', 'null'], description: 'Temporary download link (file_url_ttl_minutes). Served as an attachment.' }
+        can_delete: { type: boolean, description: Author view only. }
+        delete_until: { type: ['string', 'null'], format: date-time, description: 'Author view only; null when deletion is switched off.' }
+        user: { $ref: '#/components/schemas/EmployeeSummary', description: Reader view only. }
     Task:
       type: object
       properties:

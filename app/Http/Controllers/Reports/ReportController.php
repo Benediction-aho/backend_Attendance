@@ -3,17 +3,16 @@
 namespace App\Http\Controllers\Reports;
 
 use App\Domain\Attendance\WorkCalendar;
+use App\Domain\Reports\PdfUpload;
 use App\Domain\Reports\ReportBuilder;
 use App\Domain\Reports\WeeklyReportService;
 use App\Domain\Reports\WeeklyWindow;
-use App\Exceptions\ApiError;
 use App\Models\DailyReport;
 use App\Models\User;
 use App\Models\WeeklyReportSubmission;
 use App\Settings\SettingsService;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
-use Illuminate\Http\UploadedFile;
 
 /** Employee side of the reports: own daily/weekly summaries and weekly PDF upload. */
 class ReportController
@@ -24,6 +23,7 @@ class ReportController
         private readonly WeeklyWindow $window,
         private readonly WeeklyReportService $weekly,
         private readonly SettingsService $settings,
+        private readonly PdfUpload $pdf,
     ) {}
 
     public function daily(Request $request): JsonResponse
@@ -71,18 +71,8 @@ class ReportController
 
     public function submit(Request $request): JsonResponse
     {
-        $maxKb = $this->settings->int('report_pdf_max_mb') * 1024;
-        $request->validate(['file' => ['required', 'file', 'max:'.$maxKb]]);
-        $file = $request->file('file');
-        if (! $file instanceof UploadedFile || ! $file->isValid() || ! WeeklyReportService::isPdf($file)) {
-            throw new ApiError(422, 'Please upload a PDF file.', 'invalid_pdf');
-        }
-        if (WeeklyReportService::isEncrypted($file)) {
-            throw new ApiError(422, 'Password-protected PDFs are not accepted. Please export the report without a password.', 'pdf_encrypted');
-        }
-        if (WeeklyReportService::hasActiveContent($file)) {
-            throw new ApiError(422, 'This PDF contains scripts, actions or embedded files. Please export it again as a plain PDF.', 'pdf_active_content');
-        }
+        $request->validate(['file' => $this->pdf->rules()]);
+        $file = $this->pdf->file($request);
         $submission = $this->weekly->store($this->user($request), $file);
 
         return response()->json(['data' => $this->weekly->present($submission)], 201);

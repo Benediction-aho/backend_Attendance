@@ -21,7 +21,6 @@ use Illuminate\Support\Collection;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Gate;
 use Illuminate\Support\Facades\Mail;
-use Illuminate\Support\Facades\Storage;
 use Illuminate\Support\Str;
 use RuntimeException;
 use Throwable;
@@ -37,6 +36,7 @@ class WeeklyReportService
         private readonly ReportBuilder $builder,
         private readonly ActivityLogger $logger,
         private readonly FileUrls $urls,
+        private readonly PdfUpload $pdf,
     ) {}
 
     /** Real PDF check: magic bytes at the start of the file (the client-declared type is not trusted). */
@@ -73,9 +73,8 @@ class WeeklyReportService
             throw new ApiError(422, 'The weekly report window is not open yet.', 'window_not_open', ['opens_at' => $this->window->opensAt($current)->toIso8601String()]);
         }
         $deadline = $this->window->deadlineFor($user, $target['window_date']);
-        $disk = Storage::disk(FileUrls::disk());
         $path = 'weekly-reports/'.$user->id.'/'.$target['week_start'].'/'.Str::uuid()->toString().'.pdf';
-        $disk->putFileAs(dirname($path), $file, basename($path), ['ContentType' => 'application/pdf']);
+        $this->pdf->store($file, $path);
 
         try {
             $submission = DB::transaction(function () use ($user, $file, $target, $now, $deadline, $path) {
@@ -89,18 +88,16 @@ class WeeklyReportService
                 WeeklyReportSubmission::query()->where('user_id', $user->id)->whereDate('week_start', $target['week_start'])
                     ->where('is_current', true)->update(['is_current' => false]);
 
-                $name = trim((string) preg_replace('/[^\w .()-]+/u', '_', $file->getClientOriginalName()));
-
                 return WeeklyReportSubmission::query()->create([
                     'user_id' => $user->id, 'week_start' => $target['week_start'], 'window_date' => $target['window_date'],
                     'version' => $version, 'is_current' => true, 'path' => $path,
-                    'original_name' => mb_substr($name !== '' ? $name : 'report.pdf', 0, 200),
+                    'original_name' => PdfUpload::displayName($file),
                     'size_bytes' => (int) $file->getSize(), 'sha256' => (string) hash_file('sha256', (string) $file->getRealPath()),
                     'submitted_at' => Carbon::now(), 'is_late' => $now->gt($deadline),
                 ]);
             });
         } catch (Throwable $e) {
-            $disk->delete($path);
+            $this->pdf->delete($path);
             throw $e;
         }
 

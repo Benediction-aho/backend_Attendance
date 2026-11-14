@@ -91,6 +91,10 @@ final class SettingDefinitions
             'tasks_max_per_day' => ['type' => 'int', 'default' => 100, 'rules' => ['integer', 'min:1', 'max:1000'], 'group' => 'reports', 'label' => 'Maximum tasks per employee per day'],
             'clients_max_per_day' => ['type' => 'int', 'default' => 200, 'rules' => ['integer', 'min:1', 'max:2000'], 'group' => 'reports', 'label' => 'Maximum client entries per employee per day'],
             'client_quantity_max' => ['type' => 'int', 'default' => 999, 'rules' => ['integer', 'min:1', 'max:100000'], 'group' => 'reports', 'label' => 'Maximum quantity of one client entry'],
+            // Activity reports (owner request 2026-11-14): a PDF sent at any time, apart from the weekly report.
+            'activity_reports_per_day' => ['type' => 'int', 'default' => 5, 'rules' => ['integer', 'min:1', 'max:50'], 'group' => 'reports', 'label' => 'Maximum activity reports a person can send per day'],
+            'activity_report_delete_minutes' => ['type' => 'int', 'default' => 30, 'rules' => ['integer', 'min:0', 'max:1440'], 'group' => 'reports', 'label' => 'An activity report can be deleted by its author for this long after sending (minutes; 0 = never)'],
+            'activity_report_email' => ['type' => 'bool', 'default' => false, 'rules' => ['boolean'], 'group' => 'reports', 'label' => 'Also e-mail the readers when an activity report is sent (in-app notification always)'],
             'dashboard_top_services' => ['type' => 'int', 'default' => 5, 'rules' => ['integer', 'min:1', 'max:50'], 'group' => 'reports', 'label' => 'Number of top client services shown on the admin dashboard'],
 
             // System
