@@ -305,3 +305,9 @@ _Not given yet._
 - 2026-11-13 – Phase 6 security fixes P6-01…P6-05 (see report "Fixes applied"); admin dashboard 1,775 → 18 queries with 300 employees; export keyset pagination; CSV fully quoted.
 
 - Owner decisions: settings sections mapping **approved**; **12-hour time format** in everything shown to people (`App\Support\TimeFormat`: notifications, emails). API values, stored settings and CSV exports stay 24-hour HH:MM.
+
+## 2026-11-14 – v2 replaces v1 (owner decision)
+- Owner merged backend PR #1 and frontend PRs #1–#2 into `main`. Previous v1 `main`: backend `7e53efcb`, frontend `5f4de51a` (the `legacy-v1` tag could not be pushed from the session; create it on those commits if wanted).
+- Vercel production (`main`) serves v2; `VITE_API_URL` (production) points to the v2 API; `attendance.assistanceghana.com` is attached to Production; `frontend-attendance-iota.vercel.app` redirects (308) to it.
+- Old v1 Render service `backend_Attendance` deleted by the owner. Remaining Render service: `attendance-api` (free tier).
+- Hosting is still the free test stack (Render + Supabase); move to the company server (phase 8) later.
