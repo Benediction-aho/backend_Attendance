@@ -2,6 +2,7 @@
 
 namespace App\Http\Controllers\Auth;
 
+use App\Enums\EmployeeType;
 use App\Enums\LogLevel;
 use App\Exceptions\ApiError;
 use App\Http\Resources\UserResource;
@@ -19,7 +20,6 @@ use App\Support\ClientIp;
 use App\Support\SignupText;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
-use Illuminate\Validation\Rule;
 
 class AuthController
 {
@@ -38,7 +38,7 @@ class AuthController
             'email' => ['required', 'string', 'email:rfc', 'max:254', 'regex:'.SignupText::EMAIL_PATTERN],
             'first_name' => ['required', 'string', 'max:100', 'regex:'.SignupText::NAME_PATTERN, 'not_regex:'.SignupText::LINK_PATTERN],
             'last_name' => ['required', 'string', 'max:100', 'regex:'.SignupText::NAME_PATTERN, 'not_regex:'.SignupText::LINK_PATTERN],
-            'employee_type' => ['required', Rule::in(['intern', 'employee'])],
+            ...EmployeeType::rules(),
             'job_title' => ['required', 'string', 'max:150', 'regex:'.SignupText::JOB_TITLE_PATTERN, 'not_regex:'.SignupText::LINK_PATTERN],
         ], [
             'first_name.regex' => 'Use letters, spaces, hyphens, apostrophes and dots only.',
@@ -47,6 +47,7 @@ class AuthController
             'last_name.not_regex' => 'Use letters, spaces, hyphens, apostrophes and dots only (a dot must be followed by a space).',
             'job_title.regex' => 'Use letters, digits, spaces and simple punctuation only.',
             'job_title.not_regex' => 'Links are not allowed in the job title.',
+            ...EmployeeType::messages(),
         ]);
         // REL-03: global cap, whatever the number of source IPs (counted once the request is well formed).
         $globalKey = 'signup-global';
@@ -63,6 +64,7 @@ class AuthController
             'first_name' => trim($data['first_name']),
             'last_name' => trim($data['last_name']),
             'employee_type' => $data['employee_type'],
+            'employee_type_other' => EmployeeType::otherText($data['employee_type'], $data['employee_type_other'] ?? null),
             'job_title' => trim($data['job_title']),
         ]);
 

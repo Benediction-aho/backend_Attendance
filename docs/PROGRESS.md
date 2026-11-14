@@ -311,3 +311,10 @@ _Not given yet._
 - Vercel production (`main`) serves v2; `VITE_API_URL` (production) points to the v2 API; `attendance.assistanceghana.com` is attached to Production; `frontend-attendance-iota.vercel.app` redirects (308) to it.
 - Old v1 Render service `backend_Attendance` deleted by the owner. Remaining Render service: `attendance-api` (free tier).
 - Hosting is still the free test stack (Render + Supabase); move to the company server (phase 8) later.
+
+## 2026-11-14 – Owner change requests after release
+
+- **Employee type "Other" (done, on the development branch).** The type stays mandatory on the public sign-up and on the admin "Add a user" form, with a third choice **Other** and a mandatory free text ("Please specify", 60 characters, same no-link rules as the job title). Backend: `users.employee_type_other`, migration `2026_11_22_100000_add_other_employee_type`, database checks, `employee_type=other` filter. Frontend: both forms, Users filter, labels show the person's own words. Tests: backend 571 passed, frontend 145 unit + auth/admin e2e passed. Not in production until merged into `main` (the migration runs on deploy).
+- **Promoted super admins sign in by one-time email code (already the case, now covered by a test).** Sign-in is decided by the role: any account promoted to super admin loses its password and signs in through "Super admin sign-in" with a code emailed for each sign-in. No code change needed.
+- **User guide** (installation with Safari / Chrome, employee, admin, super admin) delivered to the owner as PDF.
+

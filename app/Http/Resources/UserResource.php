@@ -37,6 +37,7 @@ class UserResource extends JsonResource
             'role' => $user->role->value,
             // UX2-18: the type only means something for employees.
             'employee_type' => $user->role === Role::Employee ? $user->employee_type->value : null,
+            'employee_type_other' => $user->role === Role::Employee ? $user->employee_type_other : null,
             'job_title' => $user->job_title,
             'status' => $user->status->value,
             'photo_url' => app(FileUrls::class)->temporaryUrl($user->photo_path),

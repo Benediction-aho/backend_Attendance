@@ -41,7 +41,7 @@ class AccountService
     /**
      * Public sign-up request. Returns null when the email is already used (the caller answers the same way).
      *
-     * @param  array{email: string, first_name: string, last_name: string, employee_type: string, job_title: string}  $data
+     * @param  array{email: string, first_name: string, last_name: string, employee_type: string, employee_type_other?: string|null, job_title: string}  $data
      */
     public function register(array $data): ?User
     {
@@ -57,6 +57,7 @@ class AccountService
                 'first_name' => $data['first_name'],
                 'last_name' => $data['last_name'],
                 'employee_type' => EmployeeType::from($data['employee_type']),
+                'employee_type_other' => EmployeeType::otherText($data['employee_type'], $data['employee_type_other'] ?? null),
                 'job_title' => $data['job_title'],
                 'role' => Role::Employee,
                 'status' => UserStatus::Pending,
@@ -167,7 +168,7 @@ class AccountService
     /**
      * Direct creation by an authorized admin: active immediately, identification code emailed.
      *
-     * @param  array{email: string, first_name: string, last_name: string, employee_type: string, job_title: string, role: string}  $data
+     * @param  array{email: string, first_name: string, last_name: string, employee_type: string, employee_type_other?: string|null, job_title: string, role: string}  $data
      * @param  list<string>  $permissions
      */
     public function create(array $data, User $by, array $permissions = []): User
@@ -182,6 +183,7 @@ class AccountService
                 'first_name' => $data['first_name'],
                 'last_name' => $data['last_name'],
                 'employee_type' => EmployeeType::from($data['employee_type']),
+                'employee_type_other' => EmployeeType::otherText($data['employee_type'], $data['employee_type_other'] ?? null),
                 'job_title' => $data['job_title'],
                 'role' => Role::from($data['role']),
                 'status' => UserStatus::Active,
