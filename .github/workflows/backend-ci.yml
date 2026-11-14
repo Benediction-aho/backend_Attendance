@@ -60,6 +60,13 @@ jobs:
           cp .env.example .env
           php artisan key:generate
 
+      # The schema tests check what an unprivileged runtime role can do on the activity log: they need this role.
+      - name: Database runtime role for the schema tests
+        run: |
+          psql "postgresql://attendance:attendance@127.0.0.1:5432/attendance_test" -v ON_ERROR_STOP=1 \
+            -c "CREATE ROLE attendance_app_test NOLOGIN" \
+            -c "GRANT attendance_app_test TO attendance"
+
       - name: Code style (Pint)
         run: vendor/bin/pint --test
 
