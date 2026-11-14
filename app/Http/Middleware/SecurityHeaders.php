@@ -39,7 +39,11 @@ class SecurityHeaders
         $response->headers->set('Referrer-Policy', 'no-referrer');
         $response->headers->set('Permissions-Policy', 'camera=(), microphone=(), geolocation=(), payment=()');
         $response->headers->set('Cross-Origin-Opener-Policy', 'same-origin');
-        $response->headers->set('Cross-Origin-Resource-Policy', 'same-site');
+        // Every response is same-site only. One exception sets its own policy and is kept as is: signed private
+        // files (files.show), which the PWA on another site must be able to show in <img>.
+        if (! $response->headers->has('Cross-Origin-Resource-Policy')) {
+            $response->headers->set('Cross-Origin-Resource-Policy', 'same-site');
+        }
         // A route may set a stricter policy (file downloads add `sandbox`); never a weaker one.
         if (! $response->headers->has('Content-Security-Policy')) {
             $response->headers->set('Content-Security-Policy', "default-src 'none'; frame-ancestors 'none'; base-uri 'none'");

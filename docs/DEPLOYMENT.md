@@ -199,3 +199,13 @@ So the frontend CSP (`frontend_Attendance/vercel.json`, owned by attendance-fron
 `img-src` (profile photos) and `connect-src` (PDF downloads fetched by the app), and list the **final API origin** in
 `connect-src`/`img-src` once the production domain is known. Today: `https://ynspiijfjpumatmszmhx.storage.supabase.co`
 and `https://attendance-api-1xgl.onrender.com`. Update both whenever `AWS_ENDPOINT` or `APP_URL` changes.
+
+Cross-origin display of local files (2026-11-14): the PWA (`attendance.assistanceghana.com`) and the API
+(`attendance-api-1xgl.onrender.com`) are two different sites. Every API response carries
+`Cross-Origin-Resource-Policy: same-site`, which made browsers refuse profile photos in `<img>` while
+`PRIVATE_FILES_DISK=local`. The signed file route (`files.show`, `/api/files/...`) now answers with
+`Cross-Origin-Resource-Policy: cross-origin` (the signed, short-lived URL is the access control; `nosniff`, the
+`sandbox` CSP and the attachment disposition are unchanged); every other route keeps `same-site`. Wrong or expired
+links (404) keep `same-site` too.
+**This does not make `local` acceptable on Render**: the container disk is ephemeral, so every photo and PDF is
+lost on each deploy or restart. `PRIVATE_FILES_DISK=s3` (Supabase Storage, private bucket) is still required.
