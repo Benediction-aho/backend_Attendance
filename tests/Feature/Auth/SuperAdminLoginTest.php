@@ -1,0 +1,335 @@
+<?php
+
+use App\Mail\RecoveryLinkMail;
+use App\Mail\SuperAdminLoginCodeMail;
+use App\Models\ActivityLog;
+use App\Models\LoginCode;
+use App\Models\User;
+use App\Settings\SettingsService;
+use Illuminate\Hashing\BcryptHasher;
+use Illuminate\Support\Carbon;
+use Illuminate\Support\Facades\Hash;
+use Illuminate\Support\Facades\Mail;
+
+function requestCode(object $test, string $email): ?string
+{
+    $test->postJson('/api/auth/super-admin/code', ['email' => $email])->assertStatus(202);
+    $code = null;
+    Mail::assertQueued(SuperAdminLoginCodeMail::class, function ($m) use (&$code) {
+        $code = $m->code;
+
+        return true;
+    });
+
+    return $code;
+}
+
+beforeEach(function () {
+    Mail::fake();
+    Carbon::setTestNow(Carbon::parse('2026-11-12 08:00', 'Africa/Accra'));
+    $this->sa = User::factory()->superAdmin()->create(['email' => 'boss@example.com']);
+});
+
+it('emails a one-time numeric code, stored hashed with a 10 minute expiry', function () {
+    $code = requestCode($this, 'boss@example.com');
+
+    $row = LoginCode::query()->sole();
+    expect($code)->toMatch('/^\d{8}$/')
+        ->and($row->code_hash)->not->toBe($code)
+        ->and(Hash::check($code, $row->code_hash))->toBeTrue()
+        ->and($row->expires_at->equalTo(Carbon::now()->addMinutes(10)))->toBeTrue();
+});
+
+it('signs the super admin in with the code exactly once', function () {
+    $code = requestCode($this, 'boss@example.com');
+
+    $this->postJson('/api/auth/login', loginPayload('boss@example.com', $code))->assertOk()->assertJsonPath('user.role', 'super_admin');
+    $this->guest()->postJson('/api/auth/login', loginPayload('boss@example.com', $code))->assertStatus(401);
+});
+
+it('refuses an expired code', function () {
+    $code = requestCode($this, 'boss@example.com');
+    Carbon::setTestNow(Carbon::now()->addMinutes(11));
+
+    $this->postJson('/api/auth/login', loginPayload('boss@example.com', $code))->assertStatus(401)->assertJsonPath('message', 'Invalid email or code.');
+});
+
+it('uses the configured expiry', function () {
+    app(SettingsService::class)->set(['otp_ttl_minutes' => 3]);
+    $code = requestCode($this, 'boss@example.com');
+    Carbon::setTestNow(Carbon::now()->addMinutes(4));
+
+    $this->postJson('/api/auth/login', loginPayload('boss@example.com', $code))->assertStatus(401);
+});
+
+it('invalidates the previous code when a new one is requested', function () {
+    $first = requestCode($this, 'boss@example.com');
+    Mail::fake();
+    $second = requestCode($this, 'boss@example.com');
+
+    $this->postJson('/api/auth/login', loginPayload('boss@example.com', $first))->assertStatus(401);
+    $this->postJson('/api/auth/login', loginPayload('boss@example.com', $second))->assertOk();
+});
+
+it('answers the same and sends nothing for unknown emails, employees and admins', function () {
+    User::factory()->create(['email' => 'emp@example.com']);
+    User::factory()->admin()->create(['email' => 'adm@example.com']);
+
+    foreach (['nobody@example.com', 'emp@example.com', 'adm@example.com'] as $email) {
+        $this->postJson('/api/auth/super-admin/code', ['email' => $email])->assertStatus(202)
+            ->assertJsonPath('message', 'If this email belongs to a super admin account, a sign-in code has been sent.');
+    }
+    Mail::assertNothingQueued();
+    expect(LoginCode::query()->count())->toBe(0);
+});
+
+it('rate limits code requests per account', function () {
+    for ($i = 0; $i < 5; $i++) {
+        $this->postJson('/api/auth/super-admin/code', ['email' => 'boss@example.com'])->assertStatus(202);
+    }
+    // UX2-07: explicit 429 with the waiting time, the same for an unknown email (no enumeration).
+    $this->postJson('/api/auth/super-admin/code', ['email' => 'boss@example.com'])->assertStatus(429)
+        ->assertJsonPath('code', 'too_many_code_requests')->assertHeader('Retry-After');
+    Mail::assertQueued(SuperAdminLoginCodeMail::class, 5);
+    for ($i = 0; $i < 5; $i++) {
+        $this->postJson('/api/auth/super-admin/code', ['email' => 'nobody@example.com'])->assertStatus(202);
+    }
+    $this->postJson('/api/auth/super-admin/code', ['email' => 'nobody@example.com'])->assertStatus(429)->assertJsonPath('code', 'too_many_code_requests');
+});
+
+it('lets a stranger neither use up the owner quota nor cancel the code in transit (P1-05)', function () {
+    $code = requestCode($this, 'boss@example.com'); // the owner, from 127.0.0.1
+
+    // A stranger from another network floods requests for the same email.
+    for ($i = 0; $i < 10; $i++) {
+        $this->withServerVariables(['REMOTE_ADDR' => '203.0.113.9'])
+            ->postJson('/api/auth/super-admin/code', ['email' => 'boss@example.com'])->assertStatus($i < 5 ? 202 : 429);
+    }
+    expect(ActivityLog::query()->where('event', 'auth.login_code_throttled')->exists())->toBeTrue();
+
+    // The owner's code still works, and the owner can still ask for a new one.
+    $this->withServerVariables(['REMOTE_ADDR' => '127.0.0.1'])
+        ->postJson('/api/auth/login', loginPayload('boss@example.com', $code))->assertOk();
+    Mail::fake();
+    $again = requestCode($this->withServerVariables(['REMOTE_ADDR' => '127.0.0.1']), 'boss@example.com');
+    expect($again)->not->toBeNull();
+});
+
+it('keeps at most the configured number of codes valid at once, which also bounds the emails (P1-05)', function () {
+    foreach (['198.51.100.1', '198.51.100.2', '198.51.100.3', '198.51.100.4'] as $ip) {
+        $this->withServerVariables(['REMOTE_ADDR' => $ip])->postJson('/api/auth/super-admin/code', ['email' => 'boss@example.com'])->assertStatus(202);
+    }
+    Mail::assertQueued(SuperAdminLoginCodeMail::class, 3);
+    expect(LoginCode::query()->whereNull('used_at')->count())->toBe(3);
+
+    // Any of the valid codes signs in (one keyed lookup, one bcrypt check).
+    $codes = [];
+    Mail::assertQueued(SuperAdminLoginCodeMail::class, function ($m) use (&$codes) {
+        $codes[] = $m->code;
+
+        return true;
+    });
+    $this->postJson('/api/auth/login', loginPayload('boss@example.com', $codes[0]))->assertOk();
+});
+
+it('never accepts a password for a super admin', function () {
+    $this->sa->password = Hash::make('Password-123');
+    $this->sa->save();
+
+    $this->postJson('/api/auth/login', loginPayload('boss@example.com', 'Password-123'))->assertStatus(401);
+});
+
+it('has no password to change', function () {
+    $this->bearer(deviceToken($this->sa))->putJson('/api/me/password', ['current_password' => 'x', 'new_password' => 'Abcdefgh123', 'new_password_confirmation' => 'Abcdefgh123'])
+        ->assertStatus(422)->assertJsonPath('code', 'no_password');
+});
+
+it('sends a recovery link when locked and restores access once', function () {
+    exhaustLogins($this, 'boss@example.com');
+    $token = null;
+    Mail::assertQueued(RecoveryLinkMail::class, function ($m) use (&$token) {
+        $token = $m->token;
+
+        return $m->hasTo('boss@example.com');
+    });
+    $this->postJson('/api/auth/login', loginPayload('boss@example.com', '00000000'))->assertStatus(423);
+
+    $this->postJson('/api/auth/recovery/confirm', ['token' => $token])->assertOk();
+    $this->postJson('/api/auth/recovery/confirm', ['token' => $token])->assertStatus(422)->assertJsonPath('code', 'invalid_link');
+
+    Mail::fake();
+    $code = requestCode($this, 'boss@example.com');
+    $this->postJson('/api/auth/login', loginPayload('boss@example.com', $code))->assertOk();
+});
+
+it('lets a locked super admin request a new recovery link, which expires', function () {
+    exhaustLogins($this, 'boss@example.com');
+    Mail::fake();
+    $this->postJson('/api/auth/recovery', ['email' => 'boss@example.com'])->assertStatus(202);
+    $token = null;
+    Mail::assertQueued(RecoveryLinkMail::class, function ($m) use (&$token) {
+        $token = $m->token;
+
+        return true;
+    });
+
+    Carbon::setTestNow(Carbon::now()->addMinutes(31));
+    $this->postJson('/api/auth/recovery/confirm', ['token' => $token])->assertStatus(422);
+});
+
+it('does not send a recovery link to an account that is not locked or not a super admin', function () {
+    User::factory()->create(['email' => 'emp@example.com']);
+    $this->postJson('/api/auth/recovery', ['email' => 'boss@example.com'])->assertStatus(202);
+    $this->postJson('/api/auth/recovery', ['email' => 'emp@example.com'])->assertStatus(202);
+    $this->postJson('/api/auth/recovery', ['email' => 'ghost@example.com'])->assertStatus(202);
+
+    Mail::assertNotQueued(RecoveryLinkMail::class);
+});
+
+it('rejects forged recovery tokens', function () {
+    $this->postJson('/api/auth/recovery/confirm', ['token' => str_repeat('a', 64)])->assertStatus(422);
+});
+
+it('invalidates every other outstanding code once the super admin has signed in (P1-17)', function () {
+    foreach (['198.51.100.1', '198.51.100.2', '198.51.100.3'] as $ip) {
+        $this->withServerVariables(['REMOTE_ADDR' => $ip])->postJson('/api/auth/super-admin/code', ['email' => 'boss@example.com'])->assertStatus(202);
+    }
+    $codes = [];
+    Mail::assertQueued(SuperAdminLoginCodeMail::class, function ($m) use (&$codes) {
+        $codes[] = $m->code;
+
+        return true;
+    });
+    expect($codes)->toHaveCount(3);
+
+    $this->postJson('/api/auth/login', loginPayload('boss@example.com', $codes[0]))->assertOk();
+    $this->guest()->postJson('/api/auth/login', loginPayload('boss@example.com', $codes[1]))->assertStatus(401);
+    $this->guest()->postJson('/api/auth/login', loginPayload('boss@example.com', $codes[2]))->assertStatus(401);
+    expect(LoginCode::query()->whereNull('used_at')->count())->toBe(0);
+});
+
+it('still issues a code to a known device of the super admin when strangers filled the cap (P1-16)', function () {
+    // The owner signs in once on their phone: the device becomes known.
+    $first = requestCode($this, 'boss@example.com');
+    $this->postJson('/api/auth/login', loginPayload('boss@example.com', $first, 'owner-phone-000000001'))->assertOk();
+    Mail::fake();
+
+    // Strangers on three IPs (unknown device) fill the active-code cap.
+    foreach (['203.0.113.1', '203.0.113.2', '203.0.113.3'] as $ip) {
+        $this->guest()->withServerVariables(['REMOTE_ADDR' => $ip])
+            ->postJson('/api/auth/super-admin/code', ['email' => 'boss@example.com', 'device_id' => 'stranger-'.$ip])->assertStatus(202);
+    }
+    expect(LoginCode::query()->whereNull('used_at')->count())->toBe(3);
+    $oldest = LoginCode::query()->whereNull('used_at')->orderBy('id')->first();
+
+    // A stranger with an unknown device is still refused...
+    $this->withServerVariables(['REMOTE_ADDR' => '203.0.113.4'])
+        ->postJson('/api/auth/super-admin/code', ['email' => 'boss@example.com', 'device_id' => 'stranger-x'])->assertStatus(202);
+    Mail::assertQueued(SuperAdminLoginCodeMail::class, 3);
+
+    // ...but the owner's known phone gets a code, evicting the oldest stranger code, and the event is alerted.
+    Mail::fake();
+    $this->withServerVariables(['REMOTE_ADDR' => '192.0.2.50'])
+        ->postJson('/api/auth/super-admin/code', ['email' => 'boss@example.com', 'device_id' => 'owner-phone-000000001'])->assertStatus(202);
+    $code = null;
+    Mail::assertQueued(SuperAdminLoginCodeMail::class, function ($m) use (&$code) {
+        $code = $m->code;
+
+        return true;
+    });
+    expect($code)->not->toBeNull()
+        ->and($oldest->fresh()->used_at)->not->toBeNull()
+        ->and(LoginCode::query()->whereNull('used_at')->count())->toBe(3)
+        ->and(ActivityLog::query()->where('event', 'auth.login_code_contention')->value('level')?->value ?? ActivityLog::query()->where('event', 'auth.login_code_contention')->value('level'))->toBe('critical');
+
+    $this->withServerVariables(['REMOTE_ADDR' => '192.0.2.50'])
+        ->postJson('/api/auth/login', loginPayload('boss@example.com', $code, 'owner-phone-000000001'))->assertOk();
+});
+
+function countingHasher(): object
+{
+    $counter = new class(['rounds' => 4]) extends BcryptHasher
+    {
+        public int $makes = 0;
+
+        public function make(#[SensitiveParameter] $value, array $options = []): string
+        {
+            $this->makes++;
+
+            return parent::make($value, $options);
+        }
+    };
+    Hash::extend('counting', fn () => $counter);
+    config(['hashing.driver' => 'counting']);
+
+    return $counter;
+}
+
+it('REL-01: costs one hash on every path, including when the active-code cap is reached', function () {
+    User::factory()->create(['email' => 'emp@example.com']);
+    $counter = countingHasher();
+    $ask = fn (string $email, string $ip) => $this->withServerVariables(['REMOTE_ADDR' => $ip])
+        ->postJson('/api/auth/super-admin/code', ['email' => $email])->assertStatus(202);
+
+    foreach (['ghost@example.com', 'emp@example.com', 'boss@example.com'] as $i => $email) {
+        $before = $counter->makes;
+        $ask($email, '198.51.100.'.($i + 1));
+        expect($counter->makes - $before)->toBe(1);
+    }
+    // Two more IPs fill the cap (3 valid codes), then every further request takes the refused path.
+    $ask('boss@example.com', '198.51.100.20');
+    $ask('boss@example.com', '198.51.100.21');
+    expect(LoginCode::query()->whereNull('used_at')->count())->toBe(3);
+    $before = $counter->makes;
+    $ask('boss@example.com', '198.51.100.22');
+    expect($counter->makes - $before)->toBe(1)
+        ->and(LoginCode::query()->whereNull('used_at')->count())->toBe(3);
+});
+
+it('REL-01: recovery requests cost one hash whether or not a link is sent', function () {
+    $counter = countingHasher();
+    foreach (['ghost@example.com', 'boss@example.com'] as $email) {
+        $before = $counter->makes;
+        $this->postJson('/api/auth/recovery', ['email' => $email])->assertStatus(202);
+        expect($counter->makes - $before)->toBe(1);
+    }
+});
+
+it('REL-02: strangers on other IPs cannot use up the recovery of a locked super admin', function () {
+    exhaustLogins($this, 'boss@example.com');
+    Mail::fake();
+    // 20 IPs x 4 requests: the account+IP quota applies per IP, the sent cap bounds the e-mails.
+    for ($ip = 1; $ip <= 20; $ip++) {
+        for ($k = 0; $k < 4; $k++) {
+            $this->withServerVariables(['REMOTE_ADDR' => '203.0.113.'.$ip])
+                ->postJson('/api/auth/recovery', ['email' => 'boss@example.com'])->assertStatus(202);
+        }
+    }
+    Mail::assertQueuedCount(3);
+    expect(ActivityLog::query()->where('event', 'auth.recovery_contention')->where('level', 'critical')->exists())->toBeTrue();
+
+    // The owner's own (known) device still gets a link.
+    deviceToken($this->sa, 'owner-phone-000000001');
+    $this->withServerVariables(['REMOTE_ADDR' => '198.51.100.50'])
+        ->postJson('/api/auth/recovery', ['email' => 'boss@example.com', 'device_id' => 'owner-phone-000000001'])->assertStatus(202);
+    Mail::assertQueuedCount(4);
+
+    // A stranger's unknown device does not.
+    $this->withServerVariables(['REMOTE_ADDR' => '198.51.100.51'])
+        ->postJson('/api/auth/recovery', ['email' => 'boss@example.com', 'device_id' => 'stranger-0000000001'])->assertStatus(202);
+    Mail::assertQueuedCount(4);
+});
+
+it('REL-02: requests that send nothing do not consume the link quota', function () {
+    Mail::fake();
+    // Not locked: 4 requests from 4 IPs send nothing...
+    for ($ip = 1; $ip <= 4; $ip++) {
+        $this->withServerVariables(['REMOTE_ADDR' => '203.0.113.'.$ip])->postJson('/api/auth/recovery', ['email' => 'boss@example.com'])->assertStatus(202);
+    }
+    Mail::assertNothingQueued();
+    exhaustLogins($this, 'boss@example.com');
+    Mail::fake();
+    // ...so once locked, the owner still gets a link.
+    $this->withServerVariables(['REMOTE_ADDR' => '198.51.100.9'])->postJson('/api/auth/recovery', ['email' => 'boss@example.com'])->assertStatus(202);
+    Mail::assertQueued(RecoveryLinkMail::class);
+});

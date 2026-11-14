@@ -1,0 +1,146 @@
+# Render Blueprint – Assistance Ghana Attendance backend (see docs/DEPLOYMENT.md).
+# One Docker image, three roles. Secrets marked `sync: false` are entered in the Render dashboard.
+envVarGroups:
+  - name: attendance-shared
+    envVars:
+      - key: APP_NAME
+        value: Assistance Ghana Attendance
+      - key: APP_ENV
+        value: production
+      - key: APP_DEBUG
+        value: "false"
+      - key: APP_KEY
+        generateValue: true
+      - key: APP_URL
+        value: https://attendance-api.onrender.com
+      - key: FRONTEND_URL
+        value: https://attendance.assistanceghana.com
+      - key: CORS_ALLOWED_ORIGINS
+        value: https://attendance.assistanceghana.com
+      # REL-05: "*" = trust the immediate peer only (Render's proxy, REMOTE_ADDR); the client IP is the
+      # X-Forwarded-For entry that proxy appends. Only X-Forwarded-For/-Proto are read; links use APP_URL.
+      # Verify after each infrastructure change (docs/DEPLOYMENT.md section 3.4).
+      - key: TRUSTED_PROXIES
+        value: "*"
+      - key: MAX_REQUEST_BODY_KB
+        value: "128"
+      - key: LOG_CHANNEL
+        value: stderr
+      - key: LOG_LEVEL
+        value: warning
+      - key: DB_CONNECTION
+        value: pgsql
+      - key: DB_HOST
+        value: aws-0-eu-west-1.pooler.supabase.com
+      - key: DB_PORT
+        value: "5432"
+      - key: DB_DATABASE
+        value: postgres
+      - key: DB_USERNAME
+        value: postgres.ynspiijfjpumatmszmhx
+      - key: DB_SSLMODE
+        value: require
+      - key: SESSION_DRIVER
+        value: array
+      - key: QUEUE_CONNECTION
+        value: database
+      - key: CACHE_STORE
+        value: database
+      - key: MAIL_MAILER
+        value: resend
+      - key: MAIL_FROM_ADDRESS
+        value: no-reply@attendance.assistanceghana.com
+      - key: MAIL_FROM_NAME
+        value: Assistance Ghana
+      - key: WEBAUTHN_RP_ID
+        value: attendance.assistanceghana.com
+      - key: WEBAUTHN_RP_NAME
+        value: Assistance Ghana Attendance
+      - key: WEBAUTHN_ORIGINS
+        value: https://attendance.assistanceghana.com
+      # REL-07: private files (weekly PDFs, photos, monthly reports) must be shared by web, worker and scheduler
+      # containers and survive deploys: Supabase Storage (S3 API, private bucket). Keys are set per service below.
+      - key: PRIVATE_FILES_DISK
+        value: s3
+      - key: AWS_DEFAULT_REGION
+        value: eu-west-1
+      - key: AWS_ENDPOINT
+        value: https://ynspiijfjpumatmszmhx.storage.supabase.co/storage/v1/s3
+      - key: AWS_USE_PATH_STYLE_ENDPOINT
+        value: "true"
+
+services:
+  - type: web
+    name: attendance-api
+    runtime: docker
+    region: frankfurt
+    plan: starter
+    branch: claude/upbeat-noether-f7defe
+    dockerfilePath: ./Dockerfile
+    healthCheckPath: /api/health
+    autoDeployTrigger: commit
+    envVars:
+      - fromGroup: attendance-shared
+      - key: CONTAINER_ROLE
+        value: app
+      - key: RUN_MIGRATIONS
+        value: "true"
+      - key: DB_PASSWORD
+        sync: false
+      - key: RESEND_API_KEY
+        sync: false
+      - key: AWS_ACCESS_KEY_ID
+        sync: false
+      - key: AWS_SECRET_ACCESS_KEY
+        sync: false
+      - key: AWS_BUCKET
+        sync: false
+
+  - type: worker
+    name: attendance-worker
+    runtime: docker
+    region: frankfurt
+    plan: starter
+    branch: claude/upbeat-noether-f7defe
+    dockerfilePath: ./Dockerfile
+    autoDeployTrigger: commit
+    envVars:
+      - fromGroup: attendance-shared
+      - key: CONTAINER_ROLE
+        value: worker
+      - key: RUN_MIGRATIONS
+        value: "false"
+      - key: DB_PASSWORD
+        sync: false
+      - key: RESEND_API_KEY
+        sync: false
+      - key: AWS_ACCESS_KEY_ID
+        sync: false
+      - key: AWS_SECRET_ACCESS_KEY
+        sync: false
+      - key: AWS_BUCKET
+        sync: false
+
+  - type: worker
+    name: attendance-scheduler
+    runtime: docker
+    region: frankfurt
+    plan: starter
+    numInstances: 1
+    branch: claude/upbeat-noether-f7defe
+    dockerfilePath: ./Dockerfile
+    autoDeployTrigger: commit
+    envVars:
+      - fromGroup: attendance-shared
+      - key: CONTAINER_ROLE
+        value: scheduler
+      - key: RUN_MIGRATIONS
+        value: "false"
+      - key: DB_PASSWORD
+        sync: false
+      - key: AWS_ACCESS_KEY_ID
+        sync: false
+      - key: AWS_SECRET_ACCESS_KEY
+        sync: false
+      - key: AWS_BUCKET
+        sync: false

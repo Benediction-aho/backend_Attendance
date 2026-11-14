@@ -1,0 +1,109 @@
+name: backend-ci
+
+on:
+  push:
+  pull_request:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: backend-ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+
+    services:
+      postgres:
+        image: postgres:17
+        env:
+          POSTGRES_DB: attendance_test
+          POSTGRES_USER: attendance
+          POSTGRES_PASSWORD: attendance
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U attendance -d attendance_test"
+          --health-interval 5s --health-timeout 3s --health-retries 10
+
+    env:
+      DB_CONNECTION: pgsql
+      DB_HOST: 127.0.0.1
+      DB_PORT: 5432
+      DB_DATABASE: attendance_test
+      DB_USERNAME: attendance
+      DB_PASSWORD: attendance
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: shivammathur/setup-php@v2
+        with:
+          php-version: '8.3'
+          extensions: pdo_pgsql, pgsql, intl, mbstring, bcmath, zip
+          coverage: none
+
+      - name: Cache Composer
+        uses: actions/cache@v4
+        with:
+          path: ~/.composer/cache/files
+          key: composer-${{ hashFiles('composer.lock') }}
+
+      - name: Install dependencies
+        run: composer install --no-interaction --no-progress --prefer-dist
+
+      - name: Prepare environment
+        run: |
+          cp .env.example .env
+          php artisan key:generate
+
+      - name: Code style (Pint)
+        run: vendor/bin/pint --test
+
+      - name: Static analysis (Larastan)
+        run: vendor/bin/phpstan analyse --memory-limit=1G --no-progress
+
+      - name: Tests (Pest on PostgreSQL)
+        run: php artisan test
+
+      - name: Migrations are reversible
+        run: |
+          php artisan migrate --force
+          php artisan migrate:rollback --force
+
+  docker-build:
+    # Verifies the production Dockerfile builds (no push) and the image starts and answers /api/health.
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: docker/setup-buildx-action@v3
+
+      - name: Build production image (no push)
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          push: false
+          load: true
+          tags: attendance-backend:ci
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      - name: Smoke test (container starts, /api/health answers)
+        run: |
+          docker run -d --name api -p 8080:8080 \
+            -e APP_KEY="base64:$(openssl rand -base64 32)" \
+            -e DB_CONNECTION=sqlite -e DB_DATABASE=/tmp/ci.sqlite \
+            -e SESSION_DRIVER=array -e CACHE_STORE=array -e QUEUE_CONNECTION=sync \
+            attendance-backend:ci
+          for i in $(seq 1 30); do
+            if curl -fsS http://127.0.0.1:8080/api/health; then echo; break; fi
+            sleep 2
+          done
+          docker logs api
+          curl -fsS -D - -o /dev/null http://127.0.0.1:8080/api/health | tee headers.txt
+          if grep -qiE '^(x-powered-by|server):' headers.txt; then echo "Server/X-Powered-By header leaked"; exit 1; fi

@@ -1,0 +1,1245 @@
+# API contract for attendance-frontend. Kept in the repository only; never served publicly in production.
+openapi: 3.1.0
+info:
+  title: Assistance Ghana Attendance API
+  version: 0.5.0
+  description: |
+    Authentication: **Bearer device tokens only** (Sanctum personal access tokens, one per device).
+    The API sets no cookie and has no CSRF/session endpoint. After login the client receives
+    `token` once and sends it as `Authorization: Bearer <token>` on every request. The PWA stores
+    the token on the device (IndexedDB/localStorage) and deletes it on logout or on a 401.
+    A 401 with `code: account_blocked` means the session was ended because the account was blocked, locked or deleted.
+    Network or 5xx errors must never log the user out; only a 401 does.
+    Any non-multipart body larger than MAX_REQUEST_BODY_KB (default 128 KB) is refused with 413 `payload_too_large` (REL-06).
+servers:
+  - url: http://localhost:8000/api
+paths:
+  /health:
+    get:
+      summary: Liveness probe
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [status]
+                properties:
+                  status: { type: string, enum: [ok] }
+  /admin/settings:
+    get:
+      summary: 'Settings the caller may manage, with current value, default and scheduled future values. Super admin: all sections; admin: only sections granted by manage_settings_attendance / manage_settings_reports / manage_settings_security (403 with none). Super-admin-only settings (super_admin_only: true – monthly_report_recipient_ids, logs_admins_see_super_admin_events, timezone) are never returned to admins.'
+      security: [{ deviceToken: [] }]
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data: { type: array, items: { $ref: '#/components/schemas/Setting' } }
+                  sections: { type: array, items: { type: string, enum: [attendance, reports, security] }, description: Sections the caller can edit }
+        '401': { $ref: '#/components/responses/Unauthenticated' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+    put:
+      summary: 'Change one or more settings, now or from a future date. History is kept; past records keep the old rule. All-or-nothing: if any key is outside the caller''s sections (or super-admin-only for an admin), 403 and nothing is changed. A change by an admin notifies every active super admin (in-app + email, kind settings_changed); every change is in the activity log (settings.updated).'
+      security: [{ deviceToken: [] }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [values]
+              properties:
+                values: { type: object, additionalProperties: true, example: { checkin_radius_m: 60, late_after: '08:15' } }
+                effective_from: { type: string, format: date, description: 'Optional, today or later (Africa/Accra). Omitted or today = immediately.' }
+      responses:
+        '200': { description: Updated settings (same shape as GET) }
+        '422': { $ref: '#/components/responses/ValidationError' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+  /admin/settings/history:
+    get:
+      summary: Settings change history, newest first, 50 per page, limited to the keys the caller may manage (same rules as GET /admin/settings)
+      security: [{ deviceToken: [] }]
+      parameters:
+        - { name: key, in: query, schema: { type: string } }
+        - { name: page, in: query, schema: { type: integer } }
+      responses:
+        '200': { description: 'data[] {key, old_value, new_value, effective_from, changed_at, changed_by{id,name}} + sections + meta' }
+  /auth/register:
+    post:
+      summary: Public sign-up request (no password). Same 202 answer whether or not the email is already used. Rate limited per IP (settings.signup_requests_per_hour), per email and globally (settings.signup_requests_global_per_hour, REL-03). Names - letters, spaces, hyphens, apostrophes, dots followed by a space; job title - letters, digits, spaces and simple punctuation; anything link-like ("://", "www.", a dot glued to a word, "@", brackets) is refused with 422. Unanswered requests are removed after settings.pending_signup_retention_days.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [email, first_name, last_name, employee_type, job_title]
+              properties:
+                email: { type: string, format: email, maxLength: 254 }
+                first_name: { type: string, maxLength: 100 }
+                last_name: { type: string, maxLength: 100 }
+                employee_type: { type: string, enum: [intern, employee] }
+                job_title: { type: string, maxLength: 150, description: As written on the appointment letter }
+      responses:
+        '202': { description: 'Request recorded (or silently ignored). { message }' }
+        '422': { $ref: '#/components/responses/ValidationError' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+  /auth/login:
+    post:
+      summary: Sign in on a device and receive its Bearer token
+      description: |
+        `password` is the identification code, the personal password, or for super admins the one-time code
+        requested with /auth/super-admin/code. `device_id` is a random id generated once by the PWA and kept on the device
+        (16–128 chars, [A-Za-z0-9_-]). One token per device: signing in again on the same device replaces its token.
+        Lockout (security.md 1): per known device 5 failures → 429 for 10 min, 5 more → 429 for 20 min, 5 more → 423 locked
+        (values from settings). All unknown devices of an account share one bucket. Unknown emails behave exactly like real ones.
+        Error codes: invalid_credentials (401; `remaining_attempts` = failures left before the next block, only on a known device of the account – never for unknown devices or unknown emails), code_expired (401), account_blocked (403), login_blocked (429, retry_after_seconds),
+        ip_limited (429, only for unknown devices / unknown emails; known devices are never IP-limited), account_locked (423).
+        Attempts are reserved before the secret is checked: parallel requests never get more than one series checked.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [email, password, device_id]
+              properties:
+                email: { type: string }
+                password: { type: string }
+                device_id: { type: string, minLength: 16, maxLength: 128 }
+                device_name: { type: string, maxLength: 120, example: Ama's phone }
+                is_pwa: { type: boolean }
+      responses:
+        '200':
+          description: Signed in
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  token: { type: string, description: 'Send as Authorization: Bearer <token>. Shown only once.' }
+                  token_type: { type: string, enum: [Bearer] }
+                  must_change_password: { type: boolean, description: 'true → only /me, /me/password and /auth/logout are allowed until the code is changed' }
+                  user: { $ref: '#/components/schemas/User' }
+        '401': { description: 'invalid_credentials or code_expired', content: { application/json: { schema: { $ref: '#/components/schemas/Error' } } } }
+        '403': { description: account_blocked (only after a correct secret) }
+        '423': { description: account_locked }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+  /auth/super-admin/code:
+    post:
+      summary: 'Ask for a one-time sign-in code (super admins). Always 202; a code is emailed only to an active super admin. Rate limited per (account, IP) and per IP; a request only cancels earlier codes asked from the same IP; at most settings.otp_max_active_codes codes are valid at once (any of them signs in). When the cap is reached, a request sent with the `device_id` of a device the super admin already signed in on still gets a code (the oldest code asked from an unknown device is cancelled; P1-16). A successful sign-in cancels every other outstanding code (P1-17). Non-breaking: `device_id` is optional; the PWA should send the same id as for /auth/login.'
+      requestBody: { required: true, content: { application/json: { schema: { type: object, required: [email], properties: { email: { type: string }, device_id: { type: string, maxLength: 200, nullable: true } } } } } }
+      responses:
+        '202': { description: '{ message }' }
+        '429': { description: 'too_many_code_requests (UX2-07): retry_after_seconds + Retry-After header; same for unknown emails' }
+  /auth/recovery:
+    post:
+      summary: 'Ask for a recovery link (super admin whose sign-in is locked or temporarily blocked). Always 202. Counted per (account, IP) and per IP; links actually emailed are capped per account (settings.recovery_links_sent_per_hour) except for a request sent with the `device_id` of a device the super admin already signed in on (REL-02). Non-breaking: `device_id` is optional; the PWA should send the same id as for /auth/login.'
+      requestBody: { required: true, content: { application/json: { schema: { type: object, required: [email], properties: { email: { type: string }, device_id: { type: string, maxLength: 200, nullable: true } } } } } }
+      responses:
+        '202': { description: '{ message }' }
+  /auth/recovery/confirm:
+    post:
+      summary: Use the recovery link token (from the PWA page /recover?token=…). Single use, expires (settings.recovery_link_ttl_minutes).
+      requestBody: { required: true, content: { application/json: { schema: { type: object, required: [token], properties: { token: { type: string } } } } } }
+      responses:
+        '200': { description: Access restored }
+        '422': { description: invalid_link }
+  /auth/email-change/confirm:
+    post:
+      summary: Confirm an email change (from the PWA page /confirm-email?token=…). Public. status = applied | pending (super admin must also confirm from the old address).
+      requestBody: { required: true, content: { application/json: { schema: { type: object, required: [token], properties: { token: { type: string } } } } } }
+      responses:
+        '200': { description: '{ status, message }' }
+        '422': { description: invalid_link or email_unavailable }
+  /auth/logout:
+    post:
+      summary: Sign out this device (deletes its token)
+      security: [{ deviceToken: [] }]
+      responses:
+        '200': { description: Signed out }
+  /me:
+    get:
+      summary: Current user (includes must_change_password and permissions)
+      security: [{ deviceToken: [] }]
+      responses:
+        '200': { description: '{ data: User }' }
+        '401': { $ref: '#/components/responses/Unauthenticated' }
+    patch:
+      summary: Update own profile (only the listed fields; role/status/email are ignored)
+      security: [{ deviceToken: [] }]
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                first_name: { type: string, maxLength: 100 }
+                last_name: { type: string, maxLength: 100 }
+                birth_date: { type: [string, 'null'], format: date }
+                address: { type: [string, 'null'], maxLength: 255 }
+                phone: { type: [string, 'null'], example: '+233 24 123 4567' }
+                whatsapp: { type: [string, 'null'] }
+      responses:
+        '200': { description: '{ data: User }' }
+        '422': { $ref: '#/components/responses/ValidationError' }
+  /me/password:
+    put:
+      summary: Replace the identification code / password. Signs out the other devices; alert email. Not for super admins (422 no_password).
+      security: [{ deviceToken: [] }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [current_password, new_password, new_password_confirmation]
+              properties:
+                current_password: { type: string }
+                new_password: { type: string, description: 'min length from settings (10), letters and digits, not a common password' }
+                new_password_confirmation: { type: string }
+      responses:
+        '200': { description: '{ message, data: User }' }
+        '401': { description: 'reauth_limit: a series of wrong current passwords (settings.lockout_failures_per_series) signs this device out (alert email)' }
+        '422': { description: 'validation, wrong_password, same_password, no_password' }
+        '429': { description: 'login_blocked: current-password checks blocked for this account (same 10/20 min stages as sign-in)' }
+  /me/photo:
+    post:
+      summary: Upload a profile photo (jpeg/png/webp, max settings.photo_max_kb). Re-encoded (metadata removed) and resized to settings.photo_max_dimension_px. Stored privately; User.photo_url is a short-lived URL.
+      security: [{ deviceToken: [] }]
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema: { type: object, required: [photo], properties: { photo: { type: string, format: binary } } }
+      responses:
+        '200': { description: '{ data: User }' }
+        '422': { $ref: '#/components/responses/ValidationError' }
+    delete:
+      summary: Remove the profile photo
+      security: [{ deviceToken: [] }]
+      responses:
+        '200': { description: '{ data: User }' }
+  /me/email:
+    post:
+      summary: Request an email change. Link to the new address + alert to the old one (super admins confirm from both).
+      security: [{ deviceToken: [] }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [email]
+              properties:
+                email: { type: string, format: email }
+                current_password: { type: string, description: Required except for super admins }
+      responses:
+        '202': { description: '{ message }. Same answer when the address is already used by another account (nothing is sent then).' }
+        '401': { description: reauth_limit (see PUT /me/password) }
+        '422': { description: 'wrong_password, same_email, validation' }
+        '429': { description: 'too_many_requests (settings.email_change_requests_per_hour) or login_blocked' }
+  /files/{path}:
+    get:
+      summary: Private file through a signed, short-lived URL (local disk only; online the URL points to Supabase Storage). Never build it by hand; use the URLs returned by the API.
+      parameters: [{ name: path, in: path, required: true, schema: { type: string } }]
+      responses:
+        '200': { description: File }
+        '404': { description: Invalid/expired signature or missing file }
+  /notifications:
+    get:
+      summary: In-app notification centre, newest first, 30 per page
+      security: [{ deviceToken: [] }]
+      parameters: [{ name: unread, in: query, schema: { type: boolean } }, { name: page, in: query, schema: { type: integer } }]
+      responses:
+        '200': { description: '{ data: [{ id, data: { kind, title, body, path, ... }, read_at, created_at }], meta: { current_page, last_page, total, unread_count } }' }
+  /notifications/{id}/read:
+    post:
+      summary: Mark one notification as read
+      security: [{ deviceToken: [] }]
+      parameters: [{ name: id, in: path, required: true, schema: { type: string, format: uuid } }]
+      responses:
+        '200': { description: OK }
+        '404': { description: Not found }
+  /notifications/read-all:
+    post:
+      summary: Mark all notifications as read
+      security: [{ deviceToken: [] }]
+      responses:
+        '200': { description: OK }
+  /client-errors:
+    post:
+      summary: Report an error that happened in the app (stored in the activity log on the account). 10/min.
+      security: [{ deviceToken: [] }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [message]
+              properties:
+                message: { type: string, maxLength: 500 }
+                app_version: { type: string }
+                page: { type: string }
+                platform: { type: string, example: Android 13 / Chrome 120 }
+                stack: { type: string, maxLength: 2000 }
+      responses:
+        '202': { description: Recorded }
+  /admin/permissions:
+    get:
+      summary: Permission tier catalogue (super admin)
+      security: [{ deviceToken: [] }]
+      responses:
+        '200': { description: '{ data: [{ key, label }] }' }
+  /admin/users:
+    get:
+      summary: List accounts (super admin; or admins with create/approve/block/delete tier, employees only). Pending first, then by name. 25 per page.
+      security: [{ deviceToken: [] }]
+      parameters:
+        - { name: status, in: query, schema: { type: string, enum: [pending, active, blocked, locked, deleted] } }
+        - { name: role, in: query, schema: { type: string, enum: [super_admin, admin, employee] } }
+        - { name: employee_type, in: query, schema: { type: string, enum: [intern, employee] } }
+        - { name: q, in: query, schema: { type: string }, description: Search in name and email }
+        - { name: per_page, in: query, schema: { type: integer, maximum: 100 } }
+        - { name: page, in: query, schema: { type: integer } }
+      responses:
+        '200': { description: '{ data: User[], meta }' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+    post:
+      summary: Create an account directly (active, identification code emailed). Admin/super admin roles and permissions require a super admin.
+      security: [{ deviceToken: [] }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [email, first_name, last_name, employee_type, job_title]
+              properties:
+                email: { type: string }
+                first_name: { type: string }
+                last_name: { type: string }
+                employee_type: { type: string, enum: [intern, employee] }
+                job_title: { type: string }
+                role: { type: string, enum: [employee, admin, super_admin], default: employee }
+                permissions: { type: array, items: { type: string }, description: For role admin }
+      responses:
+        '201': { description: '{ message, data: User }' }
+        '409': { description: email_taken }
+  /admin/users/{id}:
+    get:
+      summary: One account (same visibility rules as the list)
+      security: [{ deviceToken: [] }]
+      parameters: [{ $ref: '#/components/parameters/UserId' }]
+      responses:
+        '200': { description: '{ data: User }' }
+        '404': { description: Not found (also deleted accounts) }
+    delete:
+      summary: Soft delete (delete_users tier on employees; super admin for staff). Sessions revoked; history keeps the name.
+      security: [{ deviceToken: [] }]
+      parameters: [{ $ref: '#/components/parameters/UserId' }]
+      responses:
+        '200': { description: Deleted }
+        '409': { description: last_super_admin }
+  /admin/users/{id}/approve:
+    post:
+      summary: Approve a pending sign-up (approve_users tier). Generates and emails the identification code.
+      security: [{ deviceToken: [] }]
+      parameters: [{ $ref: '#/components/parameters/UserId' }]
+      responses:
+        '200': { description: '{ message, data: User }' }
+        '403': { description: Not allowed or not pending }
+  /admin/users/{id}/reject:
+    post:
+      summary: Reject a pending sign-up (approve_users tier). The email can be used again.
+      security: [{ deviceToken: [] }]
+      parameters: [{ $ref: '#/components/parameters/UserId' }]
+      responses:
+        '200': { description: Rejected }
+  /admin/users/{id}/block:
+    post:
+      summary: Block (block_users tier on employees; super admin for staff). Access cut immediately.
+      security: [{ deviceToken: [] }]
+      parameters: [{ $ref: '#/components/parameters/UserId' }]
+      responses:
+        '200': { description: '{ message, data: User }' }
+        '409': { description: last_super_admin }
+  /admin/users/{id}/unblock:
+    post:
+      summary: Unblock
+      security: [{ deviceToken: [] }]
+      parameters: [{ $ref: '#/components/parameters/UserId' }]
+      responses:
+        '200': { description: '{ message, data: User }' }
+        '409': { description: not_blocked }
+  /admin/users/{id}/unlock:
+    post:
+      summary: Restore sign-in after a lockout (block_users tier on employees; super admin for admins). Optionally email a new identification code.
+      security: [{ deviceToken: [] }]
+      parameters: [{ $ref: '#/components/parameters/UserId' }]
+      requestBody: { content: { application/json: { schema: { type: object, properties: { send_new_code: { type: boolean } } } } } }
+      responses:
+        '200': { description: '{ message, data: User }' }
+        '409': { description: not_locked }
+  /admin/users/{id}/code:
+    post:
+      summary: Email a new identification code (approve_users or block_users tier on employees; super admin for admins). Ends the account's sessions.
+      security: [{ deviceToken: [] }]
+      parameters: [{ $ref: '#/components/parameters/UserId' }]
+      responses:
+        '200': { description: '{ message, data: User }' }
+  /admin/users/{id}/permissions:
+    put:
+      summary: Replace an admin's permission tiers (super admin)
+      security: [{ deviceToken: [] }]
+      parameters: [{ $ref: '#/components/parameters/UserId' }]
+      requestBody: { required: true, content: { application/json: { schema: { type: object, required: [permissions], properties: { permissions: { type: array, items: { type: string } } } } } } }
+      responses:
+        '200': { description: '{ message, data: User }' }
+  /admin/users/{id}/role:
+    put:
+      summary: 'Change role / promote (super admin; never on oneself; the last active super admin cannot be demoted). Ends the account''s sessions. REL-08 - promotion to super_admin is allowed only for an admin holding promote_to_super_admin (setting super_admin_promotion_requires_tier, default true), else 422 not_eligible_for_super_admin.' 
+      security: [{ deviceToken: [] }]
+      parameters: [{ $ref: '#/components/parameters/UserId' }]
+      requestBody: { required: true, content: { application/json: { schema: { type: object, required: [role], properties: { role: { type: string, enum: [employee, admin, super_admin] } } } } } }
+      responses:
+        '200': { description: '{ message, data: User }' }
+        '409': { description: last_super_admin or not_active }
+        '422': { description: not_eligible_for_super_admin or validation error }
+  /admin/activity-logs:
+    get:
+      summary: Activity, security, automatic and error logs (super admin, or admin with view_logs). Read-only. Newest first. Entries about super admin accounts are returned to super admins only, unless settings.logs_admins_see_super_admin_events is true.
+      security: [{ deviceToken: [] }]
+      parameters:
+        - { name: user_id, in: query, schema: { type: integer } }
+        - { name: actor_id, in: query, schema: { type: integer } }
+        - { name: type, in: query, schema: { type: string, enum: [action, error, security, automatic] } }
+        - { name: level, in: query, schema: { type: string, enum: [info, warning, error, critical] } }
+        - { name: event, in: query, schema: { type: string }, description: Prefix match, e.g. auth. }
+        - { name: from, in: query, schema: { type: string, format: date } }
+        - { name: to, in: query, schema: { type: string, format: date } }
+        - { name: per_page, in: query, schema: { type: integer, maximum: 200 } }
+      responses:
+        '200': { description: '{ data: [{ id, created_at, type, level, event, description, user{id,name,email,deleted}, actor{id,name}, context, ip, device_id, user_agent }], meta }' }
+
+  /admin/activity-logs/export:
+    get:
+      summary: CSV export of the activity log (super admins only; 403 for everyone else, including view_logs admins).
+      description: |
+        Same filters as /admin/activity-logs (no per_page). Streamed (text/csv; charset=UTF-8, UTF-8 BOM, attachment
+        `activity_log_YYYY-MM-DD_HHMMSS.csv`), newest first (by id; a snapshot of the rows existing when the export starts), capped at settings.log_export_max_rows. Columns: Date (Africa/Accra),
+        Type, Level, Event, Description, User, User email, Actor, IP, Device (readable label: device name, else "<browser> on <platform>" from the user agent; never an internal id), User agent, Context (JSON). Every field is enclosed in
+        double quotes, lines end with CRLF; text is NFKC-normalized and a ' is inserted before = + - @ tab CR LF at the field start
+        (also after leading whitespace) and after any `;` or `,` (CSV injection, any locale). Each export is logged (security event `logs.exported`, filters and row count).
+        Rate limited to settings.log_export_per_hour per super admin: 429 {message, code: too_many_exports, retry_after_seconds} + Retry-After header.
+        CORS exposes Content-Disposition and Retry-After.
+      security: [{ deviceToken: [] }]
+      parameters:
+        - { name: user_id, in: query, schema: { type: integer } }
+        - { name: actor_id, in: query, schema: { type: integer } }
+        - { name: type, in: query, schema: { type: string, enum: [action, error, security, automatic] } }
+        - { name: level, in: query, schema: { type: string, enum: [info, warning, error, critical] } }
+        - { name: event, in: query, schema: { type: string } }
+        - { name: from, in: query, schema: { type: string, format: date } }
+        - { name: to, in: query, schema: { type: string, format: date } }
+      responses:
+        '200': { description: CSV file, content: { text/csv: { schema: { type: string } } } }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '422': { description: Invalid filter }
+        '429': { description: Too many exports }
+
+  # ---------------- Phase 6: dashboards ----------------
+  /me/dashboard:
+    get:
+      summary: Employee dashboard (employees only, else 403). Every figure is computed by the server (Africa/Accra); the client never counts.
+      description: |
+        `today`: day_status, expected, checked_in, checked_out, check_in_at, check_in_type, is_late, mission_status, tasks_planned, tasks_done, clients_count.
+        `week` (Monday → Friday of the current week, the same period as the weekly report; week_end = Friday; counted up to today): week_start, week_end, presence_days, expected_days_so_far, late_count,
+        tasks_planned, tasks_done, clients_count, weekly_report { status: submitted | not_open | open | missing | not_expected, expected, window_date,
+        opens_at, deadline, submitted_at, is_late, version }.
+        `month` (monthly report period containing today, default 26 → 25, counted up to today): period_start, period_end, presence_days, late_count, clients_count.
+      security: [{ deviceToken: [] }]
+      responses:
+        '200': { description: '{ data: { server_time, work_date, today, week, month } }' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '429': { description: 'More than settings.dashboard_requests_per_minute requests per user per minute.' }
+  /admin/dashboard:
+    get:
+      summary: Admin / super admin dashboard; sections and fields depend on the viewer's tiers (403 for employees).
+      description: |
+        A section or field the viewer is not allowed to see is **absent** (never 0). Super admins get everything.
+        - `today` (any attendance tier, as /admin/attendance/day): expected, checked_in (among the expected only, so checked_in + missing = expected),
+          checked_in_not_expected (members checked in on a day they were not expected; blocked/deleted accounts never count), missing (expected without check-in yet), on_leave, remote,
+          day_off (personal day off or weekly non-working day), holiday, not_working (= on_leave + day_off + holiday, kept for compatibility; UX6-03); + `late`, `refused_attempts` with view_lateness; + `missions_pending` with approve_mission_checkins.
+          Population: active employees/interns who were members on that day.
+        - `week` (view_reports or receive_weekly_reports): week_start, week_end (Friday), window_date, closes_at, closed, weekly_reports_received, weekly_reports_expected
+          (received = current report from an expected employee).
+        - `month` (period of the monthly report containing today, default 26 → 25, up to today): period_start, period_end, to_date; + `late_count` with
+          view_lateness; + `clients_count`, `services_top` [{ service, service_key, quantity }] (settings.dashboard_top_services) with view_clients or view_statistics.
+        - `pending`: sign_up_requests (approve_users), faceid_devices (approve_faceid_devices; employees' devices only for admins), missions (approve_mission_checkins).
+      security: [{ deviceToken: [] }]
+      responses:
+        '200': { description: '{ data: { server_time, work_date, today?, week?, month?, pending? } }' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '429': { description: 'More than settings.dashboard_requests_per_minute requests per user per minute (both dashboards).' }
+
+  # ---------------- Phase 3: attendance ----------------
+  /attendance/today:
+    get:
+      summary: Today's status for the employee (employees only, else 403 employees_only). Includes the server time for clock sync.
+      description: |
+        Work date and lateness are computed by the server (Africa/Accra). The client never sends a time or a date.
+        `available_check_ins` lists the check-in types allowed now (empty once checked in). `rules` come from settings.
+        Office coordinates are never returned; the server decides the perimeter.
+      security: [{ deviceToken: [] }]
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  server_time: { type: string, format: date-time }
+                  server_timestamp_ms: { type: integer }
+                  timezone: { type: string, example: Africa/Accra }
+                  work_date: { type: string, format: date }
+                  day_status: { $ref: '#/components/schemas/DayStatus' }
+                  expected: { type: boolean }
+                  holiday_name: { type: [string, 'null'] }
+                  checked_in: { type: boolean }
+                  checked_out: { type: boolean }
+                  attendance: { oneOf: [{ $ref: '#/components/schemas/Attendance' }, { type: 'null' }] }
+                  available_check_ins: { type: array, items: { type: string, enum: [gps, mission, remote] } }
+                  rules:
+                    type: object
+                    properties:
+                      radius_m: { type: integer }
+                      max_accuracy_m: { type: integer }
+                      late_after: { type: string, example: '08:10' }
+                      checkin_opens_at: { type: string, example: '06:00', description: 'Employee check-in refused before this time (HH:MM)' }
+                      checkin_open: { type: boolean, description: 'false before checkin_opens_at on the current work date' }
+                      end_of_day: { type: string, example: '17:00' }
+                      early_checkout_reason_required: { type: boolean }
+                      faceid_required: { type: boolean }
+                  faceid_state: { type: string, enum: [ready, not_registered, pending_approval, other_device], description: Face ID readiness on this device }
+        '403': { $ref: '#/components/responses/Forbidden' }
+  /attendance/check-in/intent:
+    post:
+      summary: 'Check-in step 1: perimeter check (gps) or eligibility (mission, remote). Rate limited (checkin_attempts_per_minute).'
+      description: |
+        gps: latitude, longitude, accuracy required. Refused with 422 `low_accuracy` (accuracy_m, max_accuracy_m: retry automatically
+        while the position improves) or `out_of_perimeter` (distance_m, radius_m); refusals are recorded for admins.
+        mission: reason required, position optional. remote: only on the employee's remote days (422 `not_remote_day`).
+        Refused with 422 `checkin_not_open` (opens_at, HH:MM) before checkin_opens_at (default 06:00) for gps, mission and remote;
+        admin on-behalf check-in is not restricted. max_accuracy_m defaults to 100 (checkin_max_accuracy_m); the low_accuracy
+        message states the measured and accepted values and what to do.
+        409 `already_checked_in` once today's attendance exists (one per work date; after a check-out the message says the next
+        check-in is tomorrow from the opening time). The intent expires after checkin_intent_ttl_seconds (default 120).
+        When faceid_required_for_checkin is on (default), refused first with 403 `faceid_not_registered` (register on this device),
+        `faceid_pending_approval` (new device waiting for an admin) or `faceid_other_device` (registered on another phone).
+      security: [{ deviceToken: [] }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [type]
+              properties:
+                type: { type: string, enum: [gps, mission, remote] }
+                latitude: { type: number }
+                longitude: { type: number }
+                accuracy: { type: number, description: metres }
+                reason: { type: string, maxLength: 500 }
+      responses:
+        '201':
+          description: Intent created
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  intent_id: { type: string, format: uuid }
+                  type: { type: string }
+                  expires_at: { type: string, format: date-time }
+                  distance_m: { type: [number, 'null'] }
+                  faceid_required: { type: boolean }
+                  faceid_options:
+                    type: ['object', 'null']
+                    description: 'null when Face ID is not required. public_key = PublicKeyCredentialRequestOptionsJSON (base64url challenge bound to this intent, rpId, allowCredentials, userVerification: required) for navigator.credentials.get().'
+                    properties:
+                      challenge_id: { type: string, format: uuid }
+                      public_key: { type: object }
+        '403': { description: 'faceid_not_registered | faceid_pending_approval | faceid_other_device | employees_only' }
+        '409': { description: already_checked_in }
+        '422': { description: 'checkin_not_open | low_accuracy | out_of_perimeter | not_remote_day | reason_required | location_required | validation' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+  /attendance/check-in/confirm:
+    post:
+      summary: 'Check-in step 2: confirmation with the Face ID assertion. Idempotent.'
+      description: |
+        201 with `created: true` when the attendance is written; 200 with `created: false` and the same attendance on a double submit.
+        422 `intent_invalid` (expired, other user, other day, other device) or `faceid_failed` (missing/invalid assertion, wrong credential,
+        revoked credential, replayed challenge, sign counter regression). After `faceid_failed` start again with a new intent.
+        Lateness uses the server time of this confirmation.
+      security: [{ deviceToken: [] }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [intent_id]
+              properties:
+                intent_id: { type: string, format: uuid }
+                assertion: { type: object, description: 'PublicKeyCredential JSON from navigator.credentials.get() (id, rawId, type, response.clientDataJSON/authenticatorData/signature/userHandle, base64url) – e.g. credential.toJSON()' }
+      responses:
+        '201': { description: '{ data: Attendance, created: true, today: <same body as GET /attendance/today> } – render `today` immediately (UX34-02)' }
+        '200': { description: '{ data: Attendance, created: false, today: <same body as GET /attendance/today> }' }
+        '422': { description: intent_invalid | faceid_failed }
+  /attendance/check-out:
+    post:
+      summary: Check-out from anywhere. Position optional (distance to the office shown in history). Reason required before end_of_day.
+      security: [{ deviceToken: [] }]
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                latitude: { type: number }
+                longitude: { type: number }
+                accuracy: { type: number }
+                reason: { type: string, maxLength: 500 }
+      responses:
+        '200': { description: '{ data: Attendance, today: <same body as GET /attendance/today> }' }
+        '409': { description: not_checked_in | already_checked_out }
+        '422': { description: 'reason_required (end_of_day)' }
+  /attendance/history:
+    get:
+      summary: Own attendances, newest first.
+      security: [{ deviceToken: [] }]
+      parameters:
+        - { name: from, in: query, schema: { type: string, format: date } }
+        - { name: to, in: query, schema: { type: string, format: date } }
+        - { name: per_page, in: query, schema: { type: integer, maximum: 100 } }
+      responses:
+        '200': { description: '{ data: Attendance[], meta }' }
+  /me/work-schedule:
+    get:
+      summary: Own days off / remote days (employees). `locked` once selected.
+      security: [{ deviceToken: [] }]
+      responses:
+        '200': { description: '{ selected, locked, max_days_off_per_week, max_remote_days_per_week, working_days, current: WorkSchedule|null, upcoming: WorkSchedule[] }' }
+    post:
+      summary: One-time selection by the employee (ISO weekdays 1 = Monday … 7 = Sunday, only working days, at most max_days_off_per_week / max_remote_days_per_week). Takes effect from the next day (returned under `upcoming`, `current` unchanged today); manage_work_schedules admins are notified. 409 schedule_locked afterwards.
+      security: [{ deviceToken: [] }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { type: object, required: [days_off, remote_days], properties: { days_off: { type: array, items: { type: integer } }, remote_days: { type: array, items: { type: integer } } } }
+      responses:
+        '201': { description: Saved }
+        '409': { description: schedule_locked }
+        '422': { description: 'Validation or schedule_overlap' }
+  /me/leaves:
+    get:
+      summary: Own leave periods.
+      security: [{ deviceToken: [] }]
+      responses:
+        '200': { description: '{ data: [{ id, start_date, end_date, note }] }' }
+  /holidays:
+    get:
+      summary: Public holidays (any signed-in user).
+      security: [{ deviceToken: [] }]
+      parameters: [{ name: year, in: query, schema: { type: integer } }]
+      responses:
+        '200': { description: '{ data: [{ id, date, name }] }' }
+  /admin/holidays:
+    post:
+      summary: Add a holiday (super admin or manage_leaves).
+      security: [{ deviceToken: [] }]
+      requestBody: { content: { application/json: { schema: { type: object, required: [date, name], properties: { date: { type: string, format: date }, name: { type: string } } } } } }
+      responses:
+        '201': { description: Created }
+  /admin/holidays/{id}:
+    delete:
+      summary: Remove a holiday (super admin or manage_leaves).
+      security: [{ deviceToken: [] }]
+      parameters: [{ name: id, in: path, required: true, schema: { type: integer } }]
+      responses:
+        '204': { description: Deleted }
+  /admin/leaves:
+    get:
+      summary: Leave periods of employees (manage_leaves).
+      security: [{ deviceToken: [] }]
+      parameters:
+        - { name: user_id, in: query, schema: { type: integer } }
+        - { name: from, in: query, schema: { type: string, format: date } }
+        - { name: to, in: query, schema: { type: string, format: date } }
+      responses:
+        '200': { description: '{ data: [{ id, user_id, user: EmployeeSummary, start_date, end_date, note, created_by }], meta }' }
+  /admin/users/{id}/leaves:
+    post:
+      summary: Declare a leave for an active employee (manage_leaves). 422 leave_overlap.
+      security: [{ deviceToken: [] }]
+      parameters: [{ $ref: '#/components/parameters/UserId' }]
+      requestBody: { content: { application/json: { schema: { type: object, required: [start_date, end_date], properties: { start_date: { type: string, format: date }, end_date: { type: string, format: date }, note: { type: string } } } } } }
+      responses:
+        '201': { description: Created }
+  /admin/leaves/{id}:
+    delete:
+      summary: Remove a leave (manage_leaves).
+      security: [{ deviceToken: [] }]
+      parameters: [{ name: id, in: path, required: true, schema: { type: integer } }]
+      responses:
+        '204': { description: Deleted }
+  /admin/users/{id}/work-schedule:
+    get:
+      summary: An employee's schedule (manage_work_schedules or any attendance tier).
+      security: [{ deviceToken: [] }]
+      parameters: [{ $ref: '#/components/parameters/UserId' }]
+      responses:
+        '200': { description: Same shape as GET /me/work-schedule }
+    put:
+      summary: Change days off / remote days (manage_work_schedules), from effective_from (default today, never in the past).
+      security: [{ deviceToken: [] }]
+      parameters: [{ $ref: '#/components/parameters/UserId' }]
+      requestBody: { content: { application/json: { schema: { type: object, required: [days_off, remote_days], properties: { days_off: { type: array, items: { type: integer } }, remote_days: { type: array, items: { type: integer } }, effective_from: { type: string, format: date } } } } } }
+      responses:
+        '200': { description: Saved }
+  /admin/attendance/day:
+    get:
+      summary: 'Every active employee for a date with day status and attendance. Any attendance tier (view_lateness, view_activities, view_performance, approve_mission_checkins, checkin_for_employee, manage_leaves, manage_work_schedules).'
+      description: is_late, late_after, early_leave and early_leave_reason only with view_lateness; raw positions only for super admins.
+      security: [{ deviceToken: [] }]
+      parameters: [{ name: date, in: query, schema: { type: string, format: date } }]
+      responses:
+        '200': { description: '{ date, server_time, data: [{ user: EmployeeSummary, day_status, expected, attendance: Attendance|null }] }' }
+  /admin/users/{id}/attendance:
+    get:
+      summary: An employee's attendance history (any attendance tier, employees only).
+      security: [{ deviceToken: [] }]
+      parameters:
+        - { $ref: '#/components/parameters/UserId' }
+        - { name: from, in: query, schema: { type: string, format: date } }
+        - { name: to, in: query, schema: { type: string, format: date } }
+      responses:
+        '200': { description: '{ data: Attendance[], meta }' }
+  /admin/users/{id}/check-in:
+    post:
+      summary: Fallback check-in on behalf of an employee (checkin_for_employee), with a reason. Logged. 409 already_checked_in. Not restricted by checkin_opens_at.
+      security: [{ deviceToken: [] }]
+      parameters: [{ $ref: '#/components/parameters/UserId' }]
+      requestBody: { content: { application/json: { schema: { type: object, required: [reason], properties: { reason: { type: string, minLength: 3, maxLength: 500 } } } } } }
+      responses:
+        '201': { description: '{ data: Attendance }' }
+        '409': { description: already_checked_in }
+  /admin/attendance/missions:
+    get:
+      summary: Mission check-ins (approve_mission_checkins), default status pending.
+      security: [{ deviceToken: [] }]
+      parameters: [{ name: status, in: query, schema: { type: string, enum: [pending, approved, rejected] } }]
+      responses:
+        '200': { description: '{ data: (Attendance + user: EmployeeSummary)[], meta }' }
+  /admin/attendance/{id}/mission/approve:
+    post:
+      summary: Approve a pending mission check-in (approve_mission_checkins). 409 mission_already_reviewed.
+      security: [{ deviceToken: [] }]
+      parameters: [{ name: id, in: path, required: true, schema: { type: integer } }]
+      requestBody: { content: { application/json: { schema: { type: object, properties: { note: { type: string } } } } } }
+      responses:
+        '200': { description: '{ data: Attendance }' }
+  /admin/attendance/{id}/mission/reject:
+    post:
+      summary: Reject a pending mission check-in (approve_mission_checkins). The attendance stays, marked rejected.
+      security: [{ deviceToken: [] }]
+      parameters: [{ name: id, in: path, required: true, schema: { type: integer } }]
+      responses:
+        '200': { description: '{ data: Attendance }' }
+  /admin/attendance/attempts:
+    get:
+      summary: Refused check-ins (view_lateness).
+      security: [{ deviceToken: [] }]
+      parameters:
+        - { name: user_id, in: query, schema: { type: integer } }
+        - { name: date, in: query, schema: { type: string, format: date } }
+      responses:
+        '200': { description: '{ data: [{ id, user_id, user: EmployeeSummary, work_date, outcome: out_of_perimeter|low_accuracy, distance_m, accuracy_m, created_at }], meta }' }
+  /me/faceid:
+    get:
+      summary: Face ID status on this device and the employee's credentials (pending/approved). Employees only.
+      security: [{ deviceToken: [] }]
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  state: { type: string, enum: [ready, not_registered, pending_approval, other_device] }
+                  can_reregister: { type: boolean, description: 'UX34-01: true when state=ready and no replacement is pending. Offer "Set up Face ID again on this phone" after repeated Face ID failures (passkey lost); call register/options with reregister=true.' }
+                  replacement_pending: { type: boolean, description: 'A new passkey for this phone waits for admin approval; the old one keeps working (if it still exists) until then.' }
+                  data: { type: array, items: { allOf: [{ $ref: '#/components/schemas/FaceIdCredential' }, { type: object, properties: { this_device: { type: boolean } } }] } }
+  /me/faceid/register/options:
+    post:
+      summary: Face ID registration step 1 (PublicKeyCredentialCreationOptionsJSON). Employees only; requires a device token.
+      description: |
+        Platform authenticator, userVerification required, attestation none. The challenge is single use, expires after
+        faceid_challenge_ttl_seconds (default 120) and is bound to this user and device. 409 `faceid_already_registered` when this
+        device is already ready, unless `reregister: true` is sent (UX34-01: passkey lost on the phone). A re-registration
+        creates a **pending** credential on the same device (owner alert email, approvers notified with
+        `reregistration: true`); on approval the old credential is revoked; on rejection the old one stays.
+        403 `device_required` for a token without device.
+      security: [{ deviceToken: [] }]
+      requestBody:
+        content:
+          application/json:
+            schema: { type: object, properties: { reregister: { type: boolean } } }
+      responses:
+        '201':
+          description: Options
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  challenge_id: { type: string, format: uuid }
+                  expires_at: { type: string, format: date-time }
+                  public_key: { type: object, description: 'pass to navigator.credentials.create({ publicKey }) after base64url decoding (PublicKeyCredential.parseCreationOptionsFromJSON)' }
+  /me/faceid/register:
+    post:
+      summary: Face ID registration step 2. First credential of the account approved; any later one pending until an admin approves. Every registration sends the account owner an email + in-app alert (kind faceid_device_registered).
+      description: |
+        422 `challenge_invalid` (expired, used, other user/device: restart), `faceid_failed` (verification failed, no user verification),
+        409 `faceid_already_registered`. A new pending request replaces an earlier pending one. Approvers are notified.
+      security: [{ deviceToken: [] }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [challenge_id, credential]
+              properties:
+                challenge_id: { type: string, format: uuid }
+                credential: { type: object, description: 'PublicKeyCredential JSON from navigator.credentials.create() (id, rawId, type, response.clientDataJSON, response.attestationObject, response.transports)' }
+                name: { type: string, maxLength: 100, description: 'e.g. "iPhone 13"' }
+      responses:
+        '201':
+          description: Registered
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data: { $ref: '#/components/schemas/FaceIdCredential' }
+                  state: { type: string, enum: [ready, not_registered, pending_approval, other_device] }
+  /admin/faceid/credentials:
+    get:
+      summary: Face ID devices by status (default pending). Tier approve_faceid_devices; admins see employees only.
+      security: [{ deviceToken: [] }]
+      parameters:
+        - { name: status, in: query, schema: { type: string, enum: [pending, approved, revoked] } }
+        - { name: user_id, in: query, schema: { type: integer } }
+      responses:
+        '200': { description: 'data: FaceIdCredential + user: EmployeeSummary + registration {device_id, replaces_same_device (UX34-01), registered_at, ip, platform, browser, user_agent, device_first_seen_at}; meta' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+  /admin/faceid/credentials/{id}/approve:
+    post:
+      summary: Approve a pending device (tier approve_faceid_devices; never one's own, admins only employees). The previous approved credential is revoked.
+      security: [{ deviceToken: [] }]
+      responses:
+        '200': { description: 'data: FaceIdCredential' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '409': { description: faceid_already_reviewed }
+  /admin/faceid/credentials/{id}/reject:
+    post:
+      summary: Reject a pending device (status revoked, revoke_reason rejected).
+      security: [{ deviceToken: [] }]
+      responses:
+        '200': { description: 'data: FaceIdCredential' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '409': { description: faceid_already_reviewed }
+  /admin/faceid/credentials/{id}/revoke:
+    post:
+      summary: Revoke any credential (super admin only). The employee must register again (pending approval).
+      security: [{ deviceToken: [] }]
+      responses:
+        '200': { description: 'data: FaceIdCredential' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '409': { description: faceid_already_revoked }
+  /push/public-key:
+    get:
+      summary: VAPID public key for pushManager.subscribe (applicationServerKey); null when push is not configured.
+      security: [{ deviceToken: [] }]
+      responses:
+        '200': { description: 'public_key: string|null' }
+  /push/subscriptions:
+    post:
+      summary: Save this browser's push subscription (PushSubscription.toJSON()), linked to this device session. Any role.
+      description: |
+        Endpoint must be https on a known push service (FCM, Apple, Mozilla, Windows) – 422 `push_endpoint_invalid` otherwise.
+        The same endpoint is moved to the account signed in now only when it comes from the same physical device (shared browser);
+        an endpoint owned by another account on another device → 409 `push_endpoint_conflict`. Removed automatically on sign-out and when the push service answers 404/410.
+        Every in-app notification is also pushed (payload JSON: kind, title, body, path, tag). Re-subscribe after each sign-in.
+      security: [{ deviceToken: [] }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [endpoint, keys]
+              properties:
+                endpoint: { type: string, maxLength: 2048 }
+                keys: { type: object, required: [p256dh, auth], properties: { p256dh: { type: string }, auth: { type: string } } }
+                content_encoding: { type: string, enum: [aes128gcm, aesgcm] }
+      responses:
+        '201': { description: Saved }
+        '409': { description: push_endpoint_conflict }
+        '422': { $ref: '#/components/responses/ValidationError' }
+    delete:
+      summary: Remove this browser's subscription (body {endpoint}).
+      security: [{ deviceToken: [] }]
+      responses:
+        '200': { description: Removed }
+  /me/tasks:
+    get:
+      summary: Own tasks of a work date (default today, server time). Employees only; reading never needs the check-in.
+      security: [{ deviceToken: [] }]
+      parameters:
+        - { name: date, in: query, schema: { type: string, format: date } }
+      responses:
+        '200': { description: 'work_date, data: Task[]' }
+        '403': { description: employees_only }
+    post:
+      summary: Add a task for today (planned, or done at once with done=true). Needs today's check-in (403 checkin_required). The work date and completion time are set by the server.
+      security: [{ deviceToken: [] }]
+      requestBody:
+        content:
+          application/json:
+            schema: { type: object, required: [title], properties: { title: { type: string, maxLength: 500 }, done: { type: boolean } } }
+      responses:
+        '201': { description: 'data: Task' }
+        '403': { description: checkin_required | employees_only }
+        '422': { description: 'title_required | too_many_tasks (setting tasks_max_per_day) | validation' }
+  /me/tasks/{id}:
+    patch:
+      summary: Edit own task at any time (title, done true/false). done=true sets completed_at to the server time; false clears it. Recomputes an already generated daily report.
+      security: [{ deviceToken: [] }]
+      requestBody:
+        content:
+          application/json:
+            schema: { type: object, properties: { title: { type: string, maxLength: 500 }, done: { type: boolean } } }
+      responses:
+        '200': { description: 'data: Task' }
+        '403': { description: checkin_required }
+        '404': { description: not found or another user's task }
+    delete:
+      summary: Delete own task.
+      security: [{ deviceToken: [] }]
+      responses:
+        '204': { description: deleted }
+        '404': { description: not found }
+  /me/clients:
+    get:
+      summary: Own clients of a work date (default today) + services grouped by normalized key.
+      security: [{ deviceToken: [] }]
+      parameters:
+        - { name: date, in: query, schema: { type: string, format: date } }
+      responses:
+        '200': { description: 'work_date, data: Client[], services: ServiceTotal[]' }
+    post:
+      summary: Add a client won today. Needs today's check-in.
+      security: [{ deviceToken: [] }]
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [name, service, quantity]
+              properties:
+                name: { type: string, maxLength: 200 }
+                service: { type: string, maxLength: 200, description: 'Free text; extra spaces collapsed; grouped case-insensitively (service_key)' }
+                quantity: { type: integer, minimum: 1, description: 'max = setting client_quantity_max (999)' }
+      responses:
+        '201': { description: 'data: Client' }
+        '403': { description: checkin_required | employees_only }
+        '422': { description: 'name_required | service_required | too_many_clients | validation' }
+  /me/clients/{id}:
+    patch:
+      summary: Edit own client entry at any time (name, service, quantity).
+      security: [{ deviceToken: [] }]
+      responses:
+        '200': { description: 'data: Client' }
+        '404': { description: not found }
+    delete:
+      summary: Delete own client entry.
+      security: [{ deviceToken: [] }]
+      responses:
+        '204': { description: deleted }
+  /clients/services:
+    get:
+      summary: Service suggestions (services already entered by anyone, one spelling per key, most used first, max 20). Employees only.
+      security: [{ deviceToken: [] }]
+      parameters:
+        - { name: q, in: query, schema: { type: string, maxLength: 100 } }
+      responses:
+        '200': { description: 'data: [{service, service_key}]' }
+  /me/reports/daily:
+    get:
+      summary: Own daily report (live data) – tasks, counts, clients, services; generated_at once the 17:00 job ran.
+      security: [{ deviceToken: [] }]
+      parameters:
+        - { name: date, in: query, schema: { type: string, format: date } }
+      responses:
+        '200': { description: 'data: {work_date, tasks[], tasks_planned, tasks_done, clients[], clients_count, services: ServiceTotal[], generated_at}' }
+  /me/reports/weekly:
+    get:
+      summary: Own weekly summary Monday → Friday of the week containing `date` (default today), with the clients recap.
+      security: [{ deviceToken: [] }]
+      parameters:
+        - { name: date, in: query, schema: { type: string, format: date } }
+      responses:
+        '200': { description: 'data: {week_start, week_end, days[{work_date, tasks_planned, tasks_done, clients_count, services}], tasks_planned, tasks_done, clients_count, clients[{work_date, name, service, quantity}], services}' }
+  /me/reports/weekly/submission:
+    get:
+      summary: Weekly PDF status – week an upload now belongs to, window, personal deadline (grace when absent on the report day), versions.
+      security: [{ deviceToken: [] }]
+      responses:
+        '200': { description: 'data: {can_submit, week_start, window_date, opens_at, closes_at, deadline, is_late_now, expected, max_size_mb, current: WeeklySubmission|null, versions: WeeklySubmission[]}' }
+    post:
+      summary: |
+        Upload (or replace) the weekly PDF (multipart field `file`). PDF only (magic bytes), max report_pdf_max_mb (10 MB).
+        Accepted from the report day's window opening (Friday 16:00); before that, only for the previous week if it has no report yet.
+        After the deadline the version is flagged is_late; anything received after Friday 17:00 is forwarded to the authorized staff at once.
+        Each upload is a new version; previous files are kept. Needs today's check-in on expected days.
+      security: [{ deviceToken: [] }]
+      requestBody:
+        content:
+          multipart/form-data:
+            schema: { type: object, required: [file], properties: { file: { type: string, format: binary } } }
+      responses:
+        '201': { description: 'data: WeeklySubmission' }
+        '403': { description: checkin_required | employees_only }
+        '422': { description: 'invalid_pdf | pdf_encrypted (password-protected PDF; checked before active content) | pdf_active_content (scripts, launch actions or embedded files) | window_not_open (opens_at) | too_many_versions | validation (size)' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+  /admin/reports/daily:
+    get:
+      summary: Daily reports of active employees who had joined by that date (approved_at/created_at, or with a generated report for it; UX6-08), or one user_id. Tier view_reports; `tasks` only with view_tasks, `clients` only with view_clients.
+      security: [{ deviceToken: [] }]
+      parameters:
+        - { name: date, in: query, schema: { type: string, format: date } }
+        - { name: user_id, in: query, schema: { type: integer } }
+      responses:
+        '200': { description: 'work_date, data: [{user: EmployeeSummary, day_status, generated_at, tasks_planned, tasks_done, clients_count, services, tasks?, clients?}]' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+  /admin/users/{id}/reports/weekly:
+    get:
+      summary: Weekly summary of an employee. Tier view_reports (`clients` recap only with view_clients).
+      security: [{ deviceToken: [] }]
+      parameters:
+        - { name: date, in: query, schema: { type: string, format: date } }
+      responses:
+        '200': { description: 'user, data (same as /me/reports/weekly)' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+  /admin/reports/weekly:
+    get:
+      summary: Weekly PDF window of the week containing `date` – expected employees, who sent, current PDFs. Tier view_reports or receive_weekly_reports.
+      security: [{ deviceToken: [] }]
+      parameters:
+        - { name: date, in: query, schema: { type: string, format: date } }
+      responses:
+        '200': { description: 'week_start, window_date, opens_at, closes_at, expected_count, received_count, missing: [EmployeeSummary] (expected employees without a current report, sorted by name; email only for viewers allowed to list accounts), data: [{user: EmployeeSummary, expected, submission: WeeklySubmission|null}]. Expected = active employees who were members (approved_at, else created_at) on the window date and expected that day (UX5-02).' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+  /admin/reports/weekly/submissions/{id}:
+    get:
+      summary: One weekly PDF with all versions (temporary file URLs) and the employee's clients of the week. Tier view_reports or receive_weekly_reports. Linked from the notifications/emails.
+      security: [{ deviceToken: [] }]
+      responses:
+        '200': { description: 'data: WeeklySubmission + user + versions[] + week {clients_count, services, clients}' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { description: not found }
+components:
+  securitySchemes:
+    deviceToken:
+      type: http
+      scheme: bearer
+  parameters:
+    UserId:
+      name: id
+      in: path
+      required: true
+      schema: { type: integer }
+  responses:
+    Unauthenticated:
+      description: Missing, invalid or expired device token, or the account is no longer active. The client must discard its token.
+      content: { application/json: { schema: { $ref: '#/components/schemas/Error' } } }
+    Forbidden:
+      description: Authenticated but not allowed. When `code` is `password_change_required`, the user must change the identification code first.
+      content: { application/json: { schema: { $ref: '#/components/schemas/Error' } } }
+    ValidationError:
+      description: Invalid input.
+      content: { application/json: { schema: { $ref: '#/components/schemas/Error' } } }
+    TooManyRequests:
+      description: Rate limited or temporarily blocked. `retry_after_seconds` may be present.
+      content: { application/json: { schema: { $ref: '#/components/schemas/Error' } } }
+  schemas:
+    EmployeeSummary:
+      type: object
+      description: 'Employee identity in admin lists (UX34-04). email only when the viewer may list user accounts (super admin / manage-users tiers); use job_title + email (or id) to tell homonyms apart.'
+      properties:
+        id: { type: integer }
+        first_name: { type: string }
+        last_name: { type: string }
+        job_title: { type: ['string', 'null'] }
+        employee_type: { type: string }
+        email: { type: string, format: email }
+    Task:
+      type: object
+      properties:
+        id: { type: integer }
+        work_date: { type: string, format: date }
+        title: { type: string }
+        status: { type: string, enum: [planned, done] }
+        completed_at: { type: [string, 'null'], format: date-time }
+        created_at: { type: string, format: date-time }
+        updated_at: { type: string, format: date-time }
+    Client:
+      type: object
+      properties:
+        id: { type: integer }
+        work_date: { type: string, format: date }
+        name: { type: string }
+        service: { type: string }
+        service_key: { type: string }
+        quantity: { type: integer }
+        created_at: { type: string, format: date-time }
+        updated_at: { type: string, format: date-time }
+    ServiceTotal:
+      type: object
+      properties:
+        service: { type: string, description: most used spelling }
+        service_key: { type: string }
+        quantity: { type: integer }
+    WeeklySubmission:
+      type: object
+      properties:
+        id: { type: integer }
+        week_start: { type: string, format: date }
+        window_date: { type: string, format: date }
+        version: { type: integer }
+        is_current: { type: boolean }
+        file_name: { type: string }
+        size_bytes: { type: integer }
+        submitted_at: { type: string, format: date-time }
+        is_late: { type: boolean }
+        forwarded_at: { type: [string, 'null'], format: date-time }
+        file_url: { type: string, description: 'temporary URL (file_url_ttl_minutes)' }
+    User:
+      description: Fields depend on the caller. Personal fields only for the user and account managers; admin fields only for administrators; must_change_password only for oneself.
+      type: object
+      properties:
+        id: { type: integer }
+        first_name: { type: string }
+        last_name: { type: string }
+        full_name: { type: string }
+        email: { type: string }
+        role: { type: string, enum: [super_admin, admin, employee] }
+        employee_type: { type: [string, 'null'], enum: [intern, employee, null], description: 'null for admins and super admins (UX2-18)' }
+        last_login_at: { type: [string, 'null'], format: date-time, description: 'own account (/me) and admin views' }
+        job_title: { type: [string, 'null'] }
+        status: { type: string, enum: [pending, active, blocked, locked, deleted] }
+        photo_url: { type: [string, 'null'], description: Short-lived URL (settings.file_url_ttl_minutes) }
+        phone: { type: [string, 'null'] }
+        whatsapp: { type: [string, 'null'] }
+        birth_date: { type: [string, 'null'], format: date }
+        address: { type: [string, 'null'] }
+        must_change_password: { type: boolean }
+        password_min_length: { type: integer, description: Only for oneself (GET /me, login). }
+        permissions: { type: array, items: { type: string } }
+        code_pending: { type: boolean }
+        code_expires_at: { type: [string, 'null'], format: date-time }
+        approved_at: { type: [string, 'null'], format: date-time }
+        last_login_at: { type: [string, 'null'], format: date-time }
+        created_at: { type: string, format: date-time }
+    Setting:
+      type: object
+      properties:
+        key: { type: string }
+        label: { type: string }
+        group: { type: string, enum: [attendance, reports, system, security] }
+        section: { type: string, enum: [attendance, reports, security], description: 'Permission section: manage_settings_<section>' }
+        super_admin_only: { type: boolean, description: 'Only super admins see and change it (admins never receive these settings)' }
+        type: { type: string, enum: [int, float, bool, time, string, int_list] }
+        editable: { type: boolean }
+        value: {}
+        default: {}
+        scheduled: { type: array, items: { type: object, properties: { value: {}, effective_from: { type: string, format: date-time } } } }
+        min: { type: [number, 'null'], description: Lower bound (list length for int_list) }
+        max: { type: [number, 'null'], description: Upper bound (list length for int_list) }
+        unit: { type: [string, 'null'], enum: [minutes, hours, days, seconds, meters, per hour, per minute, characters, percent, null] }
+        item_min: { type: [number, 'null'], description: int_list only – bound of each item }
+        item_max: { type: [number, 'null'], description: int_list only – bound of each item }
+    Error:
+      description: Every error response (no stack trace, generic English message).
+      type: object
+      required: [message]
+      properties:
+        message: { type: string, example: Not found. }
+        code: { type: string, description: 'Machine-readable reason when useful (e.g. password_change_required, blocked, locked).' }
+        retry_after_seconds: { type: integer }
+        remaining_attempts: { type: integer, description: invalid_credentials on a known device only }
+        errors:
+          description: Present on 422 only, field => list of messages.
+          type: object
+          additionalProperties: { type: array, items: { type: string } }
+    FaceIdCredential:
+      type: object
+      properties:
+        id: { type: integer }
+        name: { type: [string, 'null'] }
+        status: { type: string, enum: [pending, approved, revoked] }
+        device: { type: ['object', 'null'], properties: { id: { type: integer }, name: { type: [string, 'null'] } } }
+        created_at: { type: string, format: date-time }
+        approved_at: { type: [string, 'null'], format: date-time }
+        revoked_at: { type: [string, 'null'], format: date-time }
+        revoke_reason: { type: [string, 'null'], enum: [superseded, replaced, rejected, revoked, null] }
+        last_used_at: { type: [string, 'null'], format: date-time }
+    DayStatus:
+      type: string
+      enum: [working, remote, day_off, holiday, leave, non_working]
+      description: Only working and remote days are expected (lateness, reminders, check-in gate).
+    Attendance:
+      type: object
+      description: Admin views add user_id, checked_in_by, mission_validated_by/at, mission_note; lateness fields need view_lateness; positions only for super admins.
+      properties:
+        id: { type: integer }
+        work_date: { type: string, format: date }
+        day_status: { $ref: '#/components/schemas/DayStatus' }
+        check_in_type: { type: string, enum: [gps, mission, remote, admin_on_behalf] }
+        check_in_at: { type: string, format: date-time }
+        check_in_distance_m: { type: [number, 'null'] }
+        is_late: { type: boolean }
+        late_after: { type: string, description: Rule used for this attendance (HH:MM) }
+        faceid_verified: { type: boolean }
+        reason: { type: [string, 'null'], description: Mission or admin fallback reason }
+        mission_status: { type: [string, 'null'], enum: [pending, approved, rejected, null] }
+        check_out_at: { type: [string, 'null'], format: date-time }
+        check_out_type: { type: [string, 'null'], enum: [manual, auto_midnight, null] }
+        checkout_forgotten: { type: boolean }
+        check_out_distance_m: { type: [number, 'null'] }
+        check_out_position_available: { type: [boolean, 'null'], description: 'false = "position not available"' }
+        check_out_at_office: { type: [boolean, 'null'] }
+        early_leave: { type: boolean }
+        early_leave_reason: { type: [string, 'null'] }
