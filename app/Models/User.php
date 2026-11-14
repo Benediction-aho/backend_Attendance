@@ -2,6 +2,7 @@
 
 namespace App\Models;
 
+use App\Domain\Attendance\AttendanceScope;
 use App\Enums\EmployeeType;
 use App\Enums\Permission;
 use App\Enums\Role;
@@ -120,6 +121,15 @@ class User extends Authenticatable
     public function isStaff(): bool
     {
         return $this->isSuperAdmin() || $this->isAdmin();
+    }
+
+    /**
+     * Whether this account tracks attendance on $date (Y-m-d, default today): employees always, admins from
+     * the date in `admin_attendance_starts_on`, super admins never. See AttendanceScope.
+     */
+    public function tracksAttendance(?string $date = null): bool
+    {
+        return app(AttendanceScope::class)->tracksOn($this, $date);
     }
 
     public function isActive(): bool

@@ -2,13 +2,11 @@
 
 namespace App\Console\Commands;
 
+use App\Domain\Attendance\AttendanceScope;
 use App\Domain\Attendance\WorkCalendar;
 use App\Enums\LogLevel;
 use App\Enums\LogType;
-use App\Enums\Role;
-use App\Enums\UserStatus;
 use App\Models\Attendance;
-use App\Models\User;
 use App\Notifications\CheckinReminder as ReminderNotification;
 use App\Services\ActivityLogger;
 use App\Services\ScheduledRunner;
@@ -20,7 +18,8 @@ use RuntimeException;
 use Throwable;
 
 /**
- * Fixed-time check-in reminder (SPECS 6, default 08:05) to employees expected today without a check-in.
+ * Fixed-time check-in reminder (SPECS 6, default 08:05) to the people expected today without a check-in:
+ * employees, and admins once their attendance has started (never super admins).
  * Runs every minute; sends once per work date (scheduled_runs); a missed run is caught up later the
  * same day, but never after the end of the working day.
  */
@@ -30,7 +29,7 @@ class CheckinReminder extends Command
 
     protected $description = 'Remind expected employees who have not checked in yet';
 
-    public function handle(ScheduledRunner $runner, WorkCalendar $calendar, SettingsService $settings, ActivityLogger $logger): int
+    public function handle(ScheduledRunner $runner, WorkCalendar $calendar, SettingsService $settings, ActivityLogger $logger, AttendanceScope $scope): int
     {
         $now = $calendar->now();
         $date = $calendar->workDate($now);
@@ -44,11 +43,10 @@ class CheckinReminder extends Command
 
         $sent = 0;
         $failed = 0;
-        $ran = $runner->once('checkin_reminder', 'checkin_reminder:'.$date, $reminderAt, function () use ($calendar, $settings, $date, $now, &$sent, &$failed) {
+        $ran = $runner->once('checkin_reminder', 'checkin_reminder:'.$date, $reminderAt, function () use ($calendar, $settings, $scope, $date, $now, &$sent, &$failed) {
             $lateAfter = $settings->string('late_after', $now);
             $checkedIn = Attendance::query()->where('work_date', $date)->pluck('user_id')->all();
-            $employees = User::query()->where('role', Role::Employee->value)->where('status', UserStatus::Active->value)
-                ->whereNotIn('id', $checkedIn)->get();
+            $employees = $scope->population(null, $date)->whereNotIn('id', $checkedIn)->get();
             $statuses = $calendar->dayStatuses($employees, $date); // P6-05: constant number of queries
             foreach ($employees as $employee) {
                 if (! $statuses[$employee->id]->isExpected()) {

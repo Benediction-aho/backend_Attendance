@@ -2,12 +2,22 @@
 
 use App\Models\Device;
 use App\Models\User;
+use App\Settings\SettingsService;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Support\Carbon;
+use Illuminate\Support\Facades\DB;
 use Tests\TestCase;
 
 pest()->extend(TestCase::class)
     ->use(RefreshDatabase::class)
+    ->beforeEach(function () {
+        // The migration stamps `admin_attendance_starts_on` with the real date it ran on. Tests freeze the clock on
+        // fixed dates, so every test starts from a known state: admins do not track attendance (setting empty)
+        // unless the test turns it on with adminsTrackFrom().
+        DB::table('settings')->where('key', 'admin_attendance_starts_on')->delete();
+        DB::table('setting_history')->where('key', 'admin_attendance_starts_on')->delete();
+        app(SettingsService::class)->flush();
+    })
     ->in('Feature');
 
 pest()->extend(TestCase::class)->in('Unit');

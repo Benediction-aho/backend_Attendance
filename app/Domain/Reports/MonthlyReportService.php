@@ -4,6 +4,7 @@ namespace App\Domain\Reports;
 
 use App\Domain\Attendance\WorkCalendar;
 use App\Models\MonthlyReport;
+use App\Models\User;
 use App\Services\FileUrls;
 use App\Settings\SettingsService;
 use Barryvdh\DomPDF\Facade\Pdf;
@@ -68,6 +69,22 @@ class MonthlyReportService
             'period_start' => $period['start'], 'period_end' => $period['end'], 'path' => $path,
             'file_name' => self::fileName($month), 'generated_at' => Carbon::now(),
         ]);
+    }
+
+    /**
+     * The same report limited to what an admin recipient may see: employees only (an admin never sees another
+     * admin's attendance, nor their own, in what the administration sends). Stored next to the full report,
+     * which goes to super admins.
+     *
+     * @return string private storage path
+     */
+    public function generateForAdmin(string $month, User $admin): string
+    {
+        $period = $this->period($month);
+        $path = "monthly-reports/{$month}-employees.pdf";
+        Storage::disk(FileUrls::disk())->put($path, $this->render($this->builder->monthlyRows($period['start'], $period['end'], $admin)));
+
+        return $path;
     }
 
     public static function twoDigits(int $n): string

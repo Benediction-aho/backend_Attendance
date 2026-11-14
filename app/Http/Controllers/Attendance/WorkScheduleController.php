@@ -2,11 +2,11 @@
 
 namespace App\Http\Controllers\Attendance;
 
+use App\Domain\Attendance\AttendanceScope;
 use App\Domain\Attendance\WorkCalendar;
 use App\Enums\LogLevel;
 use App\Enums\LogType;
 use App\Enums\Permission;
-use App\Enums\Role;
 use App\Exceptions\ApiError;
 use App\Models\User;
 use App\Models\WorkSchedule;
@@ -22,6 +22,7 @@ use Illuminate\Support\Facades\Notification;
 /**
  * Days off and remote days per contract (SPECS 6 bis): the employee selects them once; afterwards only
  * an admin holding "manage_work_schedules" changes them. Versioned by effective date (past never rewritten).
+ * An admin's working week is seen and changed by super admins only (UserPolicy::manageAttendance).
  */
 class WorkScheduleController
 {
@@ -29,6 +30,7 @@ class WorkScheduleController
         private readonly WorkCalendar $calendar,
         private readonly SettingsService $settings,
         private readonly ActivityLogger $logger,
+        private readonly AttendanceScope $scope,
     ) {}
 
     public function mine(Request $request): JsonResponse
@@ -59,7 +61,7 @@ class WorkScheduleController
             ]);
         });
         $this->logger->log('schedule.selected', 'Days off and remote days selected', LogType::Action, LogLevel::Info, $user, $user, ['days_off' => $daysOff, 'remote_days' => $remote, 'effective_from' => $from]);
-        $recipients = User::query()->holdingPermission(Permission::ManageWorkSchedules)->get();
+        $recipients = $this->scope->alertRecipients($user, Permission::ManageWorkSchedules);
         if ($recipients->isNotEmpty()) {
             $names = [1 => 'Mon', 2 => 'Tue', 3 => 'Wed', 4 => 'Thu', 5 => 'Fri', 6 => 'Sat', 7 => 'Sun'];
             $fmt = fn (array $days) => $days === [] ? 'none' : implode(', ', array_map(fn (int $d) => $names[$d], $days));
@@ -135,7 +137,7 @@ class WorkScheduleController
         $allowed = $write
             ? $actor->hasPermission(Permission::ManageWorkSchedules)
             : $actor->hasPermission(Permission::ManageWorkSchedules) || $actor->can('view-attendance');
-        if (! $allowed || $target->role !== Role::Employee) {
+        if (! $allowed || ! $actor->can('manageAttendance', $target)) {
             throw new ApiError(403, 'This action is not allowed.');
         }
 

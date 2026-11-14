@@ -2,7 +2,7 @@
 openapi: 3.1.0
 info:
   title: Assistance Ghana Attendance API
-  version: 0.5.0
+  version: 0.6.0
   description: |
     Authentication: **Bearer device tokens only** (Sanctum personal access tokens, one per device).
     The API sets no cookie and has no CSRF/session endpoint. After login the client receives
@@ -10,6 +10,20 @@ info:
     the token on the device (IndexedDB/localStorage) and deletes it on logout or on a 401.
     A 401 with `code: account_blocked` means the session was ended because the account was blocked, locked or deleted.
     Network or 5xx errors must never log the user out; only a 401 does.
+
+    **Who tracks attendance (0.6.0, owner decision 2026-11-14).** Employees always; **admins like employees** from
+    the date in the setting `admin_attendance_starts_on` (empty: never); super admins never. `GET /me` returns
+    `tracks_attendance` for the signed-in account: when true, every "employee" route (`/attendance/*`,
+    `/me/work-schedule`, `/me/leaves`, `/me/dashboard`, `/me/tasks`, `/me/clients`, `/clients/services`,
+    `/me/reports/*`, `/me/faceid*`) answers for that account exactly as for an employee (same codes, including
+    403 `checkin_required` on its own task/client/report writes). When false these routes answer 403
+    `employees_only`. `/admin/*` routes are never behind the check-in.
+    **Whose attendance in the admin pages.** An admin (whatever the permissions) sees and manages employees only,
+    never another admin and never themselves; a super admin sees and manages employees and admins. Every
+    `/admin` attendance, leave, working-week, Face ID, mission and report route applies this: lists and totals
+    are filtered (`EmployeeSummary.role` tells admins apart for super admins); a single admin target answers
+    403 (404 on the report routes) to an admin. `POST /admin/users/{id}/check-in` adds 422
+    `attendance_not_tracked` (target is an admin while admins do not track attendance).
     Any non-multipart body larger than MAX_REQUEST_BODY_KB (default 128 KB) is refused with 413 `payload_too_large` (REL-06).
 servers:
   - url: http://localhost:8000/api
@@ -29,7 +43,7 @@ paths:
                   status: { type: string, enum: [ok] }
   /admin/settings:
     get:
-      summary: 'Settings the caller may manage, with current value, default and scheduled future values. Super admin: all sections; admin: only sections granted by manage_settings_attendance / manage_settings_reports / manage_settings_security (403 with none). Super-admin-only settings (super_admin_only: true – monthly_report_recipient_ids, logs_admins_see_super_admin_events, timezone) are never returned to admins.'
+      summary: 'Settings the caller may manage, with current value, default and scheduled future values. Super admin: all sections; admin: only sections granted by manage_settings_attendance / manage_settings_reports / manage_settings_security (403 with none). Super-admin-only settings (super_admin_only: true – monthly_report_recipient_ids, logs_admins_see_super_admin_events, timezone, super_admin_promotion_requires_tier, admin_attendance_starts_on) are never returned to admins.'
       security: [{ deviceToken: [] }]
       responses:
         '200':
@@ -492,7 +506,7 @@ paths:
   # ---------------- Phase 3: attendance ----------------
   /attendance/today:
     get:
-      summary: Today's status for the employee (employees only, else 403 employees_only). Includes the server time for clock sync.
+      summary: Today's status for the signed-in account (accounts tracking attendance only – see tracks_attendance – else 403 employees_only). Includes the server time for clock sync.
       description: |
         Work date and lateness are computed by the server (Africa/Accra). The client never sends a time or a date.
         `available_check_ins` lists the check-in types allowed now (empty once checked in). `rules` come from settings.
@@ -1103,7 +1117,9 @@ components:
         first_name: { type: string }
         last_name: { type: string }
         job_title: { type: ['string', 'null'] }
+        role: { type: string, enum: [employee, admin], description: 'admin rows only appear for super admins (0.6.0)' }
         employee_type: { type: string }
+        employee_type_other: { type: ['string', 'null'] }
         email: { type: string, format: email }
     Task:
       type: object
@@ -1167,6 +1183,8 @@ components:
         address: { type: [string, 'null'] }
         must_change_password: { type: boolean }
         password_min_length: { type: integer, description: Only for oneself (GET /me, login). }
+        tracks_attendance: { type: boolean, description: 'Only for oneself. true → show the employee features (check-in, working week, tasks, clients, reports, Face ID): employees always, admins from admin_attendance_starts_on, super admins never.' }
+        attendance_starts_on: { type: [string, 'null'], format: date, description: 'Only for oneself. Admins: the date their attendance starts (null = admins do not track attendance). Always null for other roles.' }
         permissions: { type: array, items: { type: string } }
         code_pending: { type: boolean }
         code_expires_at: { type: [string, 'null'], format: date-time }
@@ -1181,8 +1199,9 @@ components:
         group: { type: string, enum: [attendance, reports, system, security] }
         section: { type: string, enum: [attendance, reports, security], description: 'Permission section: manage_settings_<section>' }
         super_admin_only: { type: boolean, description: 'Only super admins see and change it (admins never receive these settings)' }
-        type: { type: string, enum: [int, float, bool, time, string, int_list] }
+        type: { type: string, enum: [int, float, bool, time, string, int_list, date], description: 'date = "YYYY-MM-DD" or null (0.6.0: admin_attendance_starts_on)' }
         editable: { type: boolean }
+        nullable: { type: boolean, description: 'true → the value may be null: send null to empty it (0.6.0)' }
         value: {}
         default: {}
         scheduled: { type: array, items: { type: object, properties: { value: {}, effective_from: { type: string, format: date-time } } } }

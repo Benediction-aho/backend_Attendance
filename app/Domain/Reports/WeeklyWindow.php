@@ -2,9 +2,9 @@
 
 namespace App\Domain\Reports;
 
+use App\Domain\Attendance\AttendanceScope;
 use App\Domain\Attendance\AttendanceService;
 use App\Domain\Attendance\WorkCalendar;
-use App\Enums\Role;
 use App\Enums\UserStatus;
 use App\Models\User;
 use App\Models\WeeklyReportSubmission;
@@ -22,6 +22,7 @@ class WeeklyWindow
         private readonly WorkCalendar $calendar,
         private readonly SettingsService $settings,
         private readonly AttendanceService $attendance,
+        private readonly AttendanceScope $scope,
     ) {}
 
     public function weekStart(string $date): string
@@ -58,17 +59,23 @@ class WeeklyWindow
         return $this->calendar->at($windowDate, $this->settings->string('weekly_reminder_time', $this->calendar->at($windowDate, '12:00')));
     }
 
-    /** Active employees/interns expected on the report day (not on leave, day off, holiday). */
+    /** Active accounts tracking attendance on the report day and expected that day (not on leave, day off, holiday). */
     public function isExpected(User $user, string $windowDate): bool
     {
-        return $user->role === Role::Employee && $user->status === UserStatus::Active
+        return $this->scope->tracksOn($user, $windowDate) && $user->status === UserStatus::Active
             && $this->calendar->dayStatus($user, $windowDate)->isExpected();
     }
 
-    /** @return Collection<int, User> */
-    public function expectedEmployees(string $windowDate): Collection
+    /**
+     * Who must send the weekly report of that report day: active accounts tracking attendance on it (employees,
+     * and admins from their start date) and expected that day. With a $viewer: only those the viewer may see
+     * (an admin: employees only; a super admin: employees and admins).
+     *
+     * @return Collection<int, User>
+     */
+    public function expectedEmployees(string $windowDate, ?User $viewer = null): Collection
     {
-        $users = User::query()->where('role', Role::Employee->value)->where('status', UserStatus::Active->value)
+        $users = $this->scope->population($viewer, $windowDate)
             ->orderByRaw('upper(last_name), upper(first_name), id')->get()
             ->filter(fn (User $u) => $this->calendar->wasMemberOn($u, $windowDate))->values();
         $statuses = $this->calendar->dayStatuses($users, $windowDate);
@@ -113,11 +120,15 @@ class WeeklyWindow
             return ['week_start' => $current, 'window_date' => $window];
         }
         $previous = Carbon::parse($current)->subWeek()->toDateString();
-        if ($user->created_at === null || $user->created_at->gt($this->closesAt($this->windowDate($previous)))) {
+        $previousWindow = $this->windowDate($previous);
+        if ($user->created_at === null || $user->created_at->gt($this->closesAt($previousWindow))) {
             return null; // account created after that week's window: nothing to catch up
+        }
+        if (! $this->scope->tracksOn($user, $previousWindow)) {
+            return null; // no retroactive effect: an admin owes nothing for a week before their attendance started
         }
         $hasPrevious = WeeklyReportSubmission::query()->where('user_id', $user->id)->whereDate('week_start', $previous)->exists();
 
-        return $hasPrevious ? null : ['week_start' => $previous, 'window_date' => $this->windowDate($previous)];
+        return $hasPrevious ? null : ['week_start' => $previous, 'window_date' => $previousWindow];
     }
 }

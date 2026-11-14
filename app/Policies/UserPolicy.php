@@ -2,6 +2,7 @@
 
 namespace App\Policies;
 
+use App\Domain\Attendance\AttendanceScope;
 use App\Enums\Permission;
 use App\Enums\Role;
 use App\Enums\UserStatus;
@@ -97,6 +98,17 @@ class UserPolicy
     public function changeRole(User $actor, User $target): bool
     {
         return $actor->isSuperAdmin() && $actor->id !== $target->id;
+    }
+
+    /**
+     * Attendance of $target in the admin pages: Face ID devices, mission check-ins, check-in on behalf, leave,
+     * working week, attendance rows, daily and weekly reports. Employees: any admin (the caller checks the
+     * matching tier) or super admin. Admins: super admins only. Super admins have no attendance. Never oneself.
+     */
+    public function manageAttendance(User $actor, User $target): bool
+    {
+        return $actor->id !== $target->id
+            && in_array($target->role->value, AttendanceScope::rolesVisibleTo($actor), true);
     }
 
     private function onEmployee(User $actor, User $target, Permission $permission): bool

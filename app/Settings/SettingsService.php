@@ -76,14 +76,15 @@ class SettingsService
                 $value = $this->cast($definition['type'], $value);
                 $old = $this->get($key, $from);
 
+                // The value columns are NOT NULL: an empty (nullable) setting is stored as an empty string.
                 Setting::query()->updateOrCreate(
                     ['key' => $key, 'effective_from' => $from],
-                    ['value' => $value, 'created_by' => $by?->id],
+                    ['value' => $value ?? '', 'created_by' => $by?->id],
                 );
                 SettingHistory::query()->create([
                     'key' => $key,
                     'old_value' => $old,
-                    'new_value' => $value,
+                    'new_value' => $value ?? '',
                     'effective_from' => $from,
                     'changed_by' => $by?->id,
                     'changed_at' => Carbon::now(),
@@ -98,7 +99,7 @@ class SettingsService
      * Current values plus scheduled future changes, for the configuration page.
      *
      * @param  list<string>|null  $keys  only these keys (null: all)
-     * @return list<array{key: string, label: string, group: string, section: string, super_admin_only: bool, type: string, editable: bool, value: mixed, default: mixed, scheduled: list<array{value: mixed, effective_from: string}>}>
+     * @return list<array{key: string, label: string, group: string, section: string, super_admin_only: bool, type: string, editable: bool, nullable: bool, value: mixed, default: mixed, scheduled: list<array{value: mixed, effective_from: string}>}>
      */
     public function describe(?array $keys = null): array
     {
@@ -125,6 +126,7 @@ class SettingsService
                 'super_admin_only' => $definition['super_admin_only'],
                 'type' => $definition['type'],
                 'editable' => $definition['editable'] ?? true,
+                'nullable' => $definition['nullable'] ?? false,
                 'value' => $this->get($key),
                 'default' => $definition['default'],
                 'scheduled' => $scheduled,
@@ -175,6 +177,22 @@ class SettingsService
         return null;
     }
 
+    /** A stored value as the API shows it (history): typed like the current value; unknown keys unchanged. */
+    public function present(string $key, mixed $value): mixed
+    {
+        $definition = SettingDefinitions::all()[$key] ?? null;
+
+        return $definition === null || $value === null ? $value : $this->cast($definition['type'], $value);
+    }
+
+    /** A nullable date setting ("Y-m-d"), or null when it is empty. */
+    public function date(string $key, ?CarbonInterface $at = null): ?string
+    {
+        $value = $this->get($key, $at);
+
+        return is_string($value) && $value !== '' ? $value : null;
+    }
+
     public function flush(): void
     {
         $this->memo = null;
@@ -201,6 +219,7 @@ class SettingsService
             'float' => (float) $value,
             'bool' => filter_var($value, FILTER_VALIDATE_BOOLEAN),
             'int_list' => is_array($value) ? array_values(array_map('intval', $value)) : [],
+            'date' => is_string($value) && $value !== '' ? $value : null,
             default => (string) $value,
         };
     }

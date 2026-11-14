@@ -24,7 +24,7 @@ use App\Http\Controllers\Reports\ClientController;
 use App\Http\Controllers\Reports\ReportController;
 use App\Http\Controllers\Reports\TaskController;
 use App\Http\Middleware\EnsureAccountUsable;
-use App\Http\Middleware\EnsureEmployee;
+use App\Http\Middleware\EnsureTracksAttendance;
 use Illuminate\Support\Facades\Route;
 
 Route::get('/health', HealthController::class)->name('health');
@@ -66,8 +66,9 @@ Route::middleware(['auth:sanctum', EnsureAccountUsable::class])->group(function 
 
     Route::get('/holidays', [HolidayController::class, 'index'])->name('holidays.index');
 
-    // Attendance (employees only). Never behind EnsureCheckedInToday: these routes are how one checks in.
-    Route::middleware(EnsureEmployee::class)->group(function () {
+    // Attendance: accounts that track it (employees; admins from `admin_attendance_starts_on`; never super admins).
+    // Never behind EnsureCheckedInToday: these routes are how one checks in.
+    Route::middleware(EnsureTracksAttendance::class)->group(function () {
         Route::get('/attendance/today', [AttendanceController::class, 'today'])->name('attendance.today');
         Route::get('/attendance/history', [AttendanceController::class, 'history'])->name('attendance.history');
         Route::middleware('throttle:attendance')->group(function () {
@@ -106,8 +107,10 @@ Route::middleware(['auth:sanctum', EnsureAccountUsable::class])->group(function 
         });
     });
 
+    // Admin pages are never behind the check-in gate: an admin who tracks attendance and has not checked in yet
+    // keeps every admin function they are permitted to use (decision to confirm with the owner, PROGRESS Q30).
     Route::prefix('admin')->group(function () {
-        // Attendance administration (tier checked in each action).
+        // Attendance administration (tier checked in each action; admins as targets: super admins only).
         Route::get('/attendance/day', [AdminAttendanceController::class, 'day'])->name('admin.attendance.day');
         Route::get('/attendance/missions', [AdminAttendanceController::class, 'missions'])->name('admin.attendance.missions');
         Route::post('/attendance/{attendance}/mission/approve', [AdminAttendanceController::class, 'approveMission'])->whereNumber('attendance')->name('admin.attendance.mission.approve');

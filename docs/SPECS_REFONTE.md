@@ -43,8 +43,19 @@ La sécurité est décrite dans un document séparé : `security.md`.
 | Rôle | Description |
 |---|---|
 | **Super admin** | A la main sur **tout** le système : pages de configuration, création / suppression / blocage des utilisateurs, attribution des accès, confirmation des comptes, envoi des mots de passe uniques, réception des notifications d'inscription. Peut créer des **admins** et d'autres **super admins**. |
-| **Admin** | N'a que les autorisations que le super admin lui donne. |
+| **Admin** | N'a que les autorisations que le super admin lui donne. **Pointe et travaille comme un employé** (voir « Pointage des admins » ci-dessous). |
 | **Employé** | Employé ou stagiaire. Pointage, tâches, clients, rapports, profil. |
+
+### Pointage des admins (décision du propriétaire, 2026-11-14)
+
+1. **Un admin fait tout ce que fait un employé**, sous les mêmes règles : check-in / check-out (GPS + Face ID, mission, télétravail, une fois par jour, retard, motif de départ anticipé, check-out automatique), semaine de travail (jours off / télétravail), tâches, clients, rapport journalier automatique, rapport hebdomadaire PDF du vendredi (rappels et liste « qui doit l'envoyer »). Il apparaît dans les listes de présence, les totaux des tableaux de bord, les rappels de check-in et le rapport mensuel. Ses propres tâches, clients et rapports exigent le check-in du jour, comme pour un employé. Un admin sans semaine de travail suit la même règle qu'un employé sans semaine de travail. Son premier téléphone Face ID est approuvé automatiquement, comme pour un employé.
+2. **Le super admin ne change pas** : il ne pointe jamais et n'est jamais attendu.
+3. **Seul un super admin gère ou valide pour un admin** : approuver / révoquer un nouvel appareil Face ID, valider un check-in mission, faire un check-in à sa place, déclarer / retirer un congé, modifier sa semaine de travail, voir ses pointages et ses rapports journaliers / hebdomadaires dans les pages d'administration. Un admin, quelles que soient ses autorisations, ne voit et ne gère que **les employés** dans les pages d'administration : jamais un autre admin, jamais lui-même (y compris dans les journaux d'activité pour les événements de présence). Les totaux affichés à un admin couvrent donc **les employés seulement** ; ceux affichés à un super admin couvrent **employés + admins** (tableau de bord, présence, rapports, congés, appareils Face ID, « reçus / manquants » du vendredi, rapport mensuel : le super admin reçoit le rapport complet, un admin destinataire reçoit la version « employés seulement »).
+4. **Les fonctions d'administration ne sont pas bloquées par le check-in** : un admin qui n'a pas encore pointé garde l'accès à toutes les pages d'administration qui lui sont autorisées (choix par défaut, à confirmer par le propriétaire).
+5. **Aucun effet rétroactif** : un admin n'est jamais compté absent, en retard ou sans rapport pour un jour antérieur à la mise en service. Paramètre `admin_attendance_starts_on` (date, réservé au super admin, section Présence, avec historique) : les admins ne sont attendus qu'à partir de cette date ; **vide = les admins ne pointent pas du tout**. À la mise en service, la date est celle du déploiement. Chaque jour est jugé avec la valeur en vigueur ce jour-là : modifier la date plus tard ne réécrit jamais le passé. Un employé promu admin continue simplement à pointer ; un admin promu super admin n'est plus attendu à partir de ce jour.
+6. **Alertes** : les alertes concernant un employé vont, comme avant, aux admins ayant l'autorisation correspondante (et aux super admins) ; les alertes concernant **un admin** (nouvel appareil à approuver, check-in mission à valider, départ anticipé, choix de la semaine de travail, rapport hebdomadaire en retard…) vont **aux super admins seulement**.
+
+Dans la suite du document, « employé » désigne toute personne qui pointe : employés, stagiaires et, à partir de la date ci-dessus, admins.
 
 ### Autorisations attribuables par le super admin (cases à cocher par admin)
 
@@ -87,6 +98,7 @@ Une ou deux pages regroupant **tous les paramètres du système**, modifiables a
 | Rayon du périmètre de validation du check-in | **50 m** |
 | Incertitude GPS maximale acceptée au check-in (`checkin_max_accuracy_m`) | **100 m** (en intérieur, les iPhone annoncent souvent 50 à 100 m) |
 | Heure d'ouverture du check-in (`checkin_opens_at`) | **06:00** |
+| Date à partir de laquelle les admins pointent comme les employés (`admin_attendance_starts_on`, super admin seulement) | date de mise en service (vide = les admins ne pointent pas) |
 | Nombre maximum de jours off par semaine | **2** |
 | Taille maximale d'un rapport PDF | **10 Mo** |
 | Taille maximale des pièces jointes d'un email | **30 Mo** (au-delà : liens sécurisés) |
@@ -197,10 +209,11 @@ Les changements sensibles passent **par email** (Resend) :
 
 ### Accès conditionné au check-in
 - **Inchangé** : l'employé ne peut faire aucune action dans son compte (tâches, clients, rapports…) tant qu'il n'a pas fait son check-in du jour.
+- **Admins** : même règle pour leurs propres tâches, clients et rapports ; les pages d'administration, elles, ne sont jamais bloquées par le check-in (section 2, « Pointage des admins »).
 
 ### Check-in mission (travail à l'extérieur)
 - Un employé qui part directement en mission (chez un client…) peut faire un **check-in mission** depuis n'importe où, avec un motif.
-- Le check-in mission doit être **validé par un admin autorisé** (nouvelle autorisation : « Valider les check-in mission »). En attendant, l'employé peut déjà utiliser l'application.
+- Le check-in mission doit être **validé par un admin autorisé** (nouvelle autorisation : « Valider les check-in mission »). En attendant, l'employé peut déjà utiliser l'application. Le check-in mission d'un **admin** est validé par un **super admin** uniquement.
 - L'heure enregistrée est celle de la demande. Retard calculé comme pour un check-in normal.
 
 ## 6 bis. Jours off, télétravail, congés et jours fériés
@@ -241,7 +254,7 @@ Les changements sensibles passent **par email** (Resend) :
 - Généré automatiquement à partir des rapports journaliers de la semaine ; renouvelé chaque semaine.
 - Comprend aussi un **récapitulatif des clients de la semaine** (nom, service, quantité).
 - L'employé s'en sert pour **rédiger son rapport en PDF**, qu'il **upload** dans l'application.
-- **Qui doit l'envoyer** : chaque employé et stagiaire **actif** qui était attendu ce vendredi (pas les admins, ni les comptes bloqués, en attente, en congé, en jour off ou les jours fériés). C'est sur cette liste que le système compte « qui a envoyé ».
+- **Qui doit l'envoyer** : chaque employé, stagiaire **et admin** (à partir de la date `admin_attendance_starts_on`, décision du 2026-11-14) **actif** qui était attendu ce vendredi (pas les super admins, ni les comptes bloqués, en attente, en congé, en jour off ou les jours fériés). C'est sur cette liste que le système compte « qui a envoyé ». Un admin ne doit rien pour une semaine antérieure à sa date de début.
 - Taille maximale d'un PDF : **10 Mo** (configurable).
 - **Fenêtre d'envoi : le vendredi, de 16:00 à 17:00.**
 - **Rappel à 16:30** aux employés qui n'ont pas encore envoyé leur rapport (notification push + application).
@@ -252,8 +265,9 @@ Les changements sensibles passent **par email** (Resend) :
 - Notification dans l'application + email au **super admin** et aux **admins autorisés à voir les rapports**, **même si tout le monde n'a pas envoyé** :
   - ils reçoivent les rapports de ceux qui les ont envoyés (consultables dans le tableau de bord, et envoyés par email) ;
   - les PDF sont joints à l'email tant que le total reste raisonnable (environ **30 Mo**) ; au-delà, l'email contient des **liens sécurisés** vers chaque PDF ;
-  - la notification indique combien d'employés ont envoyé leur rapport.
-- **Retardataires** : quand un employé envoie son rapport après 17:00, il est transmis **directement** aux personnes autorisées à le voir (application + email).
+  - la notification indique combien d'employés ont envoyé leur rapport ;
+  - chaque destinataire reçoit les chiffres et les rapports des personnes qu'il a le droit de voir : un **super admin** ceux des employés et des admins, un **admin autorisé** ceux des employés seulement (jamais le rapport d'un autre admin, ni le sien).
+- **Retardataires** : quand un employé envoie son rapport après 17:00, il est transmis **directement** aux personnes autorisées à le voir (application + email). Le rapport en retard d'un **admin** est transmis aux **super admins** seulement.
 
 ### Rapport mensuel automatique (le 26 de chaque mois)
 - Généré automatiquement **le 26 de chaque mois**, à partir des check-in / check-out et des clients enregistrés.
@@ -277,6 +291,7 @@ Les changements sensibles passent **par email** (Resend) :
 - Destinataires :
   - le **super admin**, toujours ;
   - le ou les **admins sélectionnés** par le super admin pour ce rapport (paramètre de la configuration).
+- Les admins qui pointent figurent dans le rapport (une ligne par admin, mêmes colonnes) **pour les super admins**. Un admin destinataire reçoit le même PDF **limité aux employés** (décision du 2026-11-14). Rien n'est compté avant la date `admin_attendance_starts_on`.
 - Envoi **par email uniquement** (le rapport n'est pas affiché dans l'application).
 - En plus, une **notification dans l'application** prévient chaque destinataire qu'il a reçu le rapport mensuel par email.
 
@@ -291,11 +306,12 @@ Les changements sensibles passent **par email** (Resend) :
 | Compte confirmé + mot de passe unique | Employé | Email |
 | Changement d'email / de mot de passe | Employé | Email |
 | Rappel de check-in (heure fixe, 08:05 par défaut) | Employé attendu sans check-in | Notification push + application |
-| Demande de nouvel appareil Face ID | Admins autorisés | Application |
-| Check-out anticipé avec motif | Admins autorisés | Application |
+| Demande de nouvel appareil Face ID | Admins autorisés (super admins seulement si la demande vient d'un admin) | Application |
+| Check-out anticipé avec motif | Admins autorisés (super admins seulement s'il s'agit d'un admin) | Application |
+| Check-in mission à valider | Admins autorisés (super admins seulement s'il s'agit d'un admin) | Application |
 | Rappel : rapport hebdomadaire pas encore envoyé (vendredi 16:30) | Employés concernés | Notification push + application |
 | Fin de la fenêtre d'envoi du vendredi (17:00) | Super admin + admins autorisés à voir les rapports | Application + email (avec les rapports reçus) |
-| Rapport hebdomadaire envoyé en retard | Super admin + admins autorisés à voir les rapports | Application + email |
+| Rapport hebdomadaire envoyé en retard | Super admin + admins autorisés à voir les rapports (super admins seulement si l'auteur est un admin) | Application + email |
 | Rapport mensuel du 26 | Super admin + admins sélectionnés | Email (rapport) + notification dans l'application |
 
 ## 9. Accès

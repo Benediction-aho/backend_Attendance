@@ -2,13 +2,13 @@
 
 namespace App\Domain\Dashboard;
 
+use App\Domain\Attendance\AttendanceScope;
 use App\Domain\Attendance\DayStatus;
 use App\Domain\Attendance\WorkCalendar;
 use App\Domain\Reports\MonthlyReportService;
 use App\Domain\Reports\ReportBuilder;
 use App\Domain\Reports\WeeklyWindow;
 use App\Enums\Permission;
-use App\Enums\Role;
 use App\Enums\UserStatus;
 use App\Models\Attendance;
 use App\Models\CheckinAttempt;
@@ -33,6 +33,7 @@ class DashboardService
         private readonly WeeklyWindow $window,
         private readonly MonthlyReportService $monthly,
         private readonly SettingsService $settings,
+        private readonly AttendanceScope $scope,
     ) {}
 
     /**
@@ -68,7 +69,8 @@ class DashboardService
         $expectedDays = 0;
         for ($d = Carbon::parse($weekStart); $d->toDateString() <= $today; $d->addDay()) {
             $date = $d->toDateString();
-            if ($this->calendar->wasMemberOn($user, $date) && $this->calendar->dayStatus($user, $date)->isExpected()) {
+            // An admin is not expected on days before their attendance started (no retroactive effect).
+            if ($this->scope->tracksOn($user, $date) && $this->calendar->wasMemberOn($user, $date) && $this->calendar->dayStatus($user, $date)->isExpected()) {
                 $expectedDays++;
             }
         }
@@ -154,12 +156,12 @@ class DashboardService
         $out = ['server_time' => $now->toIso8601String(), 'work_date' => $today];
 
         if (Gate::forUser($viewer)->allows('view-attendance')) {
-            $out['today'] = $this->adminToday($today, $can(Permission::ViewLateness), $can(Permission::ApproveMissionCheckins));
+            $out['today'] = $this->adminToday($viewer, $today, $can(Permission::ViewLateness), $can(Permission::ApproveMissionCheckins));
         }
         if ($can(Permission::ViewReports, Permission::ReceiveWeeklyReports)) {
             $weekStart = $this->window->weekStart($today);
             $windowDate = $this->window->windowDate($weekStart);
-            $expected = $this->window->expectedEmployees($windowDate)->pluck('id')->all();
+            $expected = $this->window->expectedEmployees($windowDate, $viewer)->pluck('id')->all();
             $received = WeeklyReportSubmission::query()->where('week_start', $weekStart)->where('is_current', true)->pluck('user_id')->intersect($expected)->count();
             $out['week'] = [
                 'week_start' => $weekStart,
@@ -176,13 +178,13 @@ class DashboardService
         if ($seeLate || $seeClients) {
             $period = $this->periodContaining($today);
             $month = ['period_start' => $period['start'], 'period_end' => $period['end'], 'to_date' => $today];
-            $employees = User::withTrashed()->select('id')->where('role', Role::Employee->value);
+            // Totals cover the people the viewer may see: employees for an admin, employees and admins for a super admin.
             if ($seeLate) {
-                $month['late_count'] = Attendance::query()->whereIn('user_id', $employees)->where('work_date', '>=', $period['start'])
+                $month['late_count'] = $this->scope->visibleRows(Attendance::query(), $viewer)->where('work_date', '>=', $period['start'])
                     ->where('work_date', '<=', $today)->where('is_late', true)->count();
             }
             if ($seeClients) {
-                $base = Client::query()->whereIn('user_id', $employees)->where('work_date', '>=', $period['start'])->where('work_date', '<=', $today);
+                $base = $this->scope->visibleRows(Client::query(), $viewer)->where('work_date', '>=', $period['start'])->where('work_date', '<=', $today);
                 $month['clients_count'] = (clone $base)->count();
                 // P6-05: aggregate in SQL instead of loading every client row (same shape/order as ReportBuilder::services:
                 // quantity desc, key asc; label = most used spelling, first seen on a tie).
@@ -204,12 +206,10 @@ class DashboardService
             $pending['sign_up_requests'] = User::query()->where('status', UserStatus::Pending->value)->count();
         }
         if ($can(Permission::ApproveFaceIdDevices)) {
-            $pending['faceid_devices'] = WebauthnCredential::query()->where('status', WebauthnCredential::PENDING)
-                ->when(! $viewer->isSuperAdmin(), fn ($q) => $q->whereIn('user_id', User::query()->select('id')->where('role', Role::Employee->value)))
-                ->count();
+            $pending['faceid_devices'] = $this->scope->visibleRows(WebauthnCredential::query(), $viewer)->where('status', WebauthnCredential::PENDING)->count();
         }
         if ($can(Permission::ApproveMissionCheckins)) {
-            $pending['missions'] = Attendance::query()->where('check_in_type', Attendance::TYPE_MISSION)->where('mission_status', 'pending')->count();
+            $pending['missions'] = $this->scope->visibleRows(Attendance::query(), $viewer)->where('check_in_type', Attendance::TYPE_MISSION)->where('mission_status', 'pending')->count();
         }
         if ($pending !== []) {
             $out['pending'] = $pending;
@@ -219,11 +219,10 @@ class DashboardService
     }
 
     /** @return array<string, int> */
-    private function adminToday(string $today, bool $seeLate, bool $seeMissions): array
+    private function adminToday(User $viewer, string $today, bool $seeLate, bool $seeMissions): array
     {
-        $attendances = Attendance::query()->where('work_date', $today)
-            ->whereIn('user_id', User::withTrashed()->select('id')->where('role', Role::Employee->value))->get()->keyBy('user_id');
-        $employees = User::query()->where('role', Role::Employee->value)->where('status', UserStatus::Active->value)->get()
+        $attendances = $this->scope->visibleRows(Attendance::query(), $viewer)->where('work_date', $today)->get()->keyBy('user_id');
+        $employees = $this->scope->population($viewer, $today)->get()
             ->filter(fn (User $u) => $this->calendar->wasMemberOn($u, $today));
         $statuses = $this->calendar->dayStatuses($employees, $today);
         // P6-04: checked_in counts only the employees counted in "expected"; other check-ins (remote/day-off
@@ -256,8 +255,7 @@ class DashboardService
         }
         if ($seeLate) {
             $counts['late'] = $attendances->where('is_late', true)->count();
-            $counts['refused_attempts'] = CheckinAttempt::query()->where('work_date', $today)
-                ->whereIn('user_id', User::withTrashed()->select('id')->where('role', Role::Employee->value))->count();
+            $counts['refused_attempts'] = $this->scope->visibleRows(CheckinAttempt::query(), $viewer)->where('work_date', $today)->count();
         }
         if ($seeMissions) {
             $counts['missions_pending'] = $attendances->where('check_in_type', Attendance::TYPE_MISSION)->where('mission_status', 'pending')->count();

@@ -17,13 +17,13 @@ final class SettingDefinitions
      * Settings that only a super admin may change or see, whatever the admin's section permissions:
      * they decide who receives confidential data or what admins can see (privilege-related).
      */
-    public const SUPER_ADMIN_ONLY = ['monthly_report_recipient_ids', 'logs_admins_see_super_admin_events', 'timezone', 'super_admin_promotion_requires_tier'];
+    public const SUPER_ADMIN_ONLY = ['monthly_report_recipient_ids', 'logs_admins_see_super_admin_events', 'timezone', 'super_admin_promotion_requires_tier', 'admin_attendance_starts_on'];
 
     /** Section of each group; a setting may override it with its own 'section'. */
     private const GROUP_SECTIONS = ['attendance' => 'attendance', 'reports' => 'reports', 'security' => 'security', 'system' => 'security'];
 
     /**
-     * @return array<string, array{type: string, default: mixed, rules: list<string>, item_rules?: list<string>, group: string, section: string, label: string, editable?: bool, super_admin_only: bool}>
+     * @return array<string, array{type: string, default: mixed, rules: list<string>, item_rules?: list<string>, group: string, section: string, label: string, editable?: bool, nullable?: bool, super_admin_only: bool}>
      */
     public static function all(): array
     {
@@ -42,7 +42,7 @@ final class SettingDefinitions
     }
 
     /**
-     * @return array<string, array{type: string, default: mixed, rules: list<string>, item_rules?: list<string>, group: string, section?: string, label: string, editable?: bool}>
+     * @return array<string, array{type: string, default: mixed, rules: list<string>, item_rules?: list<string>, group: string, section?: string, label: string, editable?: bool, nullable?: bool}>
      */
     private static function raw(): array
     {
@@ -69,6 +69,9 @@ final class SettingDefinitions
             'working_days' => ['type' => 'int_list', 'default' => [1, 2, 3, 4, 5], 'rules' => ['array', 'max:7'], 'item_rules' => ['integer', 'distinct', 'between:1,7'], 'group' => 'attendance', 'label' => 'Working days (1 = Monday … 7 = Sunday)'],
             'checkin_attempts_per_minute' => ['type' => 'int', 'default' => 20, 'rules' => ['integer', 'min:3', 'max:600'], 'group' => 'attendance', 'label' => 'Check-in / check-out requests per minute per user'],
             'max_days_off_per_week' => ['type' => 'int', 'default' => 2, 'rules' => ['integer', 'min:0', 'max:6'], 'group' => 'attendance', 'label' => 'Maximum days off per week'],
+            // Owner decision 2026-11-14: admins check in like employees from this date (never before it). Empty = admins
+            // do not track attendance at all. Super admins never track attendance. Super admin only.
+            'admin_attendance_starts_on' => ['type' => 'date', 'default' => null, 'rules' => ['nullable', 'date_format:Y-m-d'], 'nullable' => true, 'group' => 'attendance', 'label' => 'Admins track attendance like employees from this date (empty: admins do not track attendance)'],
             'max_remote_days_per_week' => ['type' => 'int', 'default' => 2, 'rules' => ['integer', 'min:0', 'max:7'], 'group' => 'attendance', 'label' => 'Maximum remote days per week'],
 
             // Reports

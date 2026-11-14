@@ -165,6 +165,34 @@ class WeeklyReportService
     }
 
     /**
+     * Recipients of weekly reports grouped by what they may see: super admins (employees and admins) and
+     * admins holding receive_weekly_reports (employees only). Each group gets its own figures and reports.
+     *
+     * @return list<Collection<int, User>> non-empty groups; the first member of a group stands for its view
+     */
+    public function audiences(): array
+    {
+        $all = $this->recipients->weekly();
+        $groups = [
+            $all->filter(fn (User $u) => $u->isSuperAdmin())->values(),
+            $all->reject(fn (User $u) => $u->isSuperAdmin())->values(),
+        ];
+
+        return array_values(array_filter($groups, fn (Collection $g) => $g->isNotEmpty()));
+    }
+
+    /**
+     * Recipients allowed to receive the weekly report of $author: everyone for an employee, super admins only
+     * for an admin (UserPolicy::manageAttendance; never the author).
+     *
+     * @return Collection<int, User>
+     */
+    public function recipientsFor(User $author): Collection
+    {
+        return $this->recipients->weekly()->filter(fn (User $u) => $u->can('manageAttendance', $author))->values();
+    }
+
+    /**
      * Sends one notification + email per recipient, recording each delivery (a retry skips those done).
      *
      * @param  Collection<int, WeeklyReportSubmission>  $submissions

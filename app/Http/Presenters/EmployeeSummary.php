@@ -20,6 +20,8 @@ final class EmployeeSummary
             'first_name' => $u->first_name,
             'last_name' => $u->last_name,
             'job_title' => $u->job_title,
+            // Admins track attendance too and appear in super admins' lists: the role tells them apart.
+            'role' => $u->role->value,
             'employee_type' => $u->employee_type->value,
             'employee_type_other' => $u->employee_type_other,
         ];
