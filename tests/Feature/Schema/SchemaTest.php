@@ -63,8 +63,20 @@ it('refuses TRUNCATE on the activity log (P1-07)', function () {
     expect(fn () => DB::transaction(fn () => DB::statement('TRUNCATE activity_logs')))->toThrow(QueryException::class);
 });
 
+/**
+ * True when the unprivileged role used by the two tests below exists and the test user may SET ROLE to it.
+ * pg_has_role() raises an error for an unknown role, so the existence is checked first (CI creates the role).
+ */
+function appTestRoleAvailable(): bool
+{
+    return (bool) DB::scalar(
+        "SELECT CASE WHEN EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'attendance_app_test')
+                THEN pg_has_role(current_user, 'attendance_app_test', 'MEMBER') ELSE false END"
+    );
+}
+
 it('does not let a role that does not own the log delete entries, even with the purge flag (P1-07)', function () {
-    if (! DB::scalar("SELECT pg_has_role(current_user, 'attendance_app_test', 'MEMBER')")) {
+    if (! appTestRoleAvailable()) {
         $this->markTestSkipped('Local role attendance_app_test not set up (see docs/DEPLOYMENT.md, database roles).');
     }
     $log = ActivityLog::query()->create(['type' => LogType::Action, 'level' => LogLevel::Info, 'event' => 't', 'description' => 'T']);
@@ -91,7 +103,7 @@ it('does not let a role that does not own the log delete entries, even with the 
 });
 
 it('does not grant EXECUTE on the purge function to the runtime role (P1-15)', function () {
-    if (! DB::scalar("SELECT pg_has_role(current_user, 'attendance_app_test', 'MEMBER')")) {
+    if (! appTestRoleAvailable()) {
         $this->markTestSkipped('Local role attendance_app_test not set up.');
     }
     config(['database.app_role' => 'attendance_app_test']);

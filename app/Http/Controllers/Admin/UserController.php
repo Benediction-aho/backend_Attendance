@@ -2,6 +2,7 @@
 
 namespace App\Http\Controllers\Admin;
 
+use App\Enums\EmployeeType;
 use App\Enums\Permission;
 use App\Enums\Role;
 use App\Enums\UserStatus;
@@ -24,7 +25,7 @@ class UserController
         $filters = $request->validate([
             'status' => ['nullable', Rule::in(array_map(fn ($s) => $s->value, UserStatus::cases()))],
             'role' => ['nullable', Rule::in(array_map(fn ($r) => $r->value, Role::cases()))],
-            'employee_type' => ['nullable', Rule::in(['intern', 'employee'])],
+            'employee_type' => ['nullable', Rule::in(EmployeeType::values())],
             'q' => ['nullable', 'string', 'max:100'],
             'per_page' => ['nullable', 'integer', 'min:1', 'max:100'],
         ]);
@@ -69,12 +70,12 @@ class UserController
             'email' => ['required', 'string', 'email:rfc', 'max:254', 'regex:'.SignupText::EMAIL_PATTERN],
             'first_name' => ['required', 'string', 'max:100'],
             'last_name' => ['required', 'string', 'max:100'],
-            'employee_type' => ['required', Rule::in(['intern', 'employee'])],
+            ...EmployeeType::rules(),
             'job_title' => ['required', 'string', 'max:150'],
             'role' => ['nullable', Rule::in(array_map(fn ($r) => $r->value, Role::cases()))],
             'permissions' => ['nullable', 'array'],
             'permissions.*' => ['string', Rule::in(array_map(fn ($p) => $p->value, Permission::cases()))],
-        ]);
+        ], EmployeeType::messages());
         $role = Role::from($data['role'] ?? Role::Employee->value);
         Gate::authorize('create', [User::class, $role]);
 
@@ -83,6 +84,7 @@ class UserController
             'first_name' => trim($data['first_name']),
             'last_name' => trim($data['last_name']),
             'employee_type' => $data['employee_type'],
+            'employee_type_other' => EmployeeType::otherText($data['employee_type'], $data['employee_type_other'] ?? null),
             'job_title' => trim($data['job_title']),
             'role' => $role->value,
         ], $this->actor($request), array_values($data['permissions'] ?? []));

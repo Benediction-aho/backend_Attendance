@@ -21,6 +21,7 @@ final class EmployeeSummary
             'last_name' => $u->last_name,
             'job_title' => $u->job_title,
             'employee_type' => $u->employee_type->value,
+            'employee_type_other' => $u->employee_type_other,
         ];
         if (self::canSeeEmail()) {
             $data['email'] = $u->email;

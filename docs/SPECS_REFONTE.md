@@ -116,7 +116,7 @@ Paramètres possibles à valider plus tard : jours ouvrés, jours fériés, plus
 2. Formulaire d'inscription (**sans mot de passe**) :
    - email ;
    - prénom et nom ;
-   - type : **Intern** (stagiaire) ou **Employee** (employé) ;
+   - type, obligatoire : **Intern** (stagiaire), **Employee** (employé) ou **Other** (autre) ; avec **Other**, la personne saisit elle-même ce qu'elle est (texte libre obligatoire, 60 caractères au plus, sans lien) ;
    - **intitulé du poste**, tel qu'écrit sur sa lettre de nomination (appointment letter).
 3. Il envoie le formulaire. Le compte est **en attente de validation** : impossible de se connecter.
 4. Le **super admin** et les admins autorisés reçoivent une **notification** (application + email) : « Telle personne veut créer un compte ».

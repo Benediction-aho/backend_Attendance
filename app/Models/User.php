@@ -25,6 +25,7 @@ use Laravel\Sanctum\HasApiTokens;
  * @property string $email
  * @property Role $role
  * @property EmployeeType $employee_type
+ * @property string|null $employee_type_other
  * @property string|null $job_title
  * @property UserStatus $status
  * @property string|null $phone
@@ -49,7 +50,7 @@ class User extends Authenticatable
     use HasApiTokens, HasFactory, Notifiable, SoftDeletes;
 
     protected $fillable = [
-        'first_name', 'last_name', 'email', 'role', 'employee_type', 'job_title', 'status',
+        'first_name', 'last_name', 'email', 'role', 'employee_type', 'employee_type_other', 'job_title', 'status',
         'phone', 'whatsapp', 'birth_date', 'address',
     ];
 
