@@ -47,7 +47,12 @@ class AdminReportController
         }
         $statuses = $this->calendar->dayStatuses($users, $date);
 
-        return response()->json(['work_date' => $date, 'data' => $users->map(fn (User $u) => [
+        // UXC-05: neutral totals (employees + admins for a super admin, employees only for an admin).
+        $roles = $users->countBy(fn (User $u) => $u->role->value);
+        $totals = ['people' => $users->count(), 'employees' => (int) ($roles['employee'] ?? 0), 'admins' => (int) ($roles['admin'] ?? 0),
+            'with_report' => $snapshots->count()];
+
+        return response()->json(['work_date' => $date, 'totals' => $totals, 'data' => $users->map(fn (User $u) => [
             'user' => $this->userSummary($u),
             'day_status' => $statuses[$u->id]->value,
             'generated_at' => $snapshots->get($u->id)?->generated_at->toIso8601String(),

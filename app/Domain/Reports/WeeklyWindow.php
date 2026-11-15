@@ -84,12 +84,25 @@ class WeeklyWindow
     }
 
     /**
+     * UXC-01: whether the person owes the weekly report of that report day at all: an active account that tracks
+     * attendance on that day (an admin from their start date) and already belonged to the staff then. Someone who
+     * does not owe it never gets the absent-day grace (no retroactive report).
+     */
+    public function owes(User $user, string $windowDate): bool
+    {
+        return $user->status === UserStatus::Active && $this->scope->tracksOn($user, $windowDate) && $this->calendar->wasMemberOn($user, $windowDate);
+    }
+
+    /**
      * Grace (SPECS 7): an employee absent on the report day (not expected, or – setting – expected but
      * without check-in) may submit until the window end time of their next expected day without being late.
      */
     public function deadlineFor(User $user, string $windowDate): Carbon
     {
         $close = $this->closesAt($windowDate);
+        if (! $this->owes($user, $windowDate)) {
+            return $close;
+        }
         $absent = ! $this->calendar->dayStatus($user, $windowDate)->isExpected()
             || ($this->settings->bool('weekly_absent_friday_grace', $close) && $this->attendance->forDate($user, $windowDate) === null);
         if (! $absent) {
@@ -117,14 +130,15 @@ class WeeklyWindow
         $current = $this->weekStart($this->calendar->workDate($now));
         $window = $this->windowDate($current);
         if ($now->gte($this->opensAt($window))) {
-            return ['week_start' => $current, 'window_date' => $window];
+            // UXC-01: nothing to send for a report day the person was not tracking attendance on.
+            return $this->owes($user, $window) ? ['week_start' => $current, 'window_date' => $window] : null;
         }
         $previous = Carbon::parse($current)->subWeek()->toDateString();
         $previousWindow = $this->windowDate($previous);
         if ($user->created_at === null || $user->created_at->gt($this->closesAt($previousWindow))) {
             return null; // account created after that week's window: nothing to catch up
         }
-        if (! $this->scope->tracksOn($user, $previousWindow)) {
+        if (! $this->owes($user, $previousWindow)) {
             return null; // no retroactive effect: an admin owes nothing for a week before their attendance started
         }
         $hasPrevious = WeeklyReportSubmission::query()->where('user_id', $user->id)->whereDate('week_start', $previous)->exists();

@@ -67,11 +67,15 @@ class DashboardService
         $weekEnd = $this->window->weekEnd($weekStart);
         $weekAttendances = Attendance::query()->where('user_id', $user->id)->where('work_date', '>=', $weekStart)->where('work_date', '<=', $today)->get();
         $expectedDays = 0;
+        $presentExpected = 0;
         for ($d = Carbon::parse($weekStart); $d->toDateString() <= $today; $d->addDay()) {
             $date = $d->toDateString();
             // An admin is not expected on days before their attendance started (no retroactive effect).
             if ($this->scope->tracksOn($user, $date) && $this->calendar->wasMemberOn($user, $date) && $this->calendar->dayStatus($user, $date)->isExpected()) {
                 $expectedDays++;
+                if ($weekAttendances->contains(fn (Attendance $a) => $a->work_date->toDateString() === $date)) {
+                    $presentExpected++;
+                }
             }
         }
         $weekTasks = Task::query()->where('user_id', $user->id)->where('work_date', '>=', $weekStart)->where('work_date', '<=', $weekEnd)->get();
@@ -98,8 +102,11 @@ class DashboardService
             'week' => [
                 'week_start' => $weekStart,
                 'week_end' => $weekEnd,
-                'presence_days' => $weekAttendances->count(),
+                // UXC-07: "presence_days of expected_days_so_far" counts expected days only (never "1 of 0");
+                // check-ins on days that were not expected (day off, holiday, weekend…) are extra_days.
+                'presence_days' => $presentExpected,
                 'expected_days_so_far' => $expectedDays,
+                'extra_days' => $weekAttendances->count() - $presentExpected,
                 'late_count' => $weekAttendances->where('is_late', true)->count(),
                 'tasks_planned' => $weekTasks->count(),
                 'tasks_done' => $weekTasks->where('status', 'done')->count(),
@@ -127,8 +134,11 @@ class DashboardService
         $expected = $this->window->isExpected($user, $windowDate);
         $deadline = $this->window->deadlineFor($user, $windowDate);
         $opens = $this->window->opensAt($windowDate);
+        // UXC-01: a report day the person was not tracking attendance on is never "open" nor "missing".
+        $owes = $this->window->owes($user, $windowDate);
         $status = match (true) {
             $current !== null => 'submitted',
+            ! $owes => 'not_expected',
             $now->lt($opens) => 'not_open',
             $now->lte($deadline) => 'open',
             $expected => 'missing',

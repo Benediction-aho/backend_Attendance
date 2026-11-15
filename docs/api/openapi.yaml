@@ -2,7 +2,7 @@
 openapi: 3.1.0
 info:
   title: Assistance Ghana Attendance API
-  version: 0.7.0
+  version: 0.7.1
   description: |
     Authentication: **Bearer device tokens only** (Sanctum personal access tokens, one per device).
     The API sets no cookie and has no CSRF/session endpoint. After login the client receives
@@ -18,6 +18,10 @@ info:
     `/me/reports/*`, `/me/faceid*`) answers for that account exactly as for an employee (same codes, including
     403 `checkin_required` on its own task/client/report writes). When false these routes answer 403
     `employees_only`. `/admin/*` routes are never behind the check-in.
+    **0.7.1 (UXC fixes):** `/me/dashboard` `week.presence_days` now counts expected days only (≤ `expected_days_so_far`)
+    and new `week.extra_days` counts check-ins on days that were not expected; `week.weekly_report.status` is `not_expected`
+    for a report day the person was not tracking attendance on (no "open" grace, upload refused with `window_not_open`);
+    `/admin/reports/daily` adds `totals: {people, employees, admins, with_report}` (use "people").
     **Whose attendance in the admin pages.** An admin (whatever the permissions) sees and manages employees only,
     never another admin and never themselves; a super admin sees and manages employees and admins. Every
     `/admin` attendance, leave, working-week, Face ID, mission and report route applies this: lists and totals

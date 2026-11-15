@@ -392,3 +392,9 @@ Tests: `tests/Feature/Reports/ActivityReportTest.php` (36 tests: sending, valida
 - **CHG-06 (Info) – fixed**: the three stale assertions of `tests/security/Phase5SecurityTest.php` updated (admins tracking attendance may read service suggestions; clean PDF for the signed-URL test; monthly fixture date inside the 26→25 period).
 - CHG-03, CHG-05: informational, unchanged.
 
+## 2026-11-15 – Backend fixes from `frontend_Attendance/docs/reports/change-2026-11-14-ux.md`
+- **UXC-01 (High) fixed**: a person who was not tracking attendance on a report day (admin before `admin_attendance_starts_on`, account created after it) never owes that week's report: no absent-day grace, `/me/dashboard` `week.weekly_report.status` = `not_expected`, `can_submit` false and upload refused (`window_not_open`). Rule in `WeeklyWindow::owes()`.
+- **UXC-05 fixed (API)**: `GET /admin/reports/daily` adds `totals: {people, employees, admins, with_report}` (super admin: employees + admins; admin: employees only). Frontend: say "N of M people" using `totals.people`.
+- **UXC-07 fixed (API change)**: `/me/dashboard` `week.presence_days` counts expected days only (never above `expected_days_so_far`); new `week.extra_days` = check-ins on non-expected days. Frontend: show "1 extra day" instead of "1 of 0".
+- OpenAPI 0.7.1. Tests `tests/Feature/Ux/ChangeUxFixesTest.php`.
+
