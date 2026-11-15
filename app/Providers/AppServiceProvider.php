@@ -14,6 +14,7 @@ use Illuminate\Cache\RateLimiting\Limit;
 use Illuminate\Http\Request;
 use Illuminate\Support\Carbon;
 use Illuminate\Support\Facades\Gate;
+use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Facades\RateLimiter;
 use Illuminate\Support\Facades\Route;
 use Illuminate\Support\Facades\URL;
@@ -23,6 +24,21 @@ use Laravel\Sanctum\Sanctum;
 
 class AppServiceProvider extends ServiceProvider
 {
+    /**
+     * The private disk (PRIVATE_FILES_DISK) must name a configured disk; otherwise every upload fails. Logged loudly
+     * at boot instead of being discovered on the first upload (production had "S3", now lower-cased in the config).
+     */
+    public function checkPrivateDisk(): bool
+    {
+        $disk = (string) config('filesystems.private_disk');
+        if (is_array(config("filesystems.disks.{$disk}")) && config("filesystems.disks.{$disk}.driver") !== null) {
+            return true;
+        }
+        Log::error("Private file storage is misconfigured: PRIVATE_FILES_DISK=\"{$disk}\" is not a configured disk. Uploads (photos, reports) will fail. Use \"local\" or \"s3\".");
+
+        return false;
+    }
+
     /**
      * Register any application services.
      */
@@ -39,6 +55,8 @@ class AppServiceProvider extends ServiceProvider
      */
     public function boot(): void
     {
+        $this->checkPrivateDisk();
+
         // REL-05: generated URLs (signed file links, ...) always use APP_URL, never the request's Host header.
         $root = (string) config('app.url');
         if ($root !== '') {

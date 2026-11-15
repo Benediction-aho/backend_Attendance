@@ -54,10 +54,10 @@ class ActivityReportService
         return false;
     }
 
-    /** Reports sent today by the user, deleted ones included (deleting does not give a slot back). */
+    /** Reports sent today by the user and not deleted (owner decision 2026-11-15: deleting frees the slot). */
     public function sentToday(User $user): int
     {
-        return ActivityReport::withTrashed()->where('user_id', $user->id)->whereDate('work_date', $this->calendar->workDate())->count();
+        return ActivityReport::query()->where('user_id', $user->id)->whereDate('work_date', $this->calendar->workDate())->count();
     }
 
     public function store(User $user, string $title, ?string $note, UploadedFile $file): ActivityReport
@@ -72,7 +72,7 @@ class ActivityReportService
             $report = DB::transaction(function () use ($user, $title, $note, $file, $now, $date, $limit, $path) {
                 // Serialize uploads of the same user: the daily limit cannot be passed by parallel requests.
                 User::query()->whereKey($user->id)->lockForUpdate()->first();
-                if (ActivityReport::withTrashed()->where('user_id', $user->id)->whereDate('work_date', $date)->count() >= $limit) {
+                if (ActivityReport::query()->where('user_id', $user->id)->whereDate('work_date', $date)->count() >= $limit) {
                     throw new ApiError(422, "You have reached the limit of {$limit} activity reports for today.", 'too_many_activity_reports', ['limit' => $limit]);
                 }
 

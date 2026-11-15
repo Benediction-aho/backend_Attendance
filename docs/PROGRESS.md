@@ -257,7 +257,7 @@ Admins track attendance (2026-11-14) – questions (safe default implemented):
 Activity reports (2026-11-14) – questions (safe default implemented, the starred ones are settings of the reports section):
 - **Q35 – Who sends**: anyone who tracks attendance, any day and time; the upload needs today's check-in on expected days (same rule as tasks and clients). Confirm.
 - **Q36 – Content**: mandatory title (150 characters, no link or e-mail address), optional note (1000), one PDF with the weekly report's checks and size limit. Confirm.
-- **Q37 – Daily limit***: `activity_reports_per_day` = 5 per person (a deleted report still counts). Confirm the number.
+- **Q37 – Daily limit***: `activity_reports_per_day` = 5 per person (owner decision 2026-11-15: a deleted report frees its slot). Confirm the number.
 - **Q38 – Deletion***: the author can delete a report within `activity_report_delete_minutes` = 30 after sending (0 = never); no edit. Confirm.
 - **Q39 – Readers**: the people who may read the author's weekly reports: super admins, and for an employee the admins holding "View reports" or "Receive weekly reports"; an admin's report is read by super admins only. Confirm (or restrict to "View reports" only).
 - **Q40 – Notification***: in-app to those readers at each upload; e-mail only when `activity_report_email` is on (default off). Confirm.
@@ -397,4 +397,8 @@ Tests: `tests/Feature/Reports/ActivityReportTest.php` (36 tests: sending, valida
 - **UXC-05 fixed (API)**: `GET /admin/reports/daily` adds `totals: {people, employees, admins, with_report}` (super admin: employees + admins; admin: employees only). Frontend: say "N of M people" using `totals.people`.
 - **UXC-07 fixed (API change)**: `/me/dashboard` `week.presence_days` counts expected days only (never above `expected_days_so_far`); new `week.extra_days` = check-ins on non-expected days. Frontend: show "1 extra day" instead of "1 of 0".
 - OpenAPI 0.7.1. Tests `tests/Feature/Ux/ChangeUxFixesTest.php`.
+
+## 2026-11-15 – Activity report slot and private disk name
+- **Q37 answered (owner, 2026-11-15)**: deleting an activity report frees its slot; the daily limit counts only the day's non-deleted reports (`limits.sent_today` / `remaining_today` follow). No other API change.
+- **Robustness**: `PRIVATE_FILES_DISK` is lower-cased and trimmed in `config/filesystems.php` (production had `S3`, every upload failed with "Disk [S3] does not have a configured driver"); at boot the API logs a clear error if the private disk is not a configured disk.
 

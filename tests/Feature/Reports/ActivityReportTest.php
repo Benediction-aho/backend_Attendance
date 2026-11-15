@@ -142,7 +142,7 @@ describe('sending', function () {
         arSend($this, $this->author, ['title' => str_repeat('t', 150), 'note' => str_repeat('n', 1000)])->assertCreated();
     });
 
-    it('limits the number of reports per day, deleted ones included', function () {
+    it('limits the number of reports per day; deleting one frees its slot (owner decision 2026-11-15)', function () {
         app(SettingsService::class)->set(['activity_reports_per_day' => 2]);
         $first = arSend($this, $this->author)->assertCreated()->json('data.id');
         arSend($this, $this->author)->assertCreated();
@@ -151,8 +151,10 @@ describe('sending', function () {
             ->assertJsonPath('limits.remaining_today', 0)->assertJsonPath('limits.delete_minutes', 30)->assertJsonPath('limits.max_size_mb', 10);
 
         $this->deleteJson("/api/me/reports/activity/{$first}")->assertNoContent();
+        $this->getJson('/api/me/reports/activity')->assertJsonPath('limits.sent_today', 1)->assertJsonPath('limits.remaining_today', 1);
+        arSend($this, $this->author)->assertCreated();
         arSend($this, $this->author)->assertUnprocessable()->assertJsonPath('code', 'too_many_activity_reports');
-        expect(count(Storage::disk('local')->allFiles()))->toBe(1);
+        expect(count(Storage::disk('local')->allFiles()))->toBe(2);
 
         // Another person has their own limit; the next day starts again.
         $other = User::factory()->create();
