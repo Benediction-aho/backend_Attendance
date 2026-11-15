@@ -61,8 +61,8 @@ class SettingsController
             'effective_from' => ['nullable', 'date_format:Y-m-d', 'after_or_equal:'.$today],
         ];
         foreach ($definitions as $key => $definition) {
-            // Lists may be emptied (present) when their own rules allow it; scalars are required.
-            $rules["values.$key"] = ['sometimes', $definition['type'] === 'int_list' ? 'present' : 'required', ...$definition['rules']];
+            // Lists and nullable settings may be emptied (present) when their own rules allow it; scalars are required.
+            $rules["values.$key"] = ['sometimes', $definition['type'] === 'int_list' || ($definition['nullable'] ?? false) ? 'present' : 'required', ...$definition['rules']];
             if ($definition['type'] === 'int_list') {
                 $rules["values.$key.*"] = $key === 'monthly_report_recipient_ids'
                     // Only active admins and super admins may receive the monthly report (P1-09).
@@ -139,8 +139,8 @@ class SettingsController
         return response()->json([
             'data' => collect($page->items())->map(fn (SettingHistory $h) => [
                 'key' => $h->key,
-                'old_value' => $h->old_value,
-                'new_value' => $h->new_value,
+                'old_value' => $this->settings->present($h->key, $h->old_value),
+                'new_value' => $this->settings->present($h->key, $h->new_value),
                 'effective_from' => $h->effective_from->toIso8601String(),
                 'changed_at' => $h->changed_at->toIso8601String(),
                 'changed_by' => $h->changer ? ['id' => $h->changer->id, 'name' => $h->changer->fullName()] : null,

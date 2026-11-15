@@ -2,7 +2,7 @@
 openapi: 3.1.0
 info:
   title: Assistance Ghana Attendance API
-  version: 0.5.0
+  version: 0.7.1
   description: |
     Authentication: **Bearer device tokens only** (Sanctum personal access tokens, one per device).
     The API sets no cookie and has no CSRF/session endpoint. After login the client receives
@@ -10,6 +10,24 @@ info:
     the token on the device (IndexedDB/localStorage) and deletes it on logout or on a 401.
     A 401 with `code: account_blocked` means the session was ended because the account was blocked, locked or deleted.
     Network or 5xx errors must never log the user out; only a 401 does.
+
+    **Who tracks attendance (0.6.0, owner decision 2026-11-14).** Employees always; **admins like employees** from
+    the date in the setting `admin_attendance_starts_on` (empty: never); super admins never. `GET /me` returns
+    `tracks_attendance` for the signed-in account: when true, every "employee" route (`/attendance/*`,
+    `/me/work-schedule`, `/me/leaves`, `/me/dashboard`, `/me/tasks`, `/me/clients`, `/clients/services`,
+    `/me/reports/*`, `/me/faceid*`) answers for that account exactly as for an employee (same codes, including
+    403 `checkin_required` on its own task/client/report writes). When false these routes answer 403
+    `employees_only`. `/admin/*` routes are never behind the check-in.
+    **0.7.1 (UXC fixes):** `/me/dashboard` `week.presence_days` now counts expected days only (≤ `expected_days_so_far`)
+    and new `week.extra_days` counts check-ins on days that were not expected; `week.weekly_report.status` is `not_expected`
+    for a report day the person was not tracking attendance on (no "open" grace, upload refused with `window_not_open`);
+    `/admin/reports/daily` adds `totals: {people, employees, admins, with_report}` (use "people").
+    **Whose attendance in the admin pages.** An admin (whatever the permissions) sees and manages employees only,
+    never another admin and never themselves; a super admin sees and manages employees and admins. Every
+    `/admin` attendance, leave, working-week, Face ID, mission and report route applies this: lists and totals
+    are filtered (`EmployeeSummary.role` tells admins apart for super admins); a single admin target answers
+    403 (404 on the report routes) to an admin. `POST /admin/users/{id}/check-in` adds 422
+    `attendance_not_tracked` (target is an admin while admins do not track attendance).
     Any non-multipart body larger than MAX_REQUEST_BODY_KB (default 128 KB) is refused with 413 `payload_too_large` (REL-06).
 servers:
   - url: http://localhost:8000/api
@@ -29,7 +47,7 @@ paths:
                   status: { type: string, enum: [ok] }
   /admin/settings:
     get:
-      summary: 'Settings the caller may manage, with current value, default and scheduled future values. Super admin: all sections; admin: only sections granted by manage_settings_attendance / manage_settings_reports / manage_settings_security (403 with none). Super-admin-only settings (super_admin_only: true – monthly_report_recipient_ids, logs_admins_see_super_admin_events, timezone) are never returned to admins.'
+      summary: 'Settings the caller may manage, with current value, default and scheduled future values. Super admin: all sections; admin: only sections granted by manage_settings_attendance / manage_settings_reports / manage_settings_security (403 with none). Super-admin-only settings (super_admin_only: true – monthly_report_recipient_ids, logs_admins_see_super_admin_events, timezone, super_admin_promotion_requires_tier, admin_attendance_starts_on) are never returned to admins.'
       security: [{ deviceToken: [] }]
       responses:
         '200':
@@ -492,7 +510,7 @@ paths:
   # ---------------- Phase 3: attendance ----------------
   /attendance/today:
     get:
-      summary: Today's status for the employee (employees only, else 403 employees_only). Includes the server time for clock sync.
+      summary: Today's status for the signed-in account (accounts tracking attendance only – see tracks_attendance – else 403 employees_only). Includes the server time for clock sync.
       description: |
         Work date and lateness are computed by the server (Africa/Accra). The client never sends a time or a date.
         `available_check_ins` lists the check-in types allowed now (empty once checked in). `rules` come from settings.
@@ -1070,6 +1088,75 @@ paths:
         '200': { description: 'data: WeeklySubmission + user + versions[] + week {clients_count, services, clients}' }
         '403': { $ref: '#/components/responses/Forbidden' }
         '404': { description: not found }
+  /me/reports/activity:
+    get:
+      summary: The caller's own activity reports, newest first (accounts tracking attendance; 0.7.0).
+      description: An activity report is a PDF with a title sent at any time. It never replaces nor counts as the weekly Friday report.
+      security: [{ deviceToken: [] }]
+      parameters:
+        - { name: page, in: query, schema: { type: integer, minimum: 1 } }
+        - { name: per_page, in: query, schema: { type: integer, minimum: 1, maximum: 100, default: 20 } }
+      responses:
+        '200': { description: 'data: ActivityReport[] (author view: can_delete, delete_until; no user); meta: {current_page, last_page, total}; limits: {per_day, sent_today, remaining_today, delete_minutes, max_size_mb}' }
+        '403': { description: employees_only }
+    post:
+      summary: Send an activity report (multipart). Any day, any time. Needs today's check-in on expected days. The readers are notified at once.
+      description: |
+        Same PDF checks and size limit as the weekly report (report_pdf_max_mb). At most activity_reports_per_day (5) per person per work
+        date, deleted ones included. Readers = the people who may read the author's weekly reports: super admins, and – when the author
+        is an employee – admins holding view_reports or receive_weekly_reports. They get an in-app notification
+        (kind `activity_report`, path `/admin/reports/activity/{id}`, data `activity_report_id`, `user_id`); an e-mail too only when the
+        setting activity_report_email is on.
+      security: [{ deviceToken: [] }]
+      requestBody:
+        content:
+          multipart/form-data:
+            schema:
+              type: object
+              required: [title, file]
+              properties:
+                title: { type: string, maxLength: 150, description: 'Plain text; no link, e-mail address, "<", ">", "[" or "]" (422 on title). Spaces are collapsed.' }
+                note: { type: string, maxLength: 1000, description: Optional plain text. }
+                file: { type: string, format: binary, description: One PDF. }
+      responses:
+        '201': { description: 'data: ActivityReport (author view)' }
+        '403': { description: checkin_required | employees_only }
+        '422': { description: 'validation (errors.title | errors.note | errors.file – size or missing) | invalid_pdf | pdf_encrypted | pdf_active_content | too_many_activity_reports (limit)' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+  /me/reports/activity/{id}:
+    delete:
+      summary: Delete one's own activity report within activity_report_delete_minutes (30) after sending. No edit. Needs today's check-in on expected days.
+      security: [{ deviceToken: [] }]
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: integer } }
+      responses:
+        '204': { description: Deleted (the file is removed; readers no longer see it). }
+        '403': { description: checkin_required | employees_only }
+        '404': { description: Unknown id, someone else's report, or already deleted. }
+        '422': { description: 'delete_window_closed (too late, or deletion switched off with 0 minutes)' }
+  /admin/reports/activity:
+    get:
+      summary: Activity reports the caller may read (view_reports or receive_weekly_reports; admins – employees only; super admins – employees and admins), newest first.
+      security: [{ deviceToken: [] }]
+      parameters:
+        - { name: from, in: query, schema: { type: string, format: date }, description: Work date of sending, inclusive. }
+        - { name: to, in: query, schema: { type: string, format: date }, description: 'Inclusive; must not be before from.' }
+        - { name: user_id, in: query, schema: { type: integer }, description: Author. }
+        - { name: page, in: query, schema: { type: integer, minimum: 1 } }
+        - { name: per_page, in: query, schema: { type: integer, minimum: 1, maximum: 100, default: 25 } }
+      responses:
+        '200': { description: 'data: ActivityReport[] (reader view: user EmployeeSummary; no can_delete); meta: {current_page, last_page, total}' }
+        '403': { description: Missing tier. }
+  /admin/reports/activity/{id}:
+    get:
+      summary: One activity report with a fresh temporary download link (file_url).
+      security: [{ deviceToken: [] }]
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: integer } }
+      responses:
+        '200': { description: 'data: ActivityReport (reader view)' }
+        '403': { description: Missing tier. }
+        '404': { description: 'Unknown or deleted report, or a report the caller may not read (an admin author for an admin).' }
 components:
   securitySchemes:
     deviceToken:
@@ -1103,8 +1190,24 @@ components:
         first_name: { type: string }
         last_name: { type: string }
         job_title: { type: ['string', 'null'] }
+        role: { type: string, enum: [employee, admin], description: 'admin rows only appear for super admins (0.6.0)' }
         employee_type: { type: string }
+        employee_type_other: { type: ['string', 'null'] }
         email: { type: string, format: email }
+    ActivityReport:
+      type: object
+      properties:
+        id: { type: integer }
+        title: { type: string }
+        note: { type: ['string', 'null'] }
+        work_date: { type: string, format: date, description: Server work date of sending (Africa/Accra). }
+        file_name: { type: string, description: Name given by the author, sanitised; display only. }
+        size_bytes: { type: integer }
+        submitted_at: { type: string, format: date-time }
+        file_url: { type: ['string', 'null'], description: 'Temporary download link (file_url_ttl_minutes). Served as an attachment.' }
+        can_delete: { type: boolean, description: Author view only. }
+        delete_until: { type: ['string', 'null'], format: date-time, description: 'Author view only; null when deletion is switched off.' }
+        user: { $ref: '#/components/schemas/EmployeeSummary', description: Reader view only. }
     Task:
       type: object
       properties:
@@ -1167,6 +1270,8 @@ components:
         address: { type: [string, 'null'] }
         must_change_password: { type: boolean }
         password_min_length: { type: integer, description: Only for oneself (GET /me, login). }
+        tracks_attendance: { type: boolean, description: 'Only for oneself. true → show the employee features (check-in, working week, tasks, clients, reports, Face ID): employees always, admins from admin_attendance_starts_on, super admins never.' }
+        attendance_starts_on: { type: [string, 'null'], format: date, description: 'Only for oneself. Admins: the date their attendance starts (null = admins do not track attendance). Always null for other roles.' }
         permissions: { type: array, items: { type: string } }
         code_pending: { type: boolean }
         code_expires_at: { type: [string, 'null'], format: date-time }
@@ -1181,8 +1286,9 @@ components:
         group: { type: string, enum: [attendance, reports, system, security] }
         section: { type: string, enum: [attendance, reports, security], description: 'Permission section: manage_settings_<section>' }
         super_admin_only: { type: boolean, description: 'Only super admins see and change it (admins never receive these settings)' }
-        type: { type: string, enum: [int, float, bool, time, string, int_list] }
+        type: { type: string, enum: [int, float, bool, time, string, int_list, date], description: 'date = "YYYY-MM-DD" or null (0.6.0: admin_attendance_starts_on)' }
         editable: { type: boolean }
+        nullable: { type: boolean, description: 'true → the value may be null: send null to empty it (0.6.0)' }
         value: {}
         default: {}
         scheduled: { type: array, items: { type: object, properties: { value: {}, effective_from: { type: string, format: date-time } } } }

@@ -2,8 +2,8 @@
 
 namespace App\Domain\Reports;
 
+use App\Domain\Attendance\AttendanceScope;
 use App\Domain\Attendance\WorkCalendar;
-use App\Enums\Role;
 use App\Models\Attendance;
 use App\Models\Client;
 use App\Models\DailyReport;
@@ -17,7 +17,7 @@ use Illuminate\Support\Carbon;
  */
 class ReportBuilder
 {
-    public function __construct(private readonly WorkCalendar $calendar) {}
+    public function __construct(private readonly WorkCalendar $calendar, private readonly AttendanceScope $scope) {}
 
     /**
      * Groups client entries by normalized service: quantities summed, label = most used spelling
@@ -137,19 +137,20 @@ class ReportBuilder
 
     /**
      * Monthly rows (SPECS 7, template): one per employee, sorted by last name.
-     * Employees: active employees, plus anyone else with lateness or clients in the period.
+     * Rows: active accounts tracking attendance at the end of the period (employees; admins once their attendance
+     * has started), plus anyone else with lateness or clients in the period. With a $viewer the rows are limited
+     * to the people that viewer may see (an admin recipient: employees only).
      *
      * @return list<array{user_id: int, employee: string, detail: string|null, late: int, clients: int, services: list<array{service: string, service_key: string, quantity: int}>}>
      */
-    public function monthlyRows(string $start, string $end): array
+    public function monthlyRows(string $start, string $end, ?User $viewer = null): array
     {
         $late = Attendance::query()->whereDate('work_date', '>=', $start)->whereDate('work_date', '<=', $end)->where('is_late', true)
             ->selectRaw('user_id, count(*) as n')->groupBy('user_id')->pluck('n', 'user_id');
         $clients = Client::query()->whereDate('work_date', '>=', $start)->whereDate('work_date', '<=', $end)->orderBy('id')->get()->groupBy('user_id');
         $ids = collect($late->keys())->merge($clients->keys())->unique()->all();
 
-        $users = User::query()->where('role', Role::Employee->value)
-            ->where(fn ($q) => $q->where('status', 'active')->orWhereIn('id', $ids))
+        $users = $this->scope->population($viewer, $end, $ids)
             ->orderByRaw('upper(last_name), upper(first_name), id')->get();
 
         // UX5-02: an account that joined after the period (catch-up run) is not listed unless it has data.

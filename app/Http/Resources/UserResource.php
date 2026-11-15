@@ -2,6 +2,7 @@
 
 namespace App\Http\Resources;
 
+use App\Domain\Attendance\AttendanceScope;
 use App\Enums\Role;
 use App\Models\User;
 use App\Services\FileUrls;
@@ -55,6 +56,11 @@ class UserResource extends JsonResource
         if ($self) {
             $data += [
                 'must_change_password' => $user->must_change_password,
+                // Whether this account checks in and uses the employee pages today (employees; admins from the
+                // configured date; never super admins). The PWA shows the employee features from this flag.
+                'tracks_attendance' => $user->tracksAttendance(),
+                // Admins only: the date their attendance starts (null: admins do not track attendance).
+                'attendance_starts_on' => $user->isAdmin() ? app(AttendanceScope::class)->adminStartDate() : null,
                 'permissions' => $user->permissionKeys(),
                 'last_login_at' => $user->last_login_at?->toIso8601String(),
                 // For the password form (same rule as StrongPassword).

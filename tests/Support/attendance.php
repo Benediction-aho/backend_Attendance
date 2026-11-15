@@ -2,6 +2,7 @@
 
 use App\Models\Attendance;
 use App\Models\User;
+use App\Settings\SettingsService;
 use Illuminate\Http\UploadedFile;
 use Illuminate\Support\Carbon;
 use Laravel\Sanctum\Sanctum;
@@ -13,6 +14,19 @@ const OFFICE_LNG = -0.216703;
 function at(string $local): void
 {
     Carbon::setTestNow(Carbon::parse($local, 'Africa/Accra'));
+}
+
+/**
+ * Admins track attendance from $date (null: not at all). The value is saved at the current test time, like a
+ * super admin saving the setting now ($effectiveFrom: a local Accra time, to place the change in the past or future).
+ */
+function adminsTrackFrom(?string $date, ?string $effectiveFrom = null): void
+{
+    app(SettingsService::class)->set(
+        ['admin_attendance_starts_on' => $date],
+        null,
+        $effectiveFrom !== null ? Carbon::parse($effectiveFrom, 'Africa/Accra') : null,
+    );
 }
 
 /** Two-step GPS check-in at the office; returns the confirm response. */

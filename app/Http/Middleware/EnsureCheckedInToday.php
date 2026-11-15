@@ -4,15 +4,14 @@ namespace App\Http\Middleware;
 
 use App\Domain\Attendance\AttendanceService;
 use App\Domain\Attendance\WorkCalendar;
-use App\Enums\Role;
 use App\Models\User;
 use Closure;
 use Illuminate\Http\Request;
 use Symfony\Component\HttpFoundation\Response;
 
 /**
- * SPECS 6 "access conditional on check-in": an employee can do nothing in the application (tasks,
- * clients, reports…) until today's check-in exists. Not applied on days off, leave, holidays and
+ * SPECS 6 "access conditional on check-in": an account that tracks attendance (employee, or admin from the
+ * configured date) can do nothing in its own tasks, clients and reports until today's check-in exists. Not applied on days off, leave, holidays and
  * non-working days. Profile, auth, notification and attendance routes never use this middleware.
  */
 class EnsureCheckedInToday
@@ -22,7 +21,7 @@ class EnsureCheckedInToday
     public function handle(Request $request, Closure $next): Response
     {
         $user = $request->user();
-        if (! $user instanceof User || $user->role !== Role::Employee) {
+        if (! $user instanceof User || ! $user->tracksAttendance()) {
             return $next($request);
         }
 

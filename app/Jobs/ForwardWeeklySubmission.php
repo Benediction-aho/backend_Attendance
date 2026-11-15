@@ -35,7 +35,8 @@ class ForwardWeeklySubmission implements ShouldQueue
         $title = $submission->is_late ? "Late weekly report from {$name}" : "Weekly report from {$name}";
         $body = "{$name} sent the weekly report for the week of {$submission->week_start->format('j M Y')}"
             .($submission->version > 1 ? " (version {$submission->version})" : '').($submission->is_late ? ', after the deadline.' : '.');
-        $service->deliver('weekly_forward', (string) $submission->id, $title, $body, '/admin/reports/weekly/submissions/'.$submission->id, collect([$submission]));
+        // An admin's report goes to super admins only (employees': every authorized recipient).
+        $service->deliver('weekly_forward', (string) $submission->id, $title, $body, '/admin/reports/weekly/submissions/'.$submission->id, collect([$submission]), $service->recipientsFor($submission->user));
         $submission->update(['forwarded_at' => Carbon::now()]);
     }
 }

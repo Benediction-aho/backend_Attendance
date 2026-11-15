@@ -2,10 +2,10 @@
 
 namespace App\Http\Controllers\Attendance;
 
+use App\Domain\Attendance\AttendanceScope;
 use App\Enums\LogLevel;
 use App\Enums\LogType;
 use App\Enums\Permission;
-use App\Enums\Role;
 use App\Exceptions\ApiError;
 use App\Http\Presenters\EmployeeSummary;
 use App\Models\Leave;
@@ -15,10 +15,13 @@ use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
 
-/** Employee leave (SPECS 6 bis), declared by admins holding "manage_leaves". */
+/**
+ * Leave (SPECS 6 bis), declared by admins holding "manage_leaves" for employees, and by super admins only
+ * for admins (UserPolicy::manageAttendance). Nobody declares or removes their own leave.
+ */
 class LeaveController
 {
-    public function __construct(private readonly ActivityLogger $logger) {}
+    public function __construct(private readonly ActivityLogger $logger, private readonly AttendanceScope $scope) {}
 
     public function mine(Request $request): JsonResponse
     {
@@ -37,8 +40,7 @@ class LeaveController
             'from' => ['nullable', 'date_format:Y-m-d'],
             'to' => ['nullable', 'date_format:Y-m-d'],
         ]);
-        $page = Leave::query()->with('user')
-            ->whereIn('user_id', User::withTrashed()->select('id')->where('role', Role::Employee->value))
+        $page = $this->scope->visibleRows(Leave::query(), $actor)->with('user')
             ->when($data['user_id'] ?? null, fn ($q, $v) => $q->where('user_id', (int) $v))
             ->when($data['from'] ?? null, fn ($q, $v) => $q->whereDate('end_date', '>=', $v))
             ->when($data['to'] ?? null, fn ($q, $v) => $q->whereDate('start_date', '<=', $v))
@@ -53,7 +55,7 @@ class LeaveController
     public function store(Request $request, User $user): JsonResponse
     {
         $actor = $this->actor($request);
-        if ($user->role !== Role::Employee || ! $user->isActive()) {
+        if (! $actor->can('manageAttendance', $user) || ! $user->isActive()) {
             throw new ApiError(403, 'This action is not allowed.');
         }
         $data = $request->validate([
@@ -86,7 +88,7 @@ class LeaveController
     {
         $actor = $this->actor($request);
         $employee = User::withTrashed()->find($leave->user_id);
-        if ($employee === null || $employee->role !== Role::Employee) {
+        if ($employee === null || ! $actor->can('manageAttendance', $employee)) {
             throw new ApiError(403, 'This action is not allowed.');
         }
         $leave->delete();

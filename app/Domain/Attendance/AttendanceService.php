@@ -33,6 +33,7 @@ class AttendanceService
         private readonly WorkCalendar $calendar,
         private readonly ActivityLogger $logger,
         private readonly CheckinAssertionVerifier $verifier,
+        private readonly AttendanceScope $scope,
     ) {}
 
     public function today(User $user): ?Attendance
@@ -194,7 +195,7 @@ class AttendanceService
                 'attendance_id' => $attendance->id, 'type' => $attendance->check_in_type, 'late' => $attendance->is_late,
             ]);
             if ($attendance->check_in_type === Attendance::TYPE_MISSION) {
-                $this->notifyStaff(Permission::ApproveMissionCheckins, new StaffAlert(
+                $this->notifyStaff($user, Permission::ApproveMissionCheckins, new StaffAlert(
                     'mission_checkin',
                     'Mission check-in to approve',
                     "{$user->fullName()} checked in on a mission: {$attendance->reason}",
@@ -274,7 +275,7 @@ class AttendanceService
             'attendance_id' => $attendance->id, 'early' => $early,
         ]);
         if ($early) {
-            $this->notifyStaff(Permission::ViewLateness, new StaffAlert(
+            $this->notifyStaff($user, Permission::ViewLateness, new StaffAlert(
                 'early_checkout',
                 'Early check-out',
                 "{$user->fullName()} checked out at ".TimeFormat::time($now).": {$reason}",
@@ -398,9 +399,10 @@ class AttendanceService
         ]);
     }
 
-    private function notifyStaff(Permission $permission, StaffAlert $alert): void
+    /** Alerts about an employee go to the holders of the tier; alerts about an admin go to super admins only. */
+    private function notifyStaff(User $subject, Permission $permission, StaffAlert $alert): void
     {
-        $recipients = User::query()->holdingPermission($permission)->get();
+        $recipients = $this->scope->alertRecipients($subject, $permission);
         if ($recipients->isNotEmpty()) {
             Notification::send($recipients, $alert);
         }

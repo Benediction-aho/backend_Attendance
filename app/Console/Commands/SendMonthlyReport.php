@@ -44,13 +44,16 @@ class SendMonthlyReport extends Command
                 $label = $report->period_start->format('j M Y').' – '.$report->period_end->format('j M Y');
                 $failed = 0;
                 $sent = 0;
+                // Super admins get the full report (employees and admins); selected admins get the employees-only one.
+                $employeesOnly = null;
                 foreach ($recipients->monthly() as $recipient) {
                     $claimed = DB::table('report_deliveries')->insertOrIgnore(['kind' => 'monthly_report', 'ref' => $month, 'user_id' => $recipient->id, 'sent_at' => Carbon::now()]);
                     if ($claimed !== 1) {
                         continue;
                     }
                     try {
-                        Mail::to($recipient->email)->queue(new MonthlyReportMail($report->path, $report->file_name, $label));
+                        $path = $recipient->isSuperAdmin() ? $report->path : ($employeesOnly ??= $monthly->generateForAdmin($month, $recipient));
+                        Mail::to($recipient->email)->queue(new MonthlyReportMail($path, $report->file_name, $label));
                         $recipient->notifyNow(new ReportNotice('monthly_report_emailed', 'Monthly report sent by email',
                             "The monthly performance report ({$label}) has been sent to your email address.", null, ['month' => $month]));
                         $sent++;

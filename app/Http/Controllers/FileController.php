@@ -27,6 +27,9 @@ class FileController
             // P5-03: downloaded as an attachment with a fixed safe name, in a sandbox if opened anyway.
             'Content-Disposition' => 'attachment; filename="'.self::safeName($path).'"',
             'Content-Security-Policy' => "default-src 'none'; sandbox; frame-ancestors 'none'; base-uri 'none'",
+            // The PWA is served from another site than the API: without this the browser refuses the photo in
+            // <img> (the default is same-site). The signed, short-lived URL is the access control.
+            'Cross-Origin-Resource-Policy' => 'cross-origin',
         ]);
     }
 

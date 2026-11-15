@@ -2,6 +2,7 @@
 
 namespace App\Http\Controllers\Admin;
 
+use App\Domain\Attendance\AttendanceScope;
 use App\Enums\LogLevel;
 use App\Enums\LogType;
 use App\Enums\Role;
@@ -197,7 +198,17 @@ class ActivityLogController
         $hideSuperAdmins = ! $viewer->isSuperAdmin() && ! $settings->bool('logs_admins_see_super_admin_events');
         $superAdminIds = fn ($q) => $q->select('id')->from('users')->where('role', Role::SuperAdmin->value);
 
+        // An admin never sees another admin's attendance (nor their own) in admin pages: attendance events about
+        // admin accounts are for super admins only (owner decision 2026-11-14).
+        $adminIds = fn ($q) => $q->select('id')->from('users')->where('role', Role::Admin->value);
+        $notAttendance = function ($q) {
+            foreach (AttendanceScope::LOG_EVENT_PREFIXES as $prefix) {
+                $q->where('event', 'not like', $prefix.'%');
+            }
+        };
+
         return ActivityLog::query()
+            ->when(! $viewer->isSuperAdmin(), fn ($q) => $q->where(fn ($w) => $w->whereNull('user_id')->orWhereNotIn('user_id', $adminIds)->orWhere($notAttendance)))
             ->when($hideSuperAdmins, fn ($q) => $q->where(fn ($w) => $w->whereNull('user_id')->orWhereNotIn('user_id', $superAdminIds)))
             ->with(['user:id,first_name,last_name,email,deleted_at', 'actor:id,first_name,last_name,deleted_at'])
             ->when($f['user_id'] ?? null, fn ($q, $v) => $q->where('user_id', $v))

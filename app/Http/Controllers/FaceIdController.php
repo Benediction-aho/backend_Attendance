@@ -2,9 +2,9 @@
 
 namespace App\Http\Controllers;
 
+use App\Domain\Attendance\AttendanceScope;
 use App\Domain\FaceId\WebAuthnService;
 use App\Enums\Permission;
-use App\Enums\Role;
 use App\Exceptions\ApiError;
 use App\Http\Presenters\EmployeeSummary;
 use App\Models\User;
@@ -18,7 +18,7 @@ use Illuminate\Http\Request;
  */
 class FaceIdController
 {
-    public function __construct(private readonly WebAuthnService $webauthn) {}
+    public function __construct(private readonly WebAuthnService $webauthn, private readonly AttendanceScope $scope) {}
 
     /** The employee's own Face ID status on this device and her credentials. */
     public function mine(Request $request): JsonResponse
@@ -74,7 +74,7 @@ class FaceIdController
         return response()->json(['data' => $this->present($credential), 'state' => $this->webauthn->state($user, $this->deviceId($request))], 201);
     }
 
-    /** Admin list (approve_faceid_devices). Admins only see employees' devices. */
+    /** Admin list (approve_faceid_devices). Admins only see employees' devices; super admins also see admins'. */
     public function index(Request $request): JsonResponse
     {
         $actor = $this->user($request);
@@ -83,9 +83,8 @@ class FaceIdController
             'status' => ['nullable', 'in:pending,approved,revoked'],
             'user_id' => ['nullable', 'integer'],
         ]);
-        $page = WebauthnCredential::query()->with(['user', 'device'])
+        $page = $this->scope->visibleRows(WebauthnCredential::query(), $actor)->with(['user', 'device'])
             ->where('status', $data['status'] ?? WebauthnCredential::PENDING)
-            ->when(! $actor->isSuperAdmin(), fn ($q) => $q->whereIn('user_id', User::query()->select('id')->where('role', Role::Employee->value)))
             ->when($data['user_id'] ?? null, fn ($q, $v) => $q->where('user_id', (int) $v))
             ->orderByDesc('created_at')->paginate(50);
 
@@ -127,7 +126,8 @@ class FaceIdController
         $actor = $this->user($request);
         $this->requireTier($actor);
         $owner = $credential->user;
-        if ($owner === null || $owner->id === $actor->id || (! $actor->isSuperAdmin() && $owner->role !== Role::Employee)) {
+        // Never one's own device; an admin's device is reviewed by a super admin only.
+        if ($owner === null || $owner->id === $actor->id || ! $actor->can('manageAttendance', $owner)) {
             throw new ApiError(403, 'This action is not allowed.');
         }
 

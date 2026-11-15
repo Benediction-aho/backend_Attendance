@@ -2,6 +2,7 @@
 
 namespace App\Domain\FaceId;
 
+use App\Domain\Attendance\AttendanceScope;
 use App\Enums\LogLevel;
 use App\Enums\LogType;
 use App\Enums\Permission;
@@ -209,7 +210,8 @@ class WebAuthnService
         ));
 
         if (! $autoApprove) {
-            $recipients = User::query()->holdingPermission(Permission::ApproveFaceIdDevices)->where('id', '!=', $user->id)->get();
+            // An admin's new device is announced to super admins only.
+            $recipients = app(AttendanceScope::class)->alertRecipients($user, Permission::ApproveFaceIdDevices);
             if ($recipients->isNotEmpty()) {
                 Notification::send($recipients, new StaffAlert(
                     'faceid_device_request',

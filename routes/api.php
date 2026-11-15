@@ -19,12 +19,14 @@ use App\Http\Controllers\NotificationController;
 use App\Http\Controllers\Ops\SchedulerTickController;
 use App\Http\Controllers\ProfileController;
 use App\Http\Controllers\PushSubscriptionController;
+use App\Http\Controllers\Reports\ActivityReportController;
+use App\Http\Controllers\Reports\AdminActivityReportController;
 use App\Http\Controllers\Reports\AdminReportController;
 use App\Http\Controllers\Reports\ClientController;
 use App\Http\Controllers\Reports\ReportController;
 use App\Http\Controllers\Reports\TaskController;
 use App\Http\Middleware\EnsureAccountUsable;
-use App\Http\Middleware\EnsureEmployee;
+use App\Http\Middleware\EnsureTracksAttendance;
 use Illuminate\Support\Facades\Route;
 
 Route::get('/health', HealthController::class)->name('health');
@@ -66,8 +68,9 @@ Route::middleware(['auth:sanctum', EnsureAccountUsable::class])->group(function 
 
     Route::get('/holidays', [HolidayController::class, 'index'])->name('holidays.index');
 
-    // Attendance (employees only). Never behind EnsureCheckedInToday: these routes are how one checks in.
-    Route::middleware(EnsureEmployee::class)->group(function () {
+    // Attendance: accounts that track it (employees; admins from `admin_attendance_starts_on`; never super admins).
+    // Never behind EnsureCheckedInToday: these routes are how one checks in.
+    Route::middleware(EnsureTracksAttendance::class)->group(function () {
         Route::get('/attendance/today', [AttendanceController::class, 'today'])->name('attendance.today');
         Route::get('/attendance/history', [AttendanceController::class, 'history'])->name('attendance.history');
         Route::middleware('throttle:attendance')->group(function () {
@@ -88,6 +91,7 @@ Route::middleware(['auth:sanctum', EnsureAccountUsable::class])->group(function 
         Route::get('/me/reports/daily', [ReportController::class, 'daily'])->name('me.reports.daily');
         Route::get('/me/reports/weekly', [ReportController::class, 'weekly'])->name('me.reports.weekly');
         Route::get('/me/reports/weekly/submission', [ReportController::class, 'submissionStatus'])->name('me.reports.weekly.submission');
+        Route::get('/me/reports/activity', [ActivityReportController::class, 'index'])->name('me.reports.activity.index');
         Route::middleware(['checked-in', 'throttle:attendance'])->group(function () {
             Route::post('/me/tasks', [TaskController::class, 'store'])->name('me.tasks.store');
             Route::patch('/me/tasks/{task}', [TaskController::class, 'update'])->whereNumber('task')->name('me.tasks.update');
@@ -96,6 +100,9 @@ Route::middleware(['auth:sanctum', EnsureAccountUsable::class])->group(function 
             Route::patch('/me/clients/{client}', [ClientController::class, 'update'])->whereNumber('client')->name('me.clients.update');
             Route::delete('/me/clients/{client}', [ClientController::class, 'destroy'])->whereNumber('client')->name('me.clients.destroy');
             Route::post('/me/reports/weekly/submission', [ReportController::class, 'submit'])->name('me.reports.weekly.submit');
+            // Activity reports: a PDF sent at any time, apart from the weekly report.
+            Route::post('/me/reports/activity', [ActivityReportController::class, 'store'])->name('me.reports.activity.store');
+            Route::delete('/me/reports/activity/{report}', [ActivityReportController::class, 'destroy'])->whereNumber('report')->name('me.reports.activity.destroy');
         });
 
         // Face ID (WebAuthn passkeys).
@@ -106,8 +113,10 @@ Route::middleware(['auth:sanctum', EnsureAccountUsable::class])->group(function 
         });
     });
 
+    // Admin pages are never behind the check-in gate: an admin who tracks attendance and has not checked in yet
+    // keeps every admin function they are permitted to use (decision to confirm with the owner, PROGRESS Q30).
     Route::prefix('admin')->group(function () {
-        // Attendance administration (tier checked in each action).
+        // Attendance administration (tier checked in each action; admins as targets: super admins only).
         Route::get('/attendance/day', [AdminAttendanceController::class, 'day'])->name('admin.attendance.day');
         Route::get('/attendance/missions', [AdminAttendanceController::class, 'missions'])->name('admin.attendance.missions');
         Route::post('/attendance/{attendance}/mission/approve', [AdminAttendanceController::class, 'approveMission'])->whereNumber('attendance')->name('admin.attendance.mission.approve');
@@ -128,6 +137,8 @@ Route::middleware(['auth:sanctum', EnsureAccountUsable::class])->group(function 
         Route::get('/reports/weekly', [AdminReportController::class, 'weekly'])->name('admin.reports.weekly');
         Route::get('/reports/weekly/submissions/{submission}', [AdminReportController::class, 'submission'])->whereNumber('submission')->name('admin.reports.weekly.submission');
         Route::get('/users/{user}/reports/weekly', [AdminReportController::class, 'userWeekly'])->name('admin.users.reports.weekly');
+        Route::get('/reports/activity', [AdminActivityReportController::class, 'index'])->name('admin.reports.activity.index');
+        Route::get('/reports/activity/{report}', [AdminActivityReportController::class, 'show'])->whereNumber('report')->name('admin.reports.activity.show');
 
         Route::get('/faceid/credentials', [FaceIdController::class, 'index'])->name('admin.faceid.index');
         Route::post('/faceid/credentials/{credential}/approve', [FaceIdController::class, 'approve'])->whereNumber('credential')->name('admin.faceid.approve');

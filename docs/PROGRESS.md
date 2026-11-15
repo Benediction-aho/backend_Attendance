@@ -247,6 +247,22 @@ Phase 3 business questions (safe default implemented, configurable where possibl
 - **Q17 – Office GPS coordinates and holiday list** (owner input, PLAN §8): defaults 5.595223, -0.216703 in use; please provide the coordinates measured on site and the holiday list.
 - Note: `faceid_required` and `faceid_required_for_checkin` merged in phase 4 (one setting, default on).
 
+Admins track attendance (2026-11-14) – questions (safe default implemented):
+- **Q30 – Admin pages and the check-in**: an admin who has not checked in yet keeps every admin page they are permitted to use; only their own tasks, clients and weekly report writes need today's check-in (like an employee). Confirm, or say that the admin pages must be blocked too.
+- **Q31 – Go-live day**: the migration sets `admin_attendance_starts_on` to the day of the deployment (Africa/Accra). If the deployment happens during a working day, admins are expected that same day (a check-in after 08:10 is late, they appear as missing until they check in, the 17:00 daily report and, on a Friday, the weekly report are expected). To start on the next day instead, a super admin changes the date in Settings > Attendance right after the deployment (or deploy outside working hours).
+- **Q32 – Monthly report sent to selected admins**: they receive the same PDF limited to employees (an admin never sees another admin's lateness or their own in what the administration sends); super admins receive the full report with the admins. Confirm.
+- **Q33 – Activity log**: an admin holding "View logs" no longer sees the attendance entries (check-in/out, Face ID, working week, leave, weekly report) about admin accounts; other entries about admins are unchanged. Confirm.
+- **Q34 – Who changes the start date**: `admin_attendance_starts_on` is reserved to super admins (hidden from admins holding "Settings – Attendance"), because it decides what admins themselves must do. Confirm.
+
+Activity reports (2026-11-14) – questions (safe default implemented, the starred ones are settings of the reports section):
+- **Q35 – Who sends**: anyone who tracks attendance, any day and time; the upload needs today's check-in on expected days (same rule as tasks and clients). Confirm.
+- **Q36 – Content**: mandatory title (150 characters, no link or e-mail address), optional note (1000), one PDF with the weekly report's checks and size limit. Confirm.
+- **Q37 – Daily limit***: `activity_reports_per_day` = 5 per person (a deleted report still counts). Confirm the number.
+- **Q38 – Deletion***: the author can delete a report within `activity_report_delete_minutes` = 30 after sending (0 = never); no edit. Confirm.
+- **Q39 – Readers**: the people who may read the author's weekly reports: super admins, and for an employee the admins holding "View reports" or "Receive weekly reports"; an admin's report is read by super admins only. Confirm (or restrict to "View reports" only).
+- **Q40 – Notification***: in-app to those readers at each upload; e-mail only when `activity_report_email` is on (default off). Confirm.
+- **Q41 – Monthly report**: activity reports are not counted in it. A line "Activity reports: n" was not added because the monthly PDF must stay identical to the template (4 columns, nothing added). Say if a count is wanted and where.
+
 Phase 6 business questions (safe default implemented, configurable where possible):
 - **Q28 – Dashboard tiers**: today's counts (expected, checked in, missing, on leave, remote) need any attendance tier; `late` and refused attempts need `view_lateness`; month-to-date clients and top services need `view_clients` or `view_statistics`; month late count needs `view_lateness`; weekly "N of M" needs `view_reports` or `receive_weekly_reports`; pending counts need the matching approval tier. Confirm, or name other tiers (e.g. should `view_statistics` also show lateness totals?).
 - **Q29 – Log CSV export**: super admins only (not `view_logs` admins), capped at `log_export_max_rows` (100,000), `log_export_per_hour` (10). Confirm.
@@ -317,4 +333,68 @@ _Not given yet._
 - **Employee type "Other" (done, on the development branch).** The type stays mandatory on the public sign-up and on the admin "Add a user" form, with a third choice **Other** and a mandatory free text ("Please specify", 60 characters, same no-link rules as the job title). Backend: `users.employee_type_other`, migration `2026_11_22_100000_add_other_employee_type`, database checks, `employee_type=other` filter. Frontend: both forms, Users filter, labels show the person's own words. Tests: backend 571 passed, frontend 145 unit + auth/admin e2e passed. Not in production until merged into `main` (the migration runs on deploy).
 - **Promoted super admins sign in by one-time email code (already the case, now covered by a test).** Sign-in is decided by the role: any account promoted to super admin loses its password and signs in through "Super admin sign-in" with a code emailed for each sign-in. No code change needed.
 - **User guide** (installation with Safari / Chrome, employee, admin, super admin) delivered to the owner as PDF.
+- **Profile photos not displayed in production (fixed on the development branch, not pushed).** Cause: production still runs with the local private disk, so photos are served by the signed API route `files.show`, and every API response carried `Cross-Origin-Resource-Policy: same-site` while the PWA and the API are on different sites: the browser refused the image. Fix: `files.show` answers `Cross-Origin-Resource-Policy: cross-origin` (signed short-lived URL = access control; nosniff, sandbox CSP and attachment disposition kept); every other response keeps `same-site`. Test `tests/Feature/Profile/FileCrossOriginTest.php`; `docs/DEPLOYMENT.md` §3.7. **Still required (owner/deploy):** `PRIVATE_FILES_DISK=s3` with the Supabase bucket: with the local disk on Render every photo and PDF is lost at each deploy or restart.
+
+## 2026-11-14 – Admins track attendance (owner decision)
+
+**Status: done on the development branch, committed locally, NOT pushed (a push deploys to production). Ready for backend-security-tester (authorization of every admin attendance route with an admin as target) and for attendance-frontend.**
+
+Rules (SPECS section 2 "Pointage des admins", both repositories):
+1. A simple admin does everything an employee does, under the same rules: check-in / check-out (GPS + Face ID, mission, remote days, once per day, lateness, early check-out reason, auto check-out), working week, tasks, clients, automatic daily report, weekly PDF report with its reminders and its "who must send it" list. Admins appear in attendance lists, dashboard totals, check-in reminders and the monthly report. Their own task/client/report writes need today's check-in. No working week yet = same rule as an employee without one. First phone approved automatically like an employee's.
+2. Super admins are unchanged: they never check in and are never expected.
+3. Only a super admin manages or validates for an admin (Face ID device approval/rejection/revocation, mission validation, check-in on behalf, leave, working week, attendance rows, daily and weekly reports). An admin, whatever the permissions, sees and manages employees only: never another admin, never themselves. Totals shown to an admin cover employees only; totals shown to a super admin cover employees + admins (dashboard, attendance, reports, leave, Face ID devices, weekly received/missing, weekly close e-mail, monthly PDF).
+4. Admin functions are not blocked by the check-in (**Q30**, to confirm).
+5. No retroactive effect: new setting **`admin_attendance_starts_on`** (type `date`, nullable, attendance section, super admin only, with history like every setting). Admins are expected from that date only; empty (`null`) = admins do not track attendance at all. Migration `2026_11_23_100000_seed_admin_attendance_start` stamps the deployment date (Africa/Accra), data only (one `settings` row + one `setting_history` row, nothing else touched, skipped when a value already exists, removed on rollback). Each day is judged with the value in force on that day, so a later change (date moved back, setting emptied) never rewrites the past. An employee promoted to admin keeps tracking; an admin promoted to super admin stops from that day.
+6. Alerts about an employee still go to the admins holding the matching permission (+ super admins); alerts about an admin (new Face ID device, mission check-in, early check-out, working week selected, late weekly report) go to super admins only.
+
+Code (one notion each):
+- `App\Domain\Attendance\AttendanceScope`: who tracks attendance on a date (`tracksOn`, `rolesOn`, `adminStartDate`), what a viewer may see (`rolesVisibleTo`, `population`, `visibleRows`), who is alerted (`alertRecipients`). `User::tracksAttendance(?date)` delegates to it.
+- `UserPolicy::manageAttendance(actor, target)`: the single rule "who may see/manage this person's attendance" (employee target: any staff account, the tier is checked by the caller; admin target: super admin only; super admin target: nobody; never oneself). Used by the attendance, leave, working-week, Face ID and report controllers, the weekly close/forward and the monthly report.
+- Middleware `EnsureEmployee` renamed `EnsureTracksAttendance` (same 403 `employees_only`); `EnsureCheckedInToday` applies to every account that tracks attendance. `/admin/*` is never behind the check-in.
+
+**Contract for attendance-frontend** (`docs/api/openapi.yaml` 0.6.0; additive):
+- `GET /me` (own account): `tracks_attendance: boolean` (show the employee features when true) and `attendance_starts_on: "YYYY-MM-DD" | null` (admins only; null otherwise).
+- When `tracks_attendance` is true an admin may call every "employee" route with the same payloads and codes as an employee: `/attendance/today|history|check-in/intent|check-in/confirm|check-out`, `/me/work-schedule` (GET/POST), `/me/leaves`, `/me/dashboard`, `/me/tasks*`, `/me/clients*`, `/clients/services`, `/me/reports/daily|weekly|weekly/submission`, `/me/faceid`, `/me/faceid/register/options`, `/me/faceid/register`. Otherwise 403 `employees_only` (admins before the date or with the setting empty; super admins always).
+- `EmployeeSummary` (every admin list) gains `role` (`employee` | `admin`); admin rows only reach super admins.
+- Admin pages, same endpoints and shapes, filtered by viewer: `/admin/attendance/day`, `/admin/attendance/missions`, `/admin/attendance/attempts`, `/admin/leaves`, `/admin/faceid/credentials`, `/admin/reports/daily`, `/admin/reports/weekly`, `/admin/dashboard` (today, week, month, pending). On a single admin target an admin gets 403 (`/admin/users/{id}/attendance|check-in|work-schedule|leaves`, `/admin/leaves/{id}`, mission approve/reject, Face ID approve/reject) or 404 (`/admin/users/{id}/reports/weekly`, `/admin/reports/weekly/submissions/{id}`); the super admin gets the normal answer. New 422 `attendance_not_tracked` on `POST /admin/users/{id}/check-in` (admin target while admins do not track attendance).
+- Settings: new key `admin_attendance_starts_on` → `{type: "date", nullable: true, value: "YYYY-MM-DD" | null, default: null, section: "attendance", super_admin_only: true}`; every setting gains `nullable: boolean`. `PUT /admin/settings {values: {admin_attendance_starts_on: "2026-12-01" | null}}`. The settings page must render the new type `date` with a way to empty it.
+- Weekly close notification/e-mail and monthly e-mail: figures per reader (see rule 3). No shape change.
+
+Limits / interpretations (also in the questions above): the role is judged as it is today (no role history): a person promoted to super admin leaves the attendance lists, including past days (rows are kept in the database); an admin's attendance log entries are hidden from "View logs" admins (Q33); the monthly PDF for admin recipients is the employees-only version (Q32); the `reports.weekly_closed` log entry no longer carries the received/expected figures (they would include admins).
+
+Tests: `tests/Feature/Attendance/AdminsTrackAttendanceTest.php` (30 tests: setting and migration, every employee feature as an admin, admin on another admin / on self / super admin never expected, nothing before the go-live date, setting empty = off, alerts, totals per viewer, weekly and monthly reports, logs). Tests start with the setting empty (the migration stamps the real date) and turn it on with `adminsTrackFrom()`.
+
+## 2026-11-14 – Activity reports sent at any time (owner request)
+
+**Status: backend done on the development branch, committed locally, NOT pushed. Ready for backend-security-tester (upload abuse, IDOR on delete/show, reader tiers, admin authors) and for attendance-frontend.**
+
+- A PDF with a title (and an optional note) sent whenever needed. It never replaces nor counts as the weekly Friday report (not in "received/missing", not in the monthly report).
+- Table `activity_reports` (migration `2026_11_24_100000_create_activity_reports_table`, new table only, reversible; soft delete: the row is kept for the daily limit and the audit trail, the file is removed). Files on the private disk under `activity-reports/<user>/<date>/<uuid>.pdf`, served through `FileUrls` (temporary links, attachment).
+- The PDF checks and storage are shared with the weekly report in one class, `App\Domain\Reports\PdfUpload` (the weekly upload now uses it; no behaviour change).
+- New settings (reports section, editable by `manage_settings_reports` admins and super admins): `activity_reports_per_day` (int, default 5, 1–50), `activity_report_delete_minutes` (int, default 30, 0–1440, 0 = never), `activity_report_email` (bool, default false).
+- Activity log: `reports.activity_submitted`, `reports.activity_deleted`.
+
+**API for attendance-frontend** (`docs/api/openapi.yaml` 0.7.0):
+- `GET /api/me/reports/activity?page=&per_page=` (default 20, max 100) → `{data: ActivityReport[], meta: {current_page, last_page, total}, limits: {per_day, sent_today, remaining_today, delete_minutes, max_size_mb}}`. Accounts that track attendance (else 403 `employees_only`).
+- `POST /api/me/reports/activity` multipart `title` (required, ≤ 150), `note` (optional, ≤ 1000), `file` (one PDF) → 201 `{data: ActivityReport}`. Errors: 403 `checkin_required` | `employees_only`; 422 validation (`errors.title`, `errors.note`, `errors.file`), `invalid_pdf`, `pdf_encrypted`, `pdf_active_content`, `too_many_activity_reports` (+ `limit`); 429.
+- `DELETE /api/me/reports/activity/{id}` → 204. Errors: 403 `checkin_required`; 404 (unknown, someone else's, already deleted); 422 `delete_window_closed`.
+- `GET /api/admin/reports/activity?from=&to=&user_id=&page=&per_page=` (default 25, max 100) → `{data: ActivityReport[], meta}`; tier `view_reports` or `receive_weekly_reports` (403 otherwise); admins see employees' reports only, super admins also admins'.
+- `GET /api/admin/reports/activity/{id}` → `{data: ActivityReport}` with a fresh `file_url`; 403 without the tier; 404 unknown/deleted/not readable by the caller.
+- `ActivityReport`: `id, title, note, work_date, file_name, size_bytes, submitted_at, file_url` + author view `can_delete, delete_until` / reader view `user` (EmployeeSummary with `role`).
+- Notification (in-app, push copy as usual): `kind: activity_report`, `title: "Activity report from <First Last>"`, `body`, `path: /admin/reports/activity/{id}`, `activity_report_id`, `user_id`.
+
+Tests: `tests/Feature/Reports/ActivityReportTest.php` (36 tests: sending, validation, check-in gate, daily limit, own list, deletion window, reader tiers and filters, authorization negatives – employee on someone else's, admin without the tier, admin on another admin's and on their own in the admin pages –, settings).
+
+## 2026-11-15 – Security re-check of the 2026-11-14 changes (`backend_Attendance/docs/reports/change-2026-11-14-security.md`)
+- **CHG-01 (Medium) – accepted risk, owner decision 2026-11-15**: admins holding "Settings – Attendance" keep access to the attendance settings (Face ID requirement, office position, lateness hour…) even though those settings also judge their own check-in. Mitigation kept: every change by an admin alerts all super admins (in-app + e-mail, `settings_changed`) and is logged (`settings.updated`).
+- **CHG-02 (Low) – fixed**: adding or removing a public holiday by an admin (not a super admin) now alerts every active super admin, in-app + e-mail (`kind: holiday_changed`, path `/admin/settings`), in addition to the `holiday.created` / `holiday.deleted` log entries. (There is no "edit holiday" route: a change is remove + add.)
+- **CHG-04 (Info) – fixed (safest choice)**: an admin who already checked in on a day keeps tracking attendance for that day even if `admin_attendance_starts_on` is emptied or moved later during it: check-out, `/attendance/today`, own history and own activity reports keep working; the next day the new value applies.
+- **CHG-06 (Info) – fixed**: the three stale assertions of `tests/security/Phase5SecurityTest.php` updated (admins tracking attendance may read service suggestions; clean PDF for the signed-URL test; monthly fixture date inside the 26→25 period).
+- CHG-03, CHG-05: informational, unchanged.
+
+## 2026-11-15 – Backend fixes from `frontend_Attendance/docs/reports/change-2026-11-14-ux.md`
+- **UXC-01 (High) fixed**: a person who was not tracking attendance on a report day (admin before `admin_attendance_starts_on`, account created after it) never owes that week's report: no absent-day grace, `/me/dashboard` `week.weekly_report.status` = `not_expected`, `can_submit` false and upload refused (`window_not_open`). Rule in `WeeklyWindow::owes()`.
+- **UXC-05 fixed (API)**: `GET /admin/reports/daily` adds `totals: {people, employees, admins, with_report}` (super admin: employees + admins; admin: employees only). Frontend: say "N of M people" using `totals.people`.
+- **UXC-07 fixed (API change)**: `/me/dashboard` `week.presence_days` counts expected days only (never above `expected_days_so_far`); new `week.extra_days` = check-ins on non-expected days. Frontend: show "1 extra day" instead of "1 of 0".
+- OpenAPI 0.7.1. Tests `tests/Feature/Ux/ChangeUxFixesTest.php`.
 
