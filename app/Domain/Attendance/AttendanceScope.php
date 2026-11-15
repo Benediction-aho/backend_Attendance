@@ -5,6 +5,7 @@ namespace App\Domain\Attendance;
 use App\Enums\Permission;
 use App\Enums\Role;
 use App\Enums\UserStatus;
+use App\Models\Attendance;
 use App\Models\User;
 use App\Settings\SettingsService;
 use Illuminate\Database\Eloquent\Builder;
@@ -55,9 +56,19 @@ class AttendanceScope
     {
         return match ($user->role) {
             Role::Employee => true,
-            Role::Admin => $this->adminsTrackOn($date ?? $this->calendar->workDate()),
+            Role::Admin => $this->adminTracksOn($user, $date ?? $this->calendar->workDate()),
             Role::SuperAdmin => false,
         };
+    }
+
+    /**
+     * CHG-04: an admin who already checked in on a date keeps tracking attendance for that date even if the
+     * start date is emptied or moved later during the day (check-out, own history and reports keep working).
+     */
+    private function adminTracksOn(User $user, string $date): bool
+    {
+        return $this->adminsTrackOn($date)
+            || Attendance::query()->where('user_id', $user->id)->whereDate('work_date', $date)->exists();
     }
 
     /**

@@ -385,3 +385,10 @@ Tests: `tests/Feature/Attendance/AdminsTrackAttendanceTest.php` (30 tests: setti
 
 Tests: `tests/Feature/Reports/ActivityReportTest.php` (36 tests: sending, validation, check-in gate, daily limit, own list, deletion window, reader tiers and filters, authorization negatives – employee on someone else's, admin without the tier, admin on another admin's and on their own in the admin pages –, settings).
 
+## 2026-11-15 – Security re-check of the 2026-11-14 changes (`backend_Attendance/docs/reports/change-2026-11-14-security.md`)
+- **CHG-01 (Medium) – accepted risk, owner decision 2026-11-15**: admins holding "Settings – Attendance" keep access to the attendance settings (Face ID requirement, office position, lateness hour…) even though those settings also judge their own check-in. Mitigation kept: every change by an admin alerts all super admins (in-app + e-mail, `settings_changed`) and is logged (`settings.updated`).
+- **CHG-02 (Low) – fixed**: adding or removing a public holiday by an admin (not a super admin) now alerts every active super admin, in-app + e-mail (`kind: holiday_changed`, path `/admin/settings`), in addition to the `holiday.created` / `holiday.deleted` log entries. (There is no "edit holiday" route: a change is remove + add.)
+- **CHG-04 (Info) – fixed (safest choice)**: an admin who already checked in on a day keeps tracking attendance for that day even if `admin_attendance_starts_on` is emptied or moved later during it: check-out, `/attendance/today`, own history and own activity reports keep working; the next day the new value applies.
+- **CHG-06 (Info) – fixed**: the three stale assertions of `tests/security/Phase5SecurityTest.php` updated (admins tracking attendance may read service suggestions; clean PDF for the signed-URL test; monthly fixture date inside the 26→25 period).
+- CHG-03, CHG-05: informational, unchanged.
+

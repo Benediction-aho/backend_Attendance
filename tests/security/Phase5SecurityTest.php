@@ -164,9 +164,17 @@ describe('service suggestions', function () {
         expect(array_column($this->getJson('/api/clients/services?q=%25')->json('data'), 'service'))->toBe(['100% loan']);
         expect($this->getJson('/api/clients/services?q=_')->json('data'))->toBe([]);
         $this->getJson("/api/clients/services?q=' OR 1=1--")->assertOk();
+        // 2026-11-14: admins track attendance once admin_attendance_starts_on is set (the migration stamps the deploy date).
+        app(SettingsService::class)->set(['admin_attendance_starts_on' => null]);
         $admin = User::factory()->admin(Permission::ViewReports)->create();
         Sanctum::actingAs($admin);
         $this->getJson('/api/clients/services')->assertStatus(403);
+        app(SettingsService::class)->set(['admin_attendance_starts_on' => '2026-11-16'], null, now()->addSecond());
+        Carbon::setTestNow(now()->addSeconds(2));
+        app()->forgetScopedInstances();
+        app('auth')->forgetGuards();
+        Sanctum::actingAs($admin);
+        $this->getJson('/api/clients/services')->assertOk();
     });
 });
 
@@ -245,7 +253,8 @@ describe('weekly upload abuse', function () {
     it('serves files only through valid, unexpired signed URLs, with safe headers', function () {
         at('2026-11-20 16:05');
         Sanctum::actingAs($this->u);
-        $url = $this->postJson('/api/me/reports/weekly/submission', ['file' => pdfBytes("%PDF-1.4\n<html><script>alert(document.domain)</script></html>")])->json('data.file_url');
+        $url = $this->postJson('/api/me/reports/weekly/submission', ['file' => pdfUpload()])->json('data.file_url'); // active content is now refused (P5-09)
+        expect($url)->toBeString();
         $res = $this->get($url)->assertOk();
         expect($res->headers->get('X-Content-Type-Options'))->toBe('nosniff')
             ->and((string) $res->headers->get('Content-Type'))->toContain('application/pdf');
@@ -352,7 +361,7 @@ describe('scheduled jobs', function () {
 
     it('monthly PDF escapes HTML and never loads remote/local resources', function () {
         $u = User::factory()->create(['first_name' => '<img src="file:///etc/passwd">', 'last_name' => '<link href="http://127.0.0.1:1/x.css">']);
-        Client::query()->create(['user_id' => $u->id, 'work_date' => '2026-11-26', 'name' => 'n', 'service' => '<img src="http://127.0.0.1:1/ssrf.png">',
+        Client::query()->create(['user_id' => $u->id, 'work_date' => '2026-11-25', 'name' => 'n', 'service' => '<img src="http://127.0.0.1:1/ssrf.png">',
             'service_key' => 'x', 'quantity' => 2]);
         Client::query()->create(['user_id' => $u->id, 'work_date' => '2026-10-26', 'name' => 'n', 'service' => 'Edge', 'service_key' => 'edge', 'quantity' => 1]);
         Client::query()->create(['user_id' => $u->id, 'work_date' => '2026-10-25', 'name' => 'n', 'service' => 'Outside', 'service_key' => 'outside', 'quantity' => 1]);
