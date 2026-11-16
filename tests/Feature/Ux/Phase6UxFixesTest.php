@@ -38,7 +38,7 @@ it('UX6-03 splits not working into on_leave, day_off and holiday', function () {
 it('UX6-05 exposes Content-Disposition and Retry-After to the front end', function () {
     $origin = (array) config('cors.allowed_origins');
     $r = $this->withHeaders(['Origin' => $origin[0] ?? 'http://localhost'])->getJson('/api/health');
-    expect(strtolower((string) $r->headers->get('Access-Control-Expose-Headers')))->toContain('content-disposition')->toContain('retry-after');
+    expect(strtolower((string) $r->headers->get('Access-Control-Expose-Headers')))->toContain('content-disposition')->toContain('retry-after')->toContain('date'); // FIN-01
 });
 
 it('UX6-06 writes a readable device label in the CSV, never the internal id', function () {

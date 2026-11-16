@@ -25,12 +25,13 @@ function switchUser(object $test): void
 }
 
 describe('registration', function () {
-    it('alerts the account owner (email + in-app) on every Face ID registration (P4-02)', function () {
+    it('alerts the account owner (email + in-app) on every later Face ID registration, not on the auto-approved first one (P4-02, FIN-02)', function () {
         $user = User::factory()->create();
         registerFaceId($this, deviceToken($user));
+        Notification::assertNotSentTo($user, StaffAlert::class);
         switchUser($this);
         registerFaceId($this, deviceToken($user, 'device-test-0000000002'));
-        Notification::assertSentToTimes($user, StaffAlert::class, 2);
+        Notification::assertSentToTimes($user, StaffAlert::class, 1);
         Notification::assertSentTo($user, StaffAlert::class, fn (StaffAlert $n, array $via) => $n->kind === 'faceid_device_registered'
             && in_array('mail', $via, true) && in_array('database', $via, true) && str_contains($n->body, "If it wasn't you, contact your admin"));
     });
