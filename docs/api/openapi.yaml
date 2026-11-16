@@ -1103,7 +1103,7 @@ paths:
       summary: Send an activity report (multipart). Any day, any time. Needs today's check-in on expected days. The readers are notified at once.
       description: |
         Same PDF checks and size limit as the weekly report (report_pdf_max_mb). At most activity_reports_per_day (5) per person per work
-        date, deleted ones included. Readers = the people who may read the author's weekly reports: super admins, and – when the author
+        date, deleted reports do not count (a deletion frees the slot). Readers = the people who may read the author's weekly reports: super admins, and – when the author
         is an employee – admins holding view_reports or receive_weekly_reports. They get an in-app notification
         (kind `activity_report`, path `/admin/reports/activity/{id}`, data `activity_report_id`, `user_id`); an e-mail too only when the
         setting activity_report_email is on.

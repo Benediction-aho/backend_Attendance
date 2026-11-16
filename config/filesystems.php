@@ -16,7 +16,8 @@ return [
     'default' => env('FILESYSTEM_DISK', 'local'),
 
     // Disk for private files (profile photos, reports): "local" in development and tests, "s3" (Supabase Storage) online.
-    'private_disk' => env('PRIVATE_FILES_DISK', 'local'),
+    // Disk names are lower-case ("S3" in an environment variable used to break every upload).
+    'private_disk' => strtolower(trim((string) env('PRIVATE_FILES_DISK', 'local'))),
 
     /*
     |--------------------------------------------------------------------------
