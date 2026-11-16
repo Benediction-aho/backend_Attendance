@@ -402,3 +402,7 @@ Tests: `tests/Feature/Reports/ActivityReportTest.php` (36 tests: sending, valida
 - **Q37 answered (owner, 2026-11-15)**: deleting an activity report frees its slot; the daily limit counts only the day's non-deleted reports (`limits.sent_today` / `remaining_today` follow). No other API change.
 - **Robustness**: `PRIVATE_FILES_DISK` is lower-cased and trimmed in `config/filesystems.php` (production had `S3`, every upload failed with "Disk [S3] does not have a configured driver"); at boot the API logs a clear error if the private disk is not a configured disk.
 
+## 2026-11-16 – Backend fixes from `frontend_Attendance/docs/reports/final-2026-11-16-ux.md`
+- **FIN-01**: CORS exposes `Date` (with `Content-Disposition`, `Retry-After`): the PWA can read the server time from any response.
+- **FIN-02**: the "New device registered for Face ID… If it wasn't you" alert is no longer sent for a person's first device approved automatically at first setup; every later registration (new phone, re-registration) still alerts the owner.
+

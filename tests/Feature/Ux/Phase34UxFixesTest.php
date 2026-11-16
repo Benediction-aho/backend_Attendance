@@ -50,8 +50,8 @@ describe('UX34-01 lost passkey: register Face ID again on the same phone', funct
         expect($new->device_id)->toBe($old->device_id)->and($old->fresh()->status)->toBe('approved');
         $this->withToken($token)->getJson('/api/me/faceid')->assertJsonPath('can_reregister', false)->assertJsonPath('replacement_pending', true);
 
-        // Owner alerted again, approvers notified with the same-phone wording.
-        Notification::assertSentToTimes($user, StaffAlert::class, 2);
+        // Owner alerted for the re-registration (not for the first device, FIN-02), approvers notified with the same-phone wording.
+        Notification::assertSentToTimes($user, StaffAlert::class, 1);
         Notification::assertSentTo($admin, StaffAlert::class, fn (StaffAlert $n) => $n->kind === 'faceid_device_request' && str_contains($n->body, 'same phone'));
 
         app('auth')->forgetGuards();

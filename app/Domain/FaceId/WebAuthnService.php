@@ -199,15 +199,18 @@ class WebAuthnService
             'credential_id' => $stored->id, 'device_id' => $deviceId, 'status' => $stored->status, 'reregistration' => $replacesSameDevice,
         ]);
 
-        // Security alert to the account owner for every registration (P4-02), first device included.
-        $user->notify(new StaffAlert(
-            'faceid_device_registered',
-            'New device registered for Face ID',
-            'A new device was registered for Face ID on your account. If it wasn\'t you, contact your admin.',
-            ['credential_id' => $stored->id],
-            true,
-            '/attendance',
-        ));
+        // Security alert to the account owner for every later registration (P4-02). FIN-01/02: not for the very first
+        // device approved automatically at first setup (the person just did it; the alert only worried them).
+        if (! $autoApprove) {
+            $user->notify(new StaffAlert(
+                'faceid_device_registered',
+                'New device registered for Face ID',
+                'A new device was registered for Face ID on your account. If it wasn\'t you, contact your admin.',
+                ['credential_id' => $stored->id],
+                true,
+                '/attendance',
+            ));
+        }
 
         if (! $autoApprove) {
             // An admin's new device is announced to super admins only.

@@ -25,7 +25,8 @@ return [
 
     'allowed_headers' => ['*'],
 
-    'exposed_headers' => ['Content-Disposition', 'Retry-After'],
+    // FIN-01: Date lets the PWA read the server time from any response.
+    'exposed_headers' => ['Content-Disposition', 'Retry-After', 'Date'],
 
     'max_age' => 3600,
 
